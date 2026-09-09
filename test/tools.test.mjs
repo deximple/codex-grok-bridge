@@ -467,7 +467,26 @@ test("the bridge states its own provenance so the model need not go looking", ()
 
   // Codex does not always send instructions; the provenance must survive anyway.
   const bare = toProxyRequest({ input: [], tools: [] }).request;
-  assert.equal(bare.instructions, TRANSPORT_PROVENANCE);
+  assert.ok(bare.instructions.includes(TRANSPORT_PROVENANCE));
+});
+
+test("image instructions tell the model not to follow Codex's OpenAI skill", () => {
+  const { request } = toProxyRequest({ input: [], tools: [] });
+  assert.match(request.instructions, /image_generation/);
+  assert.match(request.instructions, /imagegen skill/);
+  assert.match(request.instructions, /OpenAI/);
+  assert.match(request.instructions, /do not read/i);
+
+  const previous = process.env.GROK_BRIDGE_IMAGE_GEN;
+  try {
+    process.env.GROK_BRIDGE_IMAGE_GEN = "off";
+    const off = toProxyRequest({ input: [], tools: [] }).request;
+    assert.equal(off.instructions, TRANSPORT_PROVENANCE);
+    assert.doesNotMatch(off.instructions, /OpenAI/);
+  } finally {
+    if (previous === undefined) delete process.env.GROK_BRIDGE_IMAGE_GEN;
+    else process.env.GROK_BRIDGE_IMAGE_GEN = previous;
+  }
 });
 
 test("Grok's image tool is declared once, and can be turned off", async () => {
