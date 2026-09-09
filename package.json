@@ -1,0 +1,42 @@
+{
+  "name": "codex-grok-bridge",
+  "version": "1.0.0",
+  "description": "Run Grok 4.6 as the model inside Codex, with Codex still owning tools, permissions, history and MCP. Uses the grok login session, not an API key.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "os": [
+    "darwin"
+  ],
+  "keywords": [
+    "codex",
+    "grok",
+    "xai",
+    "model-provider",
+    "responses-api",
+    "agent-harness"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deximple/codex-grok-bridge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/deximple/codex-grok-bridge/issues"
+  },
+  "homepage": "https://github.com/deximple/codex-grok-bridge#readme",
+  "files": [
+    "src",
+    "scripts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node scripts/codex-grok.mjs",
+    "desktop": "node scripts/launch-desktop.mjs",
+    "verify:app-server": "node scripts/verify-app-server.mjs",
+    "test": "node --test",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include='src/*.mjs' --test-coverage-lines=80 --test-coverage-functions=80 --test-coverage-branches=80"
+  }
+}
