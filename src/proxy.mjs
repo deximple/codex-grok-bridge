@@ -151,11 +151,16 @@ export async function pipeProxySse(stream, output, map) {
       const parts = buffer.split("\n\n");
       buffer = parts.pop();
       for (const part of parts) {
-        if (part.trim()) await writeBlock(output, rewrite(part) + "\n\n");
+        if (!part.trim()) continue;
+        const rewritten = rewrite(part);
+        if (rewritten !== null) await writeBlock(output, rewritten + "\n\n");
       }
     }
     buffer += decoder.decode();
-    if (buffer.trim()) await writeBlock(output, rewrite(buffer) + "\n\n");
+    if (buffer.trim()) {
+      const rewritten = rewrite(buffer);
+      if (rewritten !== null) await writeBlock(output, rewritten + "\n\n");
+    }
   } catch (error) {
     // Stop pulling from Grok the moment the client is gone; leaving the body
     // unread holds the upstream socket open for the rest of the response.

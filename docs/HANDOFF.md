@@ -34,6 +34,7 @@ Codex UI/CLI → app-server → scripts/codex-wrapper.mjs (모델 목록에 grok
 | `errors.mjs` | cause 체인 오류 분류 |
 | `diagnostics.mjs` | 레닥션·회전 로컬 로그 |
 | `slots.mjs` | 유한 동시성(기본 4) + 큐(기본 8) |
+| `imagegen.mjs` | Grok 네이티브 이미지 생성. 파일 저장 후 assistant 메시지로 전달 |
 | `cli-inference.mjs` | `GROK_BRIDGE_INFERENCE=cli` 폴백 |
 | `router.mjs` / `runtime.mjs` / `auth.mjs` / `images.mjs` | 라우팅 / 프로바이더 등록 / 로그인 토큰 / 이미지 |
 
@@ -107,7 +108,13 @@ Codex는 400초 침묵도 견디므로 대기가 429보다 항상 낫다. **이 
 `/Applications/Codex Grok.app/…`의 공백 때문에 `verify-app-server.mjs`가 설치된 번들에서만 조용히 죽었다.
 파일 경로에는 `fileURLToPath()`를 쓴다.
 
-### 4.9 세션 트랜스크립트에는 실제 자격증명이 들어간다
+### 4.9 Codex는 이미지 생성 도구를 주지 않는다
+
+이 프로바이더에 오는 263개 도구 중 이미지 생성은 하나도 없다(`view_image`만 있다).
+그래서 Codex의 `imagegen` 시스템 스킬은 OpenAI 경로로 폴백한다 — 추론은 Grok인데 그림은 다른 벤더가 그린다.
+브리지가 `{type:"image_generation"}`을 직접 선언해서 해결했다. Codex를 거치지 않고 Grok이 서버 쪽에서 생성한다.
+
+### 4.10 세션 트랜스크립트에는 실제 자격증명이 들어간다
 
 `cat ~/.codex/config.toml` 한 번으로 MCP 토큰이 트랜스크립트에 남는다.
 저장소에 넣을 때는 `docs/experiments/render-transcript.mjs`를 쓴다 — 형태 기반 레닥션 후

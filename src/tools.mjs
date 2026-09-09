@@ -1,3 +1,10 @@
+import {
+  GROK_IMAGE_TOOL,
+  describeGeneratedImage,
+  isImageGenerationItem,
+  saveGeneratedImage,
+} from "./imagegen.mjs";
+
 const OBJECT_SCHEMA = { type: "object", properties: {} };
 
 const CUSTOM_INPUT_SCHEMA = {
@@ -294,6 +301,14 @@ export function toProxyRequest(body) {
     stream: true,
     store: false,
   };
+  // Grok generates images server-side when this tool is present. Codex never
+  // offers one to this provider, so without it the only path is a different
+  // vendor's API. GROK_BRIDGE_IMAGE_GEN=off restores that older behaviour.
+  const declaresImageTool = request.tools.some(
+    (tool) => tool?.type === GROK_IMAGE_TOOL.type,
+  );
+  if (process.env.GROK_BRIDGE_IMAGE_GEN !== "off" && !declaresImageTool)
+    request.tools = [...request.tools, GROK_IMAGE_TOOL];
   if (tools.length) {
     request.tool_choice = proxyToolChoice(body.tool_choice, map);
     request.parallel_tool_calls = body.parallel_tool_calls !== false;
@@ -335,6 +350,20 @@ function rewriteResponseItem(node, map, state) {
   }
 }
 
+// A generated image arrives as bytes on the stream. Codex has no tool for this
+// and no place to put them, so the bridge writes the file and hands back an
+// ordinary assistant message naming it.
+function absorbGeneratedImage(item, state) {
+  const saved = saveGeneratedImage(item, state.imageOptions);
+  return {
+    type: "message",
+    id: typeof item.id === "string" ? item.id : undefined,
+    role: "assistant",
+    status: "completed",
+    content: [{ type: "output_text", text: describeGeneratedImage(item, saved) }],
+  };
+}
+
 function rewriteResponseEvent(value, map, state) {
   if (!value || typeof value !== "object") return value;
   if (
@@ -343,13 +372,38 @@ function rewriteResponseEvent(value, map, state) {
     (value.type === "response.output_item.added" ||
       value.type === "response.output_item.done")
   ) {
-    rewriteResponseItem(value.item, map, state);
+    if (isImageGenerationItem(value.item))
+      value.item = absorbGeneratedImage(value.item, state);
+    else rewriteResponseItem(value.item, map, state);
   }
   return value;
 }
 
+// Progress events for a tool Codex does not know about carry nothing it can
+// use, and an unfamiliar event type is a risk to its parser. The item that
+// actually holds the image is kept and rewritten; the chatter around it is not.
+const OPAQUE_EVENT_PREFIXES = ["response.image_generation_call."];
+
+function isOpaqueEvent(lines) {
+  return lines.some(
+    (line) =>
+      line.startsWith("event:") &&
+      OPAQUE_EVENT_PREFIXES.some((prefix) =>
+        line.slice(6).trim().startsWith(prefix),
+      ),
+  );
+}
+
 export function rewriteSseBlock(block, map, state = { callIds: new Map(), itemIds: new Map() }) {
   const lines = block.split("\n");
+  if (isOpaqueEvent(lines)) return null;
+  // An image_generation_call announced before its bytes exist has nothing to
+  // save yet; the matching .done block carries the result.
+  if (
+    lines.some((line) => line.startsWith("event: response.output_item.added")) &&
+    lines.some((line) => line.includes('"type":"image_generation_call"'))
+  )
+    return null;
   return lines
     .map((line) => {
       if (!line.startsWith("data:")) return line;
@@ -366,7 +420,11 @@ export function rewriteSseBlock(block, map, state = { callIds: new Map(), itemId
     .join("\n");
 }
 
-export function createSseRewriter(map) {
-  const state = { callIds: new Map(), itemIds: new Map() };
+export function createSseRewriter(map, options = {}) {
+  const state = {
+    callIds: new Map(),
+    itemIds: new Map(),
+    imageOptions: options.imageOptions,
+  };
   return (block) => rewriteSseBlock(block, map, state);
 }
