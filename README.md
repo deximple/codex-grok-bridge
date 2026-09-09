@@ -96,7 +96,8 @@ Codex에 첫 SSE 블록을 쓰기 **전**에 죽은 요청은 한 번 다시 보
 - 기본 Responses 경로는 스트림을 전달합니다. 프롬프트 캐시 키는 Codex `prompt_cache_key`를 `x-grok-conv-id`로 넘깁니다.
 - cli-chat-proxy는 function tool 339개 요청을 수락했습니다. 공개 API 문서의 200개 한도는 이 로그인 경로에 적용되지 않습니다.
 - 저장된 루트 작업이 대기 중이면 GPT ↔ Grok 전환을 지원합니다. `turn/start`와 설정 변경 API는 제공자를 바꾸지 못하므로, 래퍼가 구독 해제 → 같은 ID로 제공자를 지정해 재개 → 제공자·권한 확인 후 원래 요청을 전달합니다. 실행 중인 작업, 임시 작업, 하위 에이전트는 제공자 전환을 거부하며, 다른 구독자가 전환을 막으면 추론을 보내지 않습니다. 첫 턴이 저장되기 전에는 새 작업을 시작할 때 원하는 모델을 선택하세요.
-- `{ type: "image_generation" }`은 그대로 넘깁니다. Codex `image_gen/imagegen` 네임스페이스는 function call로 옮겨 Codex가 실행합니다.
+- **이미지 생성도 Grok이 합니다.** 브리지가 상류 요청에 `{ type: "image_generation" }`을 직접 선언하므로, Codex가 이미지 도구를 노출하지 않아도 Grok이 서버 쪽에서 생성합니다. 돌아온 바이트는 `~/.local/share/codex-grok-bridge/generated-images/`에 0600으로 저장하고, Codex에는 파일 경로를 알려주는 assistant 메시지로 전달합니다. Codex가 모르는 `response.image_generation_call.*` 이벤트는 걸러냅니다. `GROK_BRIDGE_IMAGE_GEN=off`로 끕니다.
+  - 이게 없으면 Codex의 `imagegen` 시스템 스킬이 OpenAI 경로(내장 `image_gen` 또는 `OPENAI_API_KEY` + `gpt-image-*`)로 갑니다. 실제로 Codex가 이 프로바이더에 보내는 263개 도구 중 이미지 생성 도구는 하나도 없습니다 — `view_image`뿐입니다. 즉 추론은 Grok인데 그림만 다른 벤더에서 나오는 상태가 됩니다.
 - CLI 폴백은 응답이 끝난 뒤 Codex에 결과를 전달하므로 토큰 단위 실시간 출력이 없습니다. 요청당 3분 제한입니다.
 - 앱 업데이트가 `CODEX_CLI_PATH`나 app-server 프로토콜을 바꾸면 재검증이 필요합니다. 검증 버전: Codex 0.153.4 / 앱 26.901.51231, Grok CLI 1.0.24, Node 22.23.0.
 
