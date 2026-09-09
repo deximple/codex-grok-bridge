@@ -4,7 +4,7 @@ import {
   buildGrokInvocation,
   parseGrokResult,
   decodeOutput,
-} from "../src/cli-inference.mjs";
+} from "../../src/cli-inference.mjs";
 // A captured Grok CLI chat history to replay. Pass one as the first argument;
 // the CLI writes them under ~/.grok/sessions/.
 const source = process.argv[2];
@@ -21,7 +21,7 @@ const body = JSON.parse(prompt.split("CODEX REQUEST:\n")[1]);
 const result = await runGrok(buildGrokInvocation(body));
 const parsed = parseGrokResult(result.stdout);
 fs.writeFileSync(
-  new URL("../docs/replay-result.json", import.meta.url),
+  new URL("../replay-result.json", import.meta.url),
   JSON.stringify(
     {
       exitCode: result.exitCode,

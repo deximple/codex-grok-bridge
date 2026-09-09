@@ -22,7 +22,7 @@ Codex UI/CLI → app-server → scripts/codex-wrapper.mjs (모델 목록에 grok
 
 ```
 저장소 src/ = /Applications/Codex Grok.app/…/bridge/src/     (해시 일치)
-게이트        114/114, 97.07 lines / 86.24 branches / 87.93 functions
+게이트        130/130, 97.54 lines / 87.44 branches / 89.93 functions
 ```
 
 | 모듈 | 역할 |
@@ -129,7 +129,7 @@ Codex는 400초 침묵도 견디므로 대기가 429보다 항상 낫다. **이 
 ## 5. 검증
 
 ```sh
-npm test                                   # 114건, 외부 추론 없음
+npm test                                   # 130건, 외부 추론 없음
 npm run test:coverage                      # 80% 게이트
 npm run verify:app-server                  # 실제 app-server 라우팅. 설치 번들에서도 실행됨
 node scripts/codex-grok.mjs exec --skip-git-repo-check "Reply with exactly PONG." </dev/null

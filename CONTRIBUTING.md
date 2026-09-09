@@ -17,8 +17,9 @@ npm run verify:app-server    # real Codex app-server routing, still no inference
 
 A change to transport behaviour needs a test that fails before it and passes
 after. `docs/experiments/` holds the scripts that produced the measurements in
-`docs/solution-20260909.md`; the `replay-*` ones consume real Grok quota, the
-rest are free.
+`docs/solution-20260909.md`, plus live probes (`replay-*`, `verify-vision.mjs`).
+Those consume real Grok quota; the rest are free. They are not part of the
+published package — `package.json` `files` is an explicit whitelist.
 
 ## House style
 

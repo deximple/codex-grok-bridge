@@ -13,14 +13,22 @@ Codex UI/CLI → app-server → codex-wrapper.mjs (adds grok-4.6 to the model li
 
 **Requirements** — macOS, Node.js ≥ 22, `/Applications/Codex.app`, the `grok`
 CLI at `~/.grok/bin/grok` with a completed `grok login`. Zero runtime
-dependencies; the whole bridge is twelve files under `src/`.
+dependencies; the whole bridge is thirteen files under `src/`.
 
 **Quick start**
 
 ```sh
-git clone <this repo> && cd codex-grok-bridge
-npm test                        # 114 tests, no network, no inference
-node scripts/codex-grok.mjs     # Codex in the terminal, with Grok 4.6 selected
+npm install -g codex-grok-bridge   # macOS, Node ≥ 22
+codex-grok                         # Codex in the terminal, Grok 4.6 selected
+```
+
+From a checkout:
+
+```sh
+git clone https://github.com/deximple/codex-grok-bridge.git
+cd codex-grok-bridge
+npm test                        # 130 tests, no network, no inference
+node scripts/codex-grok.mjs
 ```
 
 That is the whole setup for terminal use — the bridge registers itself as a
@@ -57,11 +65,12 @@ Grok 4.6 / xAI를 Codex 모델 목록에 추가하고, Grok의 도구 요청을 
 터미널에서는 다음과 같이 실행할 수 있습니다.
 
 ```sh
-node scripts/codex-grok.mjs
-node scripts/codex-grok.mjs exec --skip-git-repo-check --sandbox workspace-write '작업 내용'
+npm install -g codex-grok-bridge
+codex-grok
+codex-grok exec --skip-git-repo-check --sandbox workspace-write '작업 내용'
 ```
 
-필요한 설치: Node.js 22 이상, `/Applications/Codex.app`, `~/.grok/bin/grok`, 완료된 `grok login`. `.command` 런처는 자기 위치를 기준으로 경로를 잡으므로 폴더를 옮겨도 수정할 필요가 없습니다. `NODE=/path/to/node`로 Node를 지정할 수 있습니다.
+체크아웃에서는 `node scripts/codex-grok.mjs`가 같은 진입점입니다. 필요한 설치: Node.js 22 이상, `/Applications/Codex.app`, `~/.grok/bin/grok`, 완료된 `grok login`. `.command` 런처는 자기 위치를 기준으로 경로를 잡으므로 폴더를 옮겨도 수정할 필요가 없습니다. `NODE=/path/to/node`로 Node를 지정할 수 있습니다.
 
 ## 연결 방식
 
@@ -129,7 +138,7 @@ Codex에 첫 SSE 블록을 쓰기 **전**에 죽은 요청은 한 번 다시 보
 ## 검증
 
 ```sh
-npm test                    # 107건, 외부 추론 없음
+npm test                    # 130건, 외부 추론 없음
 npm run test:coverage       # line/branch/function 80% 게이트
 npm run verify:app-server   # 실제 app-server 라우팅. 설치된 앱 번들에서도 실행됩니다
 npm audit --omit=dev

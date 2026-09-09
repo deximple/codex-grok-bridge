@@ -6,7 +6,7 @@ import {
   buildGrokInvocation,
   parseGrokResult,
   decodeOutput,
-} from "../src/cli-inference.mjs";
+} from "../../src/cli-inference.mjs";
 const file = process.argv[2];
 if (!file) throw Error("Supply a local PNG test image");
 const data = (await readFile(file)).toString("base64");
