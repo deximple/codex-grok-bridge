@@ -27,7 +27,7 @@ From a checkout:
 ```sh
 git clone https://github.com/deximple/codex-grok-bridge.git
 cd codex-grok-bridge
-npm test                        # 130 tests, no network, no inference
+npm test                        # 131 tests, no network, no inference
 node scripts/codex-grok.mjs
 ```
 
@@ -118,6 +118,7 @@ Codex에 첫 SSE 블록을 쓰기 **전**에 죽은 요청은 한 번 다시 보
     그래서 브리지는 저장한 파일의 실제 포맷을 확인해, 알파가 없으면 "이 포맷은 알파 채널이 없으니 투명하다고 설명하지 말라"고 모델에게 명시합니다. 투명 배경이나 정확한 인페인팅이 꼭 필요하면 Codex의 OpenAI 경로를 쓰는 편이 맞습니다.
   - 이게 없으면 Codex의 `imagegen` 시스템 스킬이 OpenAI 경로(내장 `image_gen` 또는 `OPENAI_API_KEY` + `gpt-image-*`)로 갑니다. 실제로 Codex가 이 프로바이더에 보내는 263개 도구 중 이미지 생성 도구는 하나도 없습니다 — `view_image`뿐입니다. 즉 추론은 Grok인데 그림만 다른 벤더에서 나오는 상태가 됩니다.
 - CLI 폴백은 응답이 끝난 뒤 Codex에 결과를 전달하므로 토큰 단위 실시간 출력이 없습니다. 요청당 3분 제한입니다.
+- 상류가 응답 중간에 연결을 리셋하는 경우가 간헐적으로 있습니다(실측 3건: 25s/27s/253s, 726 KB–22 MB). 브리지는 이걸 재시도할 수 없습니다 — Codex가 이미 응답 일부를 받았으므로 재전송하면 중복됩니다. 대신 provider에 `stream_max_retries: 2`를 설정해 **Codex가 같은 요청을 다시 보내도록** 했습니다. 대화를 소유한 쪽만 안전하게 재시도할 수 있습니다.
 - 앱 업데이트가 `CODEX_CLI_PATH`나 app-server 프로토콜을 바꾸면 재검증이 필요합니다. 검증 버전: Codex 0.153.4 / 앱 26.901.51231, Grok CLI 1.0.24, Node 22.23.0.
 
 ## 진단 로그
@@ -138,7 +139,7 @@ Codex에 첫 SSE 블록을 쓰기 **전**에 죽은 요청은 한 번 다시 보
 ## 검증
 
 ```sh
-npm test                    # 130건, 외부 추론 없음
+npm test                    # 131건, 외부 추론 없음
 npm run test:coverage       # line/branch/function 80% 게이트
 npm run verify:app-server   # 실제 app-server 라우팅. 설치된 앱 번들에서도 실행됩니다
 npm audit --omit=dev

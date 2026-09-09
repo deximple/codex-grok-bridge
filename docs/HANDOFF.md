@@ -22,7 +22,7 @@ Codex UI/CLI → app-server → scripts/codex-wrapper.mjs (모델 목록에 grok
 
 ```
 저장소 src/ = /Applications/Codex Grok.app/…/bridge/src/     (해시 일치)
-게이트        130/130, 97.54 lines / 87.44 branches / 89.93 functions
+게이트        131/131, 97.44 lines / 87.30 branches / 89.93 functions
 ```
 
 | 모듈 | 역할 |
@@ -59,17 +59,28 @@ Codex UI/CLI → app-server → scripts/codex-wrapper.mjs (모델 목록에 grok
 
 ## 4. 시간 잡아먹는 함정 (여기부터가 진짜 핸드오프)
 
-### 4.1 15000ms의 정체는 아직 모른다
+### 4.1 15000ms는 사라졌고, 남은 실패는 상류의 중간 리셋이다 — 해결됨
 
-실패 5건이 15077/15094/15107/15069/15113 ms — 편차 44ms의 고정 타이머다. 그런데:
+**옛 실패**(수정 전, `fetch` 경로): 5건이 15077/15094/15107/15069/15113 ms — 편차 44ms의 고정 타이머.
+제네릭 문자열 때문에 정체를 알 수 없었다. Codex도(침묵 400초 견딤) 상류도(138.8초 응답 정상 완료) 아니었다.
+유력 가설은 macOS `getaddrinfo` 타임아웃(resolver `timeout:5` × 3 = 15초)이었다.
 
-- Codex는 아니다 — keepalive만 있는 침묵을 60초, 아예 없는 침묵을 400초 견딘다(실측).
-- 상류도 아니다 — 15.6·17.1·23.4·25.0·31.4·**138.8초** 응답이 운영 경로에서 정상 완료했다.
-- **즉 15초는 응답 길이 상한이 아니라, 시작조차 못 한 요청의 실패 시각**이다 — DNS/connect의 형태.
+**새 실패**(진단 로그 도입 후): 38턴 중 3건. 15.0초 상수는 **한 번도 재현되지 않았다.**
 
-유력 가설은 macOS `getaddrinfo` 타임아웃(resolver `timeout:5` × 3 = 15초). `transport.mjs`의 DNS 캐시가
-이미 원인을 제거했을 수 있고, 그러면 영원히 확정되지 않는다. **다음에 로그에 `turn_failed`나
-`turn_retried`가 뜨면 그 `kind`가 답이다.** `dns`면 확정, `upstream_closed`면 다른 얘기다.
+```
+kind=upstream_closed  signature=Error[ECONNRESET]  detail="aborted"
+25,256ms / 726 KB / 7 items
+26,780ms /  22 MB / 60 items
+252,819ms / 909 KB / 121 items
+```
+
+즉 **DNS가 아니었거나, `transport.mjs`의 DNS 캐시가 이미 그 원인을 없앴다.** 어느 쪽이든 15.0초 패턴은 끝났다.
+남은 것은 **상류가 응답 중간에 연결을 리셋하는 것**이고, 시각·크기에 상수가 없는 간헐적 현상이다.
+
+**브리지는 이걸 재시도할 수 없다** — Codex가 이미 응답 일부를 받았으므로 재전송하면 중복된다.
+**Codex는 할 수 있다** — 대화를 소유하므로 같은 요청을 다시 보내면 된다. 그런데 provider 설정이
+`stream_max_retries: 0`이라 모든 리셋이 죽은 턴이 되고 있었다. 지금은 `2`다.
+(`request_max_retries`도 2. 브리지 자체 재시도는 첫 이벤트 이전만 담당하므로 서로 겹치지 않는다.)
 
 ### 4.2 프롬프트에 provider·model이 없다
 
@@ -129,7 +140,7 @@ Codex는 400초 침묵도 견디므로 대기가 429보다 항상 낫다. **이 
 ## 5. 검증
 
 ```sh
-npm test                                   # 130건, 외부 추론 없음
+npm test                                   # 131건, 외부 추론 없음
 npm run test:coverage                      # 80% 게이트
 npm run verify:app-server                  # 실제 app-server 라우팅. 설치 번들에서도 실행됨
 node scripts/codex-grok.mjs exec --skip-git-repo-check "Reply with exactly PONG." </dev/null
@@ -151,8 +162,8 @@ node scripts/codex-grok.mjs exec --skip-git-repo-check "Reply with exactly PONG.
 
 | 항목 | 다음 행동 | 비용 |
 |---|---|---|
-| **15000ms 확정** | 로그에 `turn_failed`/`turn_retried`가 뜨면 `kind`를 읽는다 | 무료 |
-| `apply_patch` 왕복 | freeform custom 도구 성공 + 거부 케이스 실검증 | 중간 |
+| 상류 중간 리셋 재발 여부 | `stream_max_retries: 2` 적용 후에도 `turn_failed`가 남는지 로그로 확인 | 무료 |
+| ~~`apply_patch` 왕복~~ | **해당 없음.** Codex는 이 프로바이더에 `apply_patch`를 주지 않는다 — read-only/workspace-write/danger-full-access 세 샌드박스 모두에서 확인(258–268개 도구 중 없음). 파일 변경은 `exec_command`로만 한다 | — |
 | MCP 네임스페이스 왕복 | 실제 MCP 도구 1건 왕복 | 중간 |
 | `context_window` 258,400 출처 | 카탈로그 값을 131072로 낮추고 `token_count.model_context_window`가 따라 변하는지 관찰. 안 변하면 Codex 내부값 | 라이브 1콜 |
 | 프리픽스 156k 축소 | 전용 `CODEX_HOME`으로 world_state(119,669자)를 슬림화. 재로그인 비용이 있어 사용자 결정 사항 | — |
