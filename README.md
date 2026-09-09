@@ -4,10 +4,6 @@ Run **Grok 4.6 as the model inside Codex**. Codex still owns tools, permissions,
 history and MCP. Inference uses the installed `grok` CLI login session — not an
 xAI API key.
 
-Codex 안에서 **Grok 4.6**을 모델로 씁니다. 도구·권한·히스토리·MCP는 Codex가
-그대로 가집니다. 추론은 설치된 `grok` CLI의 로그인 세션으로 하며 `XAI_API_KEY`는
-쓰지 않습니다.
-
 ```
 Codex UI/CLI → app-server → scripts/codex-wrapper.mjs (adds grok-4.6 to the model list)
              → localhost /v1/responses (the bridge)
@@ -18,13 +14,8 @@ Codex UI/CLI → app-server → scripts/codex-wrapper.mjs (adds grok-4.6 to the 
 The published package is **macOS-only** (`"os": ["darwin"]`). Linux and Windows
 installs are rejected by npm.
 
-게시된 패키지는 **macOS 전용**입니다(`"os": ["darwin"]`). Linux·Windows는 npm이
-설치를 거절합니다.
 
 ---
-
-# English
-
 ## What this is
 
 A local bridge that puts Grok 4.6 on Codex’s model list and sends Codex
