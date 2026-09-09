@@ -7,6 +7,7 @@ import path from "node:path";
 import {
   GROK_IMAGE_TOOL,
   describeGeneratedImage,
+  hasAlphaChannel,
   isImageGenerationItem,
   saveGeneratedImage,
 } from "../src/imagegen.mjs";
@@ -75,4 +76,38 @@ test("bytes in an unrecognised format are still saved, just not misnamed", () =>
 
   const webp = Buffer.concat([Buffer.from("RIFF", "ascii"), Buffer.alloc(64)]);
   assert.equal(saveGeneratedImage(item(webp), { dir, now: 3 }).extension, "webp");
+});
+
+test("a format that cannot be transparent is reported as opaque", () => {
+  // Grok answers a transparent-background request with an opaque JPEG that has
+  // a checkerboard painted into it. The description must not let that be
+  // relayed to the user as transparency.
+  const dir = mkdtempSync(path.join(tmpdir(), "imagegen-"));
+  const saved = saveGeneratedImage(item(jpeg), { dir, now: 10 });
+  assert.equal(saved.alpha, false);
+  const text = describeGeneratedImage(item(jpeg), saved);
+  assert.match(text, /carries no alpha channel/);
+  assert.match(text, /do not describe it as transparent/);
+});
+
+test("a PNG that really carries alpha is reported as such", () => {
+  const rgba = Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    Buffer.alloc(17),
+    Buffer.from([6]), // IHDR colour type 6 = RGBA
+    Buffer.alloc(64),
+  ]);
+  const dir = mkdtempSync(path.join(tmpdir(), "imagegen-"));
+  const saved = saveGeneratedImage(item(rgba), { dir, now: 11 });
+  assert.equal(saved.alpha, true);
+  const text = describeGeneratedImage(item(rgba), saved);
+  assert.match(text, /has an alpha channel/);
+  assert.ok(!/do not describe it as transparent/.test(text));
+
+  // Greyscale+alpha counts too, and a plain RGB PNG does not.
+  const grey = Buffer.from(rgba); grey[25] = 4;
+  assert.equal(hasAlphaChannel(grey), true);
+  const rgb = Buffer.from(rgba); rgb[25] = 2;
+  assert.equal(hasAlphaChannel(rgb), false);
+  assert.equal(hasAlphaChannel(Buffer.from([255, 216, 255])), false);
 });
