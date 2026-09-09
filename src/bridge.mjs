@@ -1,7 +1,7 @@
 import http from "node:http";
 import { timingSafeEqual, randomUUID } from "node:crypto";
 import { GrokAuthError, readGrokBearerToken } from "./auth.mjs";
-import { toImageBlocks, ImageInputError } from "./images.mjs";
+import { sanitizeImages, toImageBlocks } from "./images.mjs";
 import {
   buildGrokInvocation,
   decodeOutput,
@@ -80,26 +80,25 @@ export function createBridgeServer(options = {}) {
     let body;
     let requestBytes = 0;
     try {
-      let raw = "",
-        size = 0;
+      // Collect buffers and decode once. Concatenating into a string as chunks
+      // arrive doubles the payload in memory as UTF-16 and reallocates on every
+      // chunk, which matters now that a request can carry 20 MiB of images.
+      const chunks = [];
+      let size = 0;
       for await (const chunk of req) {
         size += chunk.length;
-        if (size > (options.maxBodyBytes ?? 16 * 1024 * 1024)) {
+        if (size > (options.maxBodyBytes ?? 40 * 1024 * 1024)) {
           json(413, { error: "Request too large" });
           return;
         }
-        raw += chunk;
+        chunks.push(chunk);
       }
       requestBytes = size;
-      body = JSON.parse(raw);
+      body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       if (body?.model !== "grok-4.6" || !Array.isArray(body.input))
         throw new Error();
-      toImageBlocks(body);
-    } catch (error) {
-      return json(400, {
-        error:
-          error instanceof ImageInputError ? error.message : "Invalid request",
-      });
+    } catch {
+      return json(400, { error: "Invalid request" });
     }
     // Refuse only when even the queue is full; anything else waits for a slot.
     // The check must sit after the body read, not before it: an `await` between
@@ -174,7 +173,10 @@ export function createBridgeServer(options = {}) {
         });
       } else {
         const session = readGrokBearerToken(options.grokHome);
-        const { request, map } = toProxyRequest(body);
+        // Grok takes input_image blocks natively; only unusable attachments
+        // are swapped for an explanation, so one bad image cannot make the
+        // upstream reject the whole conversation.
+        const { request, map } = toProxyRequest(sanitizeImages(body));
         const proxy = await openProxyStreamWithRetry({
           token: session.token,
           userId: session.userId,
