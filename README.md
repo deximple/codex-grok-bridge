@@ -105,7 +105,7 @@ Codex에 첫 SSE 블록을 쓰기 **전**에 죽은 요청은 한 번 다시 보
 - 기본 Responses 경로는 스트림을 전달합니다. 프롬프트 캐시 키는 Codex `prompt_cache_key`를 `x-grok-conv-id`로 넘깁니다.
 - cli-chat-proxy는 function tool 339개 요청을 수락했습니다. 공개 API 문서의 200개 한도는 이 로그인 경로에 적용되지 않습니다.
 - 저장된 루트 작업이 대기 중이면 GPT ↔ Grok 전환을 지원합니다. `turn/start`와 설정 변경 API는 제공자를 바꾸지 못하므로, 래퍼가 구독 해제 → 같은 ID로 제공자를 지정해 재개 → 제공자·권한 확인 후 원래 요청을 전달합니다. 실행 중인 작업, 임시 작업, 하위 에이전트는 제공자 전환을 거부하며, 다른 구독자가 전환을 막으면 추론을 보내지 않습니다. 첫 턴이 저장되기 전에는 새 작업을 시작할 때 원하는 모델을 선택하세요.
-- **이미지 생성도 Grok이 합니다.** 브리지가 상류 요청에 `{ type: "image_generation" }`을 직접 선언하므로, Codex가 이미지 도구를 노출하지 않아도 Grok이 서버 쪽에서 생성합니다. 돌아온 바이트는 `~/.local/share/codex-grok-bridge/generated-images/`에 0600으로 저장하고, Codex에는 파일 경로를 알려주는 assistant 메시지로 전달합니다. Codex가 모르는 `response.image_generation_call.*` 이벤트는 걸러냅니다. `GROK_BRIDGE_IMAGE_GEN=off`로 끕니다.
+- **이미지 생성도 Grok이 합니다.** 브리지가 상류 요청에 `{ type: "image_generation" }`을 직접 선언하므로, Codex가 이미지 도구를 노출하지 않아도 Grok이 서버 쪽에서 생성합니다. 도구가 켜져 있으면 `instructions` 끝에 `Images:` 출처 한 줄을 붙여 Codex `imagegen` 스킬을 읽지 말라고 합니다. 돌아온 바이트는 `~/.local/share/codex-grok-bridge/generated-images/`에 0600으로 저장하고, Codex에는 파일 경로를 알려주는 assistant 메시지로 전달합니다. Codex가 모르는 `response.image_generation_call.*` 이벤트는 걸러냅니다. `GROK_BRIDGE_IMAGE_GEN=off`로 끄면 도구와 그 줄이 같이 빠집니다.
   - **한계도 실측했습니다.** Grok의 `image_generation`은 텍스트→이미지 생성만 제대로 됩니다.
 
     | 기능 | 결과 |

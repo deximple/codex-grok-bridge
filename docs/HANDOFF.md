@@ -22,7 +22,7 @@ Codex UI/CLI → app-server → scripts/codex-wrapper.mjs (모델 목록에 grok
 
 ```
 저장소 src/ = /Applications/Codex Grok.app/…/bridge/src/     (해시 일치)
-게이트        131/131, 97.44 lines / 87.30 branches / 89.93 functions
+게이트        132/132, 97.44 lines / 87.30 branches / 89.93 functions
 ```
 
 | 모듈 | 역할 |
@@ -30,7 +30,7 @@ Codex UI/CLI → app-server → scripts/codex-wrapper.mjs (모델 목록에 grok
 | `bridge.mjs` | HTTP 서버, SSE, 진단 기록. 225줄 |
 | `transport.mjs` | node:http(s) Agent + TTL 5분 DNS 캐시. `GROK_BRIDGE_TRANSPORT=fetch`로 되돌림 |
 | `proxy.mjs` | Grok Responses 프로토콜, 재시도 경계, SSE 파이프 |
-| `tools.mjs` | Codex↔Grok 아이템/도구 변환. `TRANSPORT_PROVENANCE` |
+| `tools.mjs` | Codex↔Grok 아이템/도구 변환. `TRANSPORT_PROVENANCE` + 이미지 켜짐 시 `IMAGE_GENERATION_PROVENANCE` |
 | `errors.mjs` | cause 체인 오류 분류 |
 | `diagnostics.mjs` | 레닥션·회전 로컬 로그 |
 | `slots.mjs` | 유한 동시성(기본 4) + 큐(기본 8) |
@@ -124,6 +124,7 @@ Codex는 400초 침묵도 견디므로 대기가 429보다 항상 낫다. **이 
 이 프로바이더에 오는 263개 도구 중 이미지 생성은 하나도 없다(`view_image`만 있다).
 그래서 Codex의 `imagegen` 시스템 스킬은 OpenAI 경로로 폴백한다 — 추론은 Grok인데 그림은 다른 벤더가 그린다.
 브리지가 `{type:"image_generation"}`을 직접 선언해서 해결했다. Codex를 거치지 않고 Grok이 서버 쪽에서 생성한다.
+도구가 켜져 있으면 `IMAGE_GENERATION_PROVENANCE`를 instructions에 붙여 그 스킬을 읽지 말라고 한다. `GROK_BRIDGE_IMAGE_GEN=off`면 도구와 그 줄이 같이 빠진다.
 
 **단, 생성만 된다.** 실측: 투명 배경은 지원하지 않는다 — 항상 JPEG로 오고, 모델은 "투명 배경"이라 말하면서
 체커보드를 그림에 칠해서 보낸다. 도구 파라미터(`background`, `output_format`)는 조용히 무시된다.
@@ -140,7 +141,7 @@ Codex는 400초 침묵도 견디므로 대기가 429보다 항상 낫다. **이 
 ## 5. 검증
 
 ```sh
-npm test                                   # 131건, 외부 추론 없음
+npm test                                   # 132건, 외부 추론 없음
 npm run test:coverage                      # 80% 게이트
 npm run verify:app-server                  # 실제 app-server 라우팅. 설치 번들에서도 실행됨
 node scripts/codex-grok.mjs exec --skip-git-repo-check "Reply with exactly PONG." </dev/null
