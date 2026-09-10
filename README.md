@@ -67,7 +67,7 @@ starts, and tears the provider down with that process.
 ```sh
 git clone https://github.com/deximple/codex-grok-bridge.git
 cd codex-grok-bridge
-npm test                        # 132 tests, no network, no inference
+npm test                        # 134 tests, no network, no inference
 node scripts/codex-grok.mjs
 ```
 
@@ -154,7 +154,10 @@ not read Codex’s `imagegen` skill and do not send the picture to OpenAI.
 Plain-text summaries on Codex `reasoning` items are forwarded. Encrypted
 `encrypted_content` and Codex’s own item ids are stripped. This is so a
 multi-call turn can continue its own reasoning. The upstream has been observed
-to accept this shape.
+to accept this shape. The same pass keeps only the fields Grok’s Responses
+input accepts on each item and content part — `status`, unknown Codex keys,
+and every `internal_*` field are dropped so a new client field cannot 422 the
+upstream.
 
 ### Concurrency
 
@@ -276,7 +279,7 @@ Start here when something breaks. Do not open `~/.grok/auth.json` or
 ## Verify
 
 ```sh
-npm test                    # 132 tests, no remote inference
+npm test                    # 134 tests, no remote inference
 npm run test:coverage       # 80% line / branch / function gate
 npm run verify:app-server   # real app-server routing; also runs against an installed bundle
 npm audit --omit=dev
@@ -377,7 +380,7 @@ codex-grok exec --skip-git-repo-check --sandbox workspace-write '작업 내용'
 ```sh
 git clone https://github.com/deximple/codex-grok-bridge.git
 cd codex-grok-bridge
-npm test                        # 132건, 네트워크·추론 없음
+npm test                        # 134건, 네트워크·추론 없음
 node scripts/codex-grok.mjs
 ```
 
@@ -459,7 +462,9 @@ OpenAI로 보내지 말라는 뜻입니다. `GROK_BRIDGE_IMAGE_GEN=off`면 도�
 Codex `reasoning` 항목의 평문 요약은 상류로 전달합니다. 암호화된
 `encrypted_content`와 Codex 자체 아이템 id는 제거합니다. 여러 번 호출이 이어지는
 턴에서 모델이 자기 추론을 이어받게 하기 위한 것이며, 상류가 이 형태를 수락하는
-것을 확인했습니다.
+것을 확인했습니다. 같은 과정에서 아이템과 content part는 Grok Responses가
+받는 필드만 남깁니다. `status`, 알 수 없는 Codex 키, `internal_*` 필드는
+버려서 새 클라이언트 필드가 상류 422를 내지 않게 합니다.
 
 ### 동시성
 
@@ -576,7 +581,7 @@ provider에 Codex `request_max_retries` / `stream_max_retries`를 2로 두어
 ## 검증
 
 ```sh
-npm test                    # 132건, 외부 추론 없음
+npm test                    # 134건, 외부 추론 없음
 npm run test:coverage       # line/branch/function 80% 게이트
 npm run verify:app-server   # 실제 app-server 라우팅. 설치된 앱 번들에서도 실행
 npm audit --omit=dev
