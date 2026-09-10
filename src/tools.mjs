@@ -56,6 +56,57 @@ const GROK_INPUT_ITEM_TYPES = new Set([
   "function_call_output",
   "shell_call",
 ]);
+// Codex item ids, status, and new client metadata have 422'd the upstream.
+// Keep only the fields Grok's Responses input is known to accept.
+const INPUT_ITEM_FIELDS = {
+  message: ["type", "role", "content"],
+  reasoning: ["type", "summary"],
+  function_call: ["type", "name", "call_id", "arguments"],
+  function_call_output: ["type", "name", "call_id", "output"],
+  shell_call: ["type", "name", "call_id", "action"],
+};
+const CONTENT_PART_FIELDS = {
+  input_text: ["type", "text"],
+  output_text: ["type", "text"],
+  summary_text: ["type", "text"],
+  input_image: ["type", "image_url", "detail"],
+};
+
+function pickKeys(node, keys) {
+  const next = {};
+  for (const key of keys) {
+    if (node[key] !== undefined) next[key] = node[key];
+  }
+  return next;
+}
+
+function whitelistContentPart(part) {
+  if (!part || typeof part !== "object" || Array.isArray(part)) return part;
+  const keys = CONTENT_PART_FIELDS[part.type];
+  if (!keys) return part;
+  const next = pickKeys(part, keys);
+  if (next.image_url && typeof next.image_url === "object")
+    next.image_url = pickKeys(next.image_url, ["url", "detail"]);
+  return next;
+}
+
+function whitelistInputNode(node) {
+  if (!node || typeof node !== "object" || Array.isArray(node)) return node;
+  const itemKeys = INPUT_ITEM_FIELDS[node.type];
+  if (itemKeys) {
+    const next = pickKeys(node, itemKeys);
+    if (Array.isArray(next.content))
+      next.content = next.content.map(whitelistContentPart);
+    return next;
+  }
+  if (node.type == null && node.role != null && node.content !== undefined) {
+    const next = pickKeys(node, ["role", "content"]);
+    if (Array.isArray(next.content))
+      next.content = next.content.map(whitelistContentPart);
+    return next;
+  }
+  return whitelistContentPart(node);
+}
 
 function usableParameters(parameters) {
   if (!parameters || typeof parameters !== "object") return OBJECT_SCHEMA;
@@ -189,7 +240,7 @@ function toProxyInputNode(node, map, state) {
     if (
       key === "encrypted_content" ||
       key === "encrypted_function_args" ||
-      key === "internal_chat_message_metadata_passthrough"
+      key.startsWith("internal_")
     )
       continue;
     const converted = toProxyInputNode(value, map, state);
@@ -204,7 +255,7 @@ function toProxyInputNode(node, map, state) {
       (part) => part && typeof part.text === "string" && part.text.trim(),
     );
     if (!summary.length) return DROP;
-    return { type: "reasoning", summary };
+    return whitelistInputNode({ type: "reasoning", summary });
   }
 
   if (next.type === "agent_message") {
@@ -214,7 +265,7 @@ function toProxyInputNode(node, map, state) {
         ? [{ type: "input_text", text: next.text }]
         : [];
     if (!content.length) return DROP;
-    return { type: "message", role: "assistant", content };
+    return whitelistInputNode({ type: "message", role: "assistant", content });
   }
 
   if (
@@ -227,10 +278,7 @@ function toProxyInputNode(node, map, state) {
       delete next.namespace;
       if (typeof next.call_id === "string") state.callIds.set(next.call_id, proxyName);
     }
-    return next;
-  }
-
-  if (
+  } else if (
     next.type === "custom_tool_call" &&
     typeof next.name === "string"
   ) {
@@ -244,10 +292,7 @@ function toProxyInputNode(node, map, state) {
       delete next.input;
       if (typeof next.call_id === "string") state.callIds.set(next.call_id, proxyName);
     }
-    return next;
-  }
-
-  if (
+  } else if (
     next.type === "function_call_output" ||
     next.type === "custom_tool_call_output"
   ) {
@@ -262,10 +307,9 @@ function toProxyInputNode(node, map, state) {
       next.name = proxyName;
       delete next.namespace;
     }
-    return next;
   }
 
-  return next;
+  return whitelistInputNode(next);
 }
 
 function toProxyInput(input, map) {

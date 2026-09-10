@@ -199,6 +199,126 @@ test("strips Codex passthrough metadata from items sent to Grok", () => {
   assert.equal(request.input[2].output, " /tmp\n");
 });
 
+test("strips every internal_ key, not only the known passthrough field", () => {
+  const { request } = toProxyRequest({
+    input: [
+      {
+        role: "user",
+        content: [{ type: "input_text", text: "hi" }],
+        internal_future_metadata: { x: 1 },
+        internal_chat_message_metadata_passthrough: { turn_id: "t1" },
+      },
+    ],
+    tools: [],
+  });
+  assert.equal(request.input.length, 1);
+  assert.equal(request.input[0].internal_future_metadata, undefined);
+  assert.equal(request.input[0].internal_chat_message_metadata_passthrough, undefined);
+});
+
+test("forwards only Grok-accepted fields on input items", () => {
+  const { request } = toProxyRequest({
+    input: [
+      {
+        type: "message",
+        id: "msg-1",
+        role: "user",
+        status: "completed",
+        phase: "final",
+        extra_codex_field: "nope",
+        content: [
+          {
+            type: "input_text",
+            text: "hi",
+            id: "c1",
+            annotations: [{ type: "file", file_id: "f1" }],
+          },
+          {
+            type: "input_image",
+            image_url: { url: "data:image/png;base64,aaa", extra: true },
+            detail: "high",
+            file_id: "file_x",
+            id: "img-1",
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: "plain",
+        id: "msg-2",
+        status: "completed",
+        client_timestamp: 1,
+      },
+      {
+        type: "function_call",
+        id: "fc_1",
+        name: "exec_command",
+        arguments: "{\"cmd\":\"pwd\"}",
+        call_id: "call-1",
+        status: "completed",
+        recipient: "browser",
+      },
+      {
+        type: "function_call_output",
+        id: "fco_1",
+        call_id: "call-1",
+        output: "ok",
+        status: "completed",
+        extra: true,
+      },
+      {
+        type: "shell_call",
+        id: "sh-1",
+        call_id: "shell-1",
+        action: { command: ["echo"] },
+        status: "completed",
+        extra: true,
+      },
+    ],
+    tools: [
+      {
+        type: "function",
+        name: "exec_command",
+        parameters: { type: "object", properties: {} },
+      },
+    ],
+  });
+  assert.deepEqual(request.input[0], {
+    type: "message",
+    role: "user",
+    content: [
+      { type: "input_text", text: "hi" },
+      {
+        type: "input_image",
+        image_url: { url: "data:image/png;base64,aaa" },
+        detail: "high",
+      },
+    ],
+  });
+  assert.deepEqual(request.input[1], { role: "user", content: "plain" });
+  assert.deepEqual(Object.keys(request.input[2]).sort(), [
+    "arguments",
+    "call_id",
+    "name",
+    "type",
+  ]);
+  assert.match(request.input[2].name, /^codex_0_exec_command$/);
+  assert.equal(request.input[2].id, undefined);
+  assert.equal(request.input[2].status, undefined);
+  assert.equal(request.input[2].recipient, undefined);
+  assert.deepEqual(request.input[3], {
+    type: "function_call_output",
+    name: request.input[2].name,
+    call_id: "call-1",
+    output: "ok",
+  });
+  assert.deepEqual(request.input[4], {
+    type: "shell_call",
+    call_id: "shell-1",
+    action: { command: ["echo"] },
+  });
+});
+
 test("converts desktop rollout item shapes into Grok-accepted input only", () => {
   const original = [
     {

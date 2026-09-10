@@ -30,7 +30,7 @@ Codex UI/CLI → app-server → scripts/codex-wrapper.mjs (모델 목록에 grok
 | `bridge.mjs` | HTTP 서버, SSE, 진단 기록. 225줄 |
 | `transport.mjs` | node:http(s) Agent + TTL 5분 DNS 캐시. `GROK_BRIDGE_TRANSPORT=fetch`로 되돌림 |
 | `proxy.mjs` | Grok Responses 프로토콜, 재시도 경계, SSE 파이프 |
-| `tools.mjs` | Codex↔Grok 아이템/도구 변환. `TRANSPORT_PROVENANCE` + 이미지 켜짐 시 `IMAGE_GENERATION_PROVENANCE` |
+| `tools.mjs` | Codex↔Grok 아이템/도구 변환. 입력 필드 화이트리스트. `TRANSPORT_PROVENANCE` + 이미지 켜짐 시 `IMAGE_GENERATION_PROVENANCE` |
 | `errors.mjs` | cause 체인 오류 분류 |
 | `diagnostics.mjs` | 레닥션·회전 로컬 로그 |
 | `slots.mjs` | 유한 동시성(기본 4) + 큐(기본 8) |
@@ -141,7 +141,7 @@ Codex는 400초 침묵도 견디므로 대기가 429보다 항상 낫다. **이 
 ## 5. 검증
 
 ```sh
-npm test                                   # 132건, 외부 추론 없음
+npm test                                   # 134건, 외부 추론 없음
 npm run test:coverage                      # 80% 게이트
 npm run verify:app-server                  # 실제 app-server 라우팅. 설치 번들에서도 실행됨
 node scripts/codex-grok.mjs exec --skip-git-repo-check "Reply with exactly PONG." </dev/null
@@ -169,7 +169,7 @@ node scripts/codex-grok.mjs exec --skip-git-repo-check "Reply with exactly PONG.
 | `context_window` 258,400 출처 | 카탈로그 값을 131072로 낮추고 `token_count.model_context_window`가 따라 변하는지 관찰. 안 변하면 Codex 내부값 | 라이브 1콜 |
 | 프리픽스 156k 축소 | 전용 `CODEX_HOME`으로 world_state(119,669자)를 슬림화. 재로그인 비용이 있어 사용자 결정 사항 | — |
 | `~/.grok/auth.json` JWT 노출 | 2026-09-08 23:13 턴이 롤아웃에 기록했다. **토큰 회전(`grok login`)이 실질적 대응** | — |
-| 필드 화이트리스트 | 타입만 거르고 여분 필드는 상류로 그대로 간다. 새 Codex 필드가 422를 부를 수 있다 | 낮음 |
+| ~~필드 화이트리스트~~ | **적용.** 아이템·content part는 Grok Responses가 받는 필드만 남긴다. `internal_*` 접두사도 전부 제거 | — |
 
 ## 8. 롤백
 
