@@ -22,7 +22,7 @@ Codex UI/CLI → app-server → scripts/codex-wrapper.mjs (모델 목록에 grok
 
 ```
 저장소 src/ = /Applications/Codex Grok.app/…/bridge/src/     (해시 일치)
-게이트        132/132, 97.44 lines / 87.30 branches / 89.93 functions
+게이트        134/134, 97.62 lines / 87.54 branches / 90.14 functions
 ```
 
 | 모듈 | 역할 |
