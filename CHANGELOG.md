@@ -9,7 +9,7 @@ First cut that accepts **Windows** (`"os": ["darwin", "linux", "win32"]`).
 - Isolated win32 wrapper under `%LOCALAPPDATA%\codex-grok-bridge`. Never writes WindowsApps.
 - Launch reads a Store ChatGPT / `resources/codex.exe` pointer when the isolated copies are missing.
 - Grok 4.7 drop prep: any `grok-*` id uses the Grok provider. Extra catalog slugs via `GROK_BRIDGE_MODELS`.
-- UTM Windows 11 ARM64 guest: Node 22.23.2, `node --test` 156/0/3, official ChatGPT ARM64 MSIX `OpenAI.Codex_26.903.8094.0`, bundled CLI `codex-cli 0.153.4`, grok 1.0.25, loopback `/v1/models` 200. See `docs/windows-arm64-guest.md`.
+- UTM Windows 11 ARM64 guest: Node 22.23.2, `node --test` 157/0/3 on 1.5.0, official ChatGPT ARM64 MSIX `OpenAI.Codex_26.903.8094.0`, bundled CLI `codex-cli 0.153.4`, grok 1.0.25, loopback `/v1/models` 200. See `docs/windows-arm64-guest.md`.
 
 Install: `npm install -g codex-grok-bridge@1.5.0`
 

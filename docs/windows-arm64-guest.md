@@ -4,7 +4,7 @@ UTM VM `Codex Grok Windows ARM64` (`4B2C76AC-75D8-4247-BE00-3B60CCFE372D`).
 Windows 11 Pro 25H2, `Get-CimInstance Win32_ComputerSystem.SystemType` = **ARM64-based PC**.
 No x64/x86 QEMU emulation.
 
-Recorded 2026-09-12. Host gate on this branch is **160/160**. Guest `node --test` was **156 pass / 0 fail / 3 skip** on the earlier tree (`4a69481`); the three skips are Linux-only desktop installer/launcher tests (`sh` is not on this guest).
+Recorded 2026-09-12. Host gate on this branch is **160/160**. Guest `node --test` on the 1.5.0 tree (`c1661c7`) is **157 pass / 0 fail / 3 skip**; the three skips are Linux-only desktop installer/launcher tests (`sh` is not on this guest).
 
 ## Runtime
 
@@ -29,13 +29,13 @@ grok-version=grok 1.0.25 (f7e67d6988e2)
 
 ## Isolated installer
 
-`scripts/install-codex-grok-app.ps1` with `LOCALAPPDATA=C:\Users\Public\agent-profile`:
+`scripts/install-codex-grok-app.ps1` with `LOCALAPPDATA=C:\Users\Public\agent-profile` on the 1.5.0 tree:
 
 ```
+store pointer store-app.txt=C:\Program Files\WindowsApps\OpenAI.Codex_26.903.8094.0_arm64__2p2nqsd0c76g0\app\ChatGPT.exe
+store pointer store-codex.txt=C:\Program Files\WindowsApps\OpenAI.Codex_26.903.8094.0_arm64__2p2nqsd0c76g0\app\resources\codex.exe
 win32 wrapper C:\Users\Public\agent-profile\codex-grok-bridge\app\codex-grok-desktop.cmd
-bridge in C:\Users\Public\agent-profile\codex-grok-bridge\app matches C:\Users\Public\codex-grok-bridge
-launcher=OK
-startmenu=OK
+bridge in C:\Users\Public\agent-profile\codex-grok-bridge\app matches C:\Users\Public\codex-grok-bridge-150
 ```
 
 Did not write `WindowsApps` or the stock ChatGPT/Codex prefix.
@@ -66,3 +66,16 @@ codex=C:\Program Files\WindowsApps\OpenAI.Codex_26.903.8094.0_arm64__2p2nqsd0c76
 ```
 
 Package `"os"` is `["darwin","linux","win32"]` starting at **1.5.0**. Do not treat npm 1.0.4/1.0.5 as a Windows install target.
+
+## 1.5.0 guest gate
+
+`git archive` of `c1661c7` extracted to `C:\Users\Public\codex-grok-bridge-150`:
+
+```
+# tests 160
+# pass 157
+# fail 0
+# skipped 3
+```
+
+User `agent` already sees `Get-AppxPackage OpenAI.Codex` as **Ok**. An extra `Add-AppxPackage -Register` as that user returned `0x80070005` (access denied on the provisioned payload) and is not required for resolve/install.
