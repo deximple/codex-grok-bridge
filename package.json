@@ -1,6 +1,6 @@
 {
   "name": "codex-grok-bridge",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Run Grok 4.6 as the model inside Codex, with Codex still owning tools, permissions, history and MCP. Uses the grok login session, not an API key.",
   "type": "module",
   "license": "MIT",
@@ -39,6 +39,7 @@
     "scripts/launch-desktop.mjs",
     "Open Codex with Grok.command",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {
