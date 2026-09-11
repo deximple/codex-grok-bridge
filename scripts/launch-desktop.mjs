@@ -21,7 +21,28 @@ function log(message) {
   appendFileSync(logFile, `${new Date().toISOString()} ${message}\n`);
 }
 
+function grokPidWin32() {
+  const systemRoot = process.env.SystemRoot || "C:\\Windows";
+  const powershell = `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+  try {
+    const out = execFileSync(
+      powershell,
+      [
+        "-NoProfile",
+        "-Command",
+        `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like ${JSON.stringify(`*--user-data-dir=${userData}*`)} } | Select-Object -First 1 -ExpandProperty ProcessId`,
+      ],
+      { encoding: "utf8", windowsHide: true, timeout: 15000 },
+    );
+    const pid = Number(String(out).trim());
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
 function grokPid() {
+  if (platform === "win32") return grokPidWin32();
   const out = execFileSync("/bin/ps", ["-axo", "pid=,command="], {
     encoding: "utf8",
   });

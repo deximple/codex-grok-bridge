@@ -15,13 +15,17 @@
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
-USER_DATA="$HOME/.local/share/codex-grok-bridge/desktop"
 PLATFORM="${CODEX_GROK_PLATFORM:-$(uname -s)}"
 case "$PLATFORM" in
   Linux|linux) PLATFORM=linux ;;
   Darwin|darwin) PLATFORM=darwin ;;
   MINGW*|MSYS*|CYGWIN*|Windows_NT|win32|windows) PLATFORM=win32 ;;
 esac
+if [ "$PLATFORM" = win32 ]; then
+  USER_DATA="${LOCALAPPDATA:-$HOME/AppData/Local}/codex-grok-bridge/desktop"
+else
+  USER_DATA="$HOME/.local/share/codex-grok-bridge/desktop"
+fi
 
 if [ "$PLATFORM" = linux ]; then
   APP="${CODEX_GROK_APP:-$HOME/.local/share/codex-grok-bridge/app}"
@@ -57,7 +61,7 @@ if [ "$PLATFORM" != linux ] && [ "$PLATFORM" != win32 ] && [ ! -d "$APP/Contents
   exit 1
 fi
 
-if [ "$FORCE" -eq 0 ] && pgrep -f -- "--user-data-dir=$USER_DATA" >/dev/null 2>&1; then
+if [ "$FORCE" -eq 0 ] && [ "$PLATFORM" != win32 ] && pgrep -f -- "--user-data-dir=$USER_DATA" >/dev/null 2>&1; then
   echo "Codex Grok is running. Close its window first, or pass --force to swap" >&2
   echo "the files under it (the running window keeps its loaded code either way)." >&2
   exit 1

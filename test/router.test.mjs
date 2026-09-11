@@ -10,6 +10,29 @@ test("adds Grok exactly once and preserves existing models", () => {
   });
   assert.deepEqual(result.result.data, [{ id: "gpt" }, MODEL_ENTRY]);
 });
+test("routes grok-4.7 and injects extra catalog ids from GROK_BRIDGE_MODELS", () => {
+  const previous = process.env.GROK_BRIDGE_MODELS;
+  process.env.GROK_BRIDGE_MODELS = "grok-4.7";
+  try {
+    const router = new Router("/catalog.json");
+    const started = router.outgoing({
+      id: 2,
+      method: "thread/start",
+      params: { model: "grok-4.7" },
+    });
+    assert.equal(started.params.modelProvider, "grok_build_cli");
+    router.outgoing({ id: 1, method: "model/list" });
+    const listed = router.incoming({
+      id: 1,
+      result: { data: [{ id: "gpt" }], nextCursor: null },
+    });
+    assert.equal(listed.result.data[1].id, "grok-4.6");
+    assert.equal(listed.result.data[2].id, "grok-4.7");
+  } finally {
+    if (previous === undefined) delete process.env.GROK_BRIDGE_MODELS;
+    else process.env.GROK_BRIDGE_MODELS = previous;
+  }
+});
 test("routes Grok thread start and preserves approvals", () => {
   const router = new Router("/catalog.json");
   const request = router.outgoing({

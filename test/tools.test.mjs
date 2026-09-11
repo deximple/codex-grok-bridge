@@ -244,6 +244,13 @@ test("proxy request drops Codex client metadata and provider-opaque blobs", () =
   assert.equal(request.tool_choice.type, "function");
   assert.equal(map.get(request.tool_choice.name).name, "exec_command");
 });
+test("proxy request forwards grok-4.7 instead of pinning 4.6", () => {
+  const { request } = toProxyRequest({
+    model: "grok-4.7",
+    input: [{ role: "user", content: "hi" }],
+  });
+  assert.equal(request.model, "grok-4.7");
+});
 
 test("keeps plain reasoning summaries but strips compaction and encrypted content", () => {
   const { request } = toProxyRequest({

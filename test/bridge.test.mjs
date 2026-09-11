@@ -54,6 +54,41 @@ test("serves the Grok model catalog", async () => {
     assert.deepEqual(data.models[0], MODEL_INFO);
   });
 });
+test("accepts grok-4.7 and lists it when GROK_BRIDGE_MODELS is set", async () => {
+  const previous = process.env.GROK_BRIDGE_MODELS;
+  process.env.GROK_BRIDGE_MODELS = "grok-4.7";
+  try {
+    await withServer(
+      {
+        runGrok: async () => ({
+          exitCode: 0,
+          stdout: JSON.stringify({
+            text: JSON.stringify({ text: "ok-47", calls: [] }),
+          }),
+          stderr: "",
+        }),
+      },
+      async (baseUrl) => {
+        const listed = await fetch(`${baseUrl}/v1/models`);
+        const data = await listed.json();
+        assert.equal(data.models[1].slug, "grok-4.7");
+        const response = await fetch(`${baseUrl}/v1/responses`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${TOKEN}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(requestBody({ model: "grok-4.7" })),
+        });
+        assert.equal(response.status, 200);
+        assert.match(await response.text(), /ok-47/);
+      },
+    );
+  } finally {
+    if (previous === undefined) delete process.env.GROK_BRIDGE_MODELS;
+    else process.env.GROK_BRIDGE_MODELS = previous;
+  }
+});
 
 test("rejects unauthenticated inference without spawning Grok", async () => {
   let called = false;

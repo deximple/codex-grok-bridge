@@ -3,13 +3,14 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { once } from "node:events";
-import { createBridgeServer, MODEL_INFO } from "./bridge.mjs";
+import { createBridgeServer } from "./bridge.mjs";
+import { catalogModelInfos } from "./models.mjs";
 
 export async function startRuntime(options = {}) {
   const token = randomBytes(32).toString("hex");
   const dir = await mkdtemp(path.join(tmpdir(), "codex-grok-runtime-"));
   const catalogPath = path.join(dir, "models.json");
-  await writeFile(catalogPath, JSON.stringify({ models: [MODEL_INFO] }), {
+  await writeFile(catalogPath, JSON.stringify({ models: catalogModelInfos() }), {
     mode: 0o600,
   });
   const server = createBridgeServer({

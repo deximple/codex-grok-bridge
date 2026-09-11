@@ -29,10 +29,12 @@ The bridge does **not** execute Grok-native tools. It translates Codex tools int
 function calling, streams the upstream Responses events, and rewrites names back
 so Codex still recognizes them.
 
-Thirteen files under `src/`. Zero runtime dependencies. Node.js ≥ 22.
+Fourteen files under `src/`. Zero runtime dependencies. Node.js ≥ 22.
 
-This is not a second-opinion review product, not a Grok 4.7 adapter, and not a
-Grok-native search product. If Codex exposes a web-search tool, Grok can call
+This is not a second-opinion review product and not a Grok-native search
+product. New Grok ids, including 4.7 when the CLI lists them, use the same
+`grok-*` route. Set `GROK_BRIDGE_MODELS=grok-4.7` to show extras in the catalog
+before they are the default. If Codex exposes a web-search tool, Grok can call
 that tool the same way it calls any other Codex tool.
 
 ## Requirements
@@ -69,7 +71,7 @@ starts, and tears the provider down with that process.
 ```sh
 git clone https://github.com/deximple/codex-grok-bridge.git
 cd codex-grok-bridge
-npm test                        # 151 tests, no network, no inference
+npm test                        # 159 tests, no network, no inference
 node scripts/codex-grok.mjs
 ```
 
@@ -277,13 +279,14 @@ Start here when something breaks. Do not open `~/.grok/auth.json` or
 | `GROK_BRIDGE_TRANSPORT=fetch` | Use Node `fetch` instead of `node:http(s)` |
 | `GROK_BRIDGE_INFERENCE=cli` | Fall back to the CLI envelope path |
 | `GROK_BRIDGE_DIAGNOSTICS=off` | Do not write the JSONL log |
+| `GROK_BRIDGE_MODELS` | Extra `grok-*` catalog ids (comma or space), e.g. `grok-4.7` |
 | `NODE` | Absolute `node` binary for the `.command` launcher / desktop scripts |
 | `CODEX_GROK_APP` | Alternate app path for `install-codex-grok-app.sh` (macOS: `/Applications/Codex Grok.app`; Linux: `~/.local/share/codex-grok-bridge/app`) |
 
 ## Verify
 
 ```sh
-npm test                    # 151 tests, no remote inference
+npm test                    # 159 tests, no remote inference
 npm run test:coverage       # 80% line / branch / function gate
 npm run verify:app-server   # real app-server routing; also runs against an installed bundle
 npm audit --omit=dev
@@ -348,11 +351,12 @@ Grok 4.6을 Codex 모델 목록에 넣고, Codex의 `/v1/responses`를
 calling으로 옮기고, 상류 Responses 스트림을 전달한 뒤, Codex가 알아보는
 이름으로 되돌립니다.
 
-`src/` 아래 파일 13개. 런타임 의존성 없음. Node.js 22 이상.
+`src/` 아래 파일 14개. 런타임 의존성 없음. Node.js 22 이상.
 
-코드 리뷰 전용 제품이 아니고, Grok 4.7 어댑터도 아니며, Grok 네이티브 검색
-제품도 아닙니다. Codex가 웹 검색 도구를 노출하면 Grok은 다른 Codex 도구와 같이
-그 도구를 호출할 수 있습니다.
+코드 리뷰 전용 제품이 아니고 Grok 네이티브 검색 제품도 아닙니다. CLI가 새
+id(4.7 포함)를 내놓으면 같은 `grok-*` 경로로 붙습니다. 기본 카탈로그에 먼저
+보이게 하려면 `GROK_BRIDGE_MODELS=grok-4.7`을 씁니다. Codex가 웹 검색 도구를
+노출하면 Grok은 다른 Codex 도구와 같이 그 도구를 호출할 수 있습니다.
 
 ## 필요한 것
 
@@ -387,7 +391,7 @@ codex-grok exec --skip-git-repo-check --sandbox workspace-write '작업 내용'
 ```sh
 git clone https://github.com/deximple/codex-grok-bridge.git
 cd codex-grok-bridge
-npm test                        # 151건, 네트워크·추론 없음
+npm test                        # 159건, 네트워크·추론 없음
 node scripts/codex-grok.mjs
 ```
 
@@ -584,13 +588,14 @@ provider에 Codex `request_max_retries` / `stream_max_retries`를 2로 두어
 | `GROK_BRIDGE_TRANSPORT=fetch` | `node:http(s)` 대신 Node `fetch` |
 | `GROK_BRIDGE_INFERENCE=cli` | CLI 봉투 경로로 폴백 |
 | `GROK_BRIDGE_DIAGNOSTICS=off` | JSONL 로그를 쓰지 않음 |
+| `GROK_BRIDGE_MODELS` | 카탈로그에 더할 `grok-*` id (쉼표/공백). 예: `grok-4.7` |
 | `NODE` | `.command` / 데스크톱 스크립트가 쓸 `node` 절대 경로 |
 | `CODEX_GROK_APP` | `install-codex-grok-app.sh`가 쓸 앱 경로 (macOS: `/Applications/Codex Grok.app`; Linux: `~/.local/share/codex-grok-bridge/app`) |
 
 ## 검증
 
 ```sh
-npm test                    # 151건, 외부 추론 없음
+npm test                    # 159건, 외부 추론 없음
 npm run test:coverage       # line/branch/function 80% 게이트
 npm run verify:app-server   # 실제 app-server 라우팅. 설치된 앱 번들에서도 실행
 npm audit --omit=dev

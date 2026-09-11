@@ -4,6 +4,8 @@
 
 Windows wrapper paths (`%LOCALAPPDATA%\codex-grok-bridge`), `grok.exe`, and `install-codex-grok-app.ps1`. `"os"` stays `darwin`+`linux` until ARM64 VM proof.
 
+Grok 4.7 drop prep: any `grok-*` id routes through the same provider. Extra catalog slugs come from `GROK_BRIDGE_MODELS` (for example `grok-4.7`) without a rewrite. Default catalog remains `grok-4.6`.
+
 ## 1.0.5 — 2026-09-12
 
 First npm cut that accepts **Linux** (`"os": ["darwin", "linux"]`). Windows stays rejected.

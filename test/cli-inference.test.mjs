@@ -151,6 +151,16 @@ test("builds a shell-free Grok CLI invocation and maps ultra to xhigh", () => {
   assert.ok(invocation.args.includes("Read"));
   assert.ok(invocation.args.includes("Grep"));
 });
+test("CLI fallback forwards grok-4.7", () => {
+  const invocation = buildGrokInvocation(
+    requestBody({ model: "grok-4.7" }),
+    { grokBinary: "/opt/grok", fallbackCwd: "/safe/project" },
+  );
+  assert.equal(
+    invocation.args[invocation.args.indexOf("--model") + 1],
+    "grok-4.7",
+  );
+});
 
 test("parses the final Grok JSON object without returning diagnostics", () => {
   assert.deepEqual(parseGrokResult('{"text":"done","sessionId":"s1"}\n'), {
