@@ -40,7 +40,10 @@ Copy-Item $Launcher (Join-Path $StartDir "Codex Grok.cmd") -Force
 function Write-StorePointer([string]$Name, [string[]]$Filters) {
   $pointerDir = Split-Path -Parent $App
   if ($pointerDir -match "(?i)WindowsApps") { return }
-  $pkgs = @(Get-AppxPackage -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "OpenAI\.(ChatGPT|Codex)|ChatGPT" })
+  $pkgs = @(Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "OpenAI\.(ChatGPT|Codex)|ChatGPT" })
+  if (-not $pkgs) {
+    $pkgs = @(Get-AppxPackage -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "OpenAI\.(ChatGPT|Codex)|ChatGPT" })
+  }
   foreach ($filter in $Filters) {
     foreach ($pkg in $pkgs) {
       if (-not $pkg.InstallLocation) { continue }
