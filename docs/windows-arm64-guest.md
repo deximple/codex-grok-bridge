@@ -79,3 +79,12 @@ Package `"os"` is `["darwin","linux","win32"]` starting at **1.5.0**. Do not tre
 ```
 
 User `agent` already sees `Get-AppxPackage OpenAI.Codex` as **Ok**. An extra `Add-AppxPackage -Register` as that user returned `0x80070005` (access denied on the provisioned payload) and is not required for resolve/install.
+
+The same user ran `install-codex-grok-app.ps1` into `%LOCALAPPDATA%\codex-grok-bridge` and resolved:
+
+```
+desktop=C:\Program Files\WindowsApps\OpenAI.Codex_26.903.8094.0_arm64__2p2nqsd0c76g0\app\ChatGPT.exe
+codex=C:\Program Files\WindowsApps\OpenAI.Codex_26.903.8094.0_arm64__2p2nqsd0c76g0\app\resources\codex.exe
+```
+
+`launch.log` then recorded `activate pid=` for the isolated `--user-data-dir`. A scheduled task is not an interactive desktop session, so that is not a lasting GUI screenshot.
