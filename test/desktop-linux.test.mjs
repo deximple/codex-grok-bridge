@@ -13,6 +13,7 @@ const installScript = path.join(root, "scripts/install-codex-grok-app.sh");
 const wrapper = path.join(root, "scripts/codex-wrapper.mjs");
 const grokCli = path.join(root, "scripts/codex-grok.mjs");
 const launchDesktop = path.join(root, "scripts/launch-desktop.mjs");
+const verifyAppServer = path.join(root, "scripts/verify-app-server.mjs");
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -111,6 +112,14 @@ printf '%s\\n' "$@" > ${JSON.stringify(record)}
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("verify:app-server fails fast when the bundled Codex CLI is missing", async () => {
+  const result = await run(process.execPath, [verifyAppServer], {
+    env: { ...process.env, CODEX_BINARY: "/no/such/codex" },
+  });
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /skipped: bundled Codex CLI not found/);
 });
 
 test("launch-desktop starts Linux ChatGPT with the wrapper and a separate profile", async () => {
