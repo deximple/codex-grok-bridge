@@ -1,11 +1,19 @@
 import { execFileSync, spawn } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  desktopLaunchArgs,
+  desktopLaunchEnv,
+  desktopUserDataDir,
+  isGrokDesktopProcess,
+  resolveDesktopApp,
+  resolvePlatform,
+} from "../src/paths.mjs";
 
-const userData = path.join(homedir(), ".local/share/codex-grok-bridge/desktop");
-const logFile = path.join(homedir(), ".local/share/codex-grok-bridge/launch.log");
+const platform = resolvePlatform();
+const userData = desktopUserDataDir();
+const logFile = path.join(userData, "..", "launch.log");
 mkdirSync(userData, { recursive: true, mode: 0o700 });
 mkdirSync(path.dirname(logFile), { recursive: true, mode: 0o700 });
 
@@ -18,12 +26,7 @@ function grokPid() {
     encoding: "utf8",
   });
   for (const line of out.split("\n")) {
-    if (
-      line.includes(`--user-data-dir=${userData}`) &&
-      /MacOS\/(ChatGPT|Codex)(\s|$)/.test(line) &&
-      !line.includes("Helper") &&
-      !line.includes("crashpad")
-    )
+    if (isGrokDesktopProcess(line, userData))
       return Number(line.trim().split(/\s+/)[0]);
   }
   return null;
@@ -41,6 +44,7 @@ function activate(pid) {
 }
 
 function notify(text) {
+  if (platform !== "darwin") return;
   try {
     execFileSync("/usr/bin/osascript", [
       "-e",
@@ -49,19 +53,28 @@ function notify(text) {
   } catch {}
 }
 
-const wrapper = fileURLToPath(new URL("./codex-wrapper.mjs", import.meta.url));
-try {
-  const running = grokPid();
-  if (running) {
-    log(`activate pid=${running}`);
-    try {
-      activate(running);
-      notify("Codex Grok 창을 앞으로 가져왔습니다.");
-      process.exit(0);
-    } catch (error) {
-      log(`activate failed: ${error.message}`);
-    }
-  }
+function startLinux(wrapper) {
+  const app = resolveDesktopApp();
+  const pathPrefix = `${path.dirname(process.execPath)}:/usr/local/bin:/usr/bin:/bin`;
+  log(`start linux app=${app} wrapper=${wrapper}`);
+  const child = spawn(app, desktopLaunchArgs(userData), {
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      ...desktopLaunchEnv({ wrapper, userData, pathPrefix }),
+    },
+  });
+  child.on("error", (error) => {
+    log(`spawn failed: ${error.message}`);
+    process.exit(1);
+  });
+  child.on("exit", (code) => {
+    log(`chatgpt exit=${code}`);
+    process.exit(code ?? 1);
+  });
+}
+
+function startDarwin(wrapper) {
   log(`start wrapper=${wrapper}`);
   const child = spawn(
     "/usr/bin/open",
@@ -95,6 +108,26 @@ try {
     }
     process.exit(code ?? 1);
   });
+}
+
+const wrapper = fileURLToPath(new URL("./codex-wrapper.mjs", import.meta.url));
+try {
+  const running = grokPid();
+  if (running) {
+    log(`activate pid=${running}`);
+    if (platform !== "darwin") {
+      process.exit(0);
+    }
+    try {
+      activate(running);
+      notify("Codex Grok 창을 앞으로 가져왔습니다.");
+      process.exit(0);
+    } catch (error) {
+      log(`activate failed: ${error.message}`);
+    }
+  }
+  if (platform === "linux") startLinux(wrapper);
+  else startDarwin(wrapper);
 } catch (error) {
   log(`fatal: ${error.message}`);
   notify(error.message);

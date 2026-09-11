@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { startRuntime } from "../src/runtime.mjs";
+import { resolveCodexBinary } from "../src/paths.mjs";
 const runtime = await startRuntime();
 const userArgs = process.argv.slice(2);
 const overrides = [
@@ -16,7 +17,7 @@ const args =
   userArgs[0] === "exec"
     ? [userArgs[0], ...overrides, ...userArgs.slice(1)]
     : [...overrides, ...userArgs];
-const child = spawn("/Applications/Codex.app/Contents/Resources/codex", args, {
+const child = spawn(resolveCodexBinary(), args, {
   stdio: "inherit",
   env: { ...process.env, CODEX_GROK_BRIDGE_TOKEN: runtime.token },
 });
