@@ -53,6 +53,140 @@ test("keeps Codex image generation tools and does not cap large catalogs", () =>
   );
 });
 
+const GROK_PARAMETER_ROOT_KEYS = [
+  "type",
+  "properties",
+  "required",
+  "additionalProperties",
+  "description",
+];
+
+function assertCleanObjectParameters(parameters) {
+  assert.equal(parameters.type, "object");
+  assert.equal(parameters.oneOf, undefined);
+  assert.equal(parameters.anyOf, undefined);
+  for (const key of Object.keys(parameters)) {
+    assert.ok(GROK_PARAMETER_ROOT_KEYS.includes(key), key);
+  }
+}
+
+test("collapses a pure anyOf parameter root to an object schema", () => {
+  const anyOfRoot = {
+    anyOf: [
+      { type: "string" },
+      {
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+      },
+    ],
+  };
+  const oneOfRoot = {
+    oneOf: [
+      {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          name: { type: "string" },
+        },
+        required: ["id", "name"],
+      },
+      {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          enabled: { type: "boolean" },
+        },
+        required: ["id", "enabled"],
+      },
+    ],
+  };
+  const objectSchema = {
+    type: "object",
+    properties: { id: { type: "string" } },
+    required: ["id"],
+    additionalProperties: false,
+  };
+  const original = [
+    { type: "function", name: "search_any", parameters: anyOfRoot },
+    { type: "function", name: "union_one", parameters: oneOfRoot },
+    { type: "function", name: "plain_object", parameters: objectSchema },
+  ];
+  const snapshot = structuredClone(original);
+  const { request } = toProxyRequest({ input: [], tools: original });
+  assert.deepEqual(original, snapshot);
+
+  const search = request.tools.find((tool) =>
+    String(tool.name).endsWith("_search_any"),
+  );
+  assertCleanObjectParameters(search.parameters);
+  assert.deepEqual(search.parameters.properties, { query: { type: "string" } });
+  assert.deepEqual(search.parameters.required, ["query"]);
+
+  const union = request.tools.find((tool) =>
+    String(tool.name).endsWith("_union_one"),
+  );
+  assertCleanObjectParameters(union.parameters);
+  assert.deepEqual(union.parameters.properties, {
+    id: { type: "string" },
+    name: { type: "string" },
+    enabled: { type: "boolean" },
+  });
+  assert.deepEqual(union.parameters.required, ["id"]);
+
+  const plain = request.tools.find((tool) =>
+    String(tool.name).endsWith("_plain_object"),
+  );
+  assertCleanObjectParameters(plain.parameters);
+  assert.deepEqual(plain.parameters, objectSchema);
+});
+
+test("strips oneOf from an object-typed parameter root", () => {
+  const objectOneOfRoot = {
+    type: "object",
+    description: "Update an automation",
+    additionalProperties: false,
+    properties: {
+      id: { type: "string" },
+      name: { type: "string" },
+      enabled: { type: "boolean" },
+    },
+    oneOf: [{ required: ["id", "name"] }, { required: ["id", "enabled"] }],
+    unevaluatedProperties: false,
+  };
+  const pads = Array.from({ length: 14 }, (_, i) => ({
+    type: "function",
+    name: `pad_${i}`,
+    parameters: { type: "object", properties: {} },
+  }));
+  const original = [
+    ...pads,
+    {
+      type: "function",
+      name: "automation_update",
+      parameters: objectOneOfRoot,
+    },
+  ];
+  const snapshot = structuredClone(original);
+  const { request } = toProxyRequest({ input: [], tools: original });
+  assert.deepEqual(original, snapshot);
+
+  const automation = request.tools.find(
+    (tool) => tool.name === "codex_14_automation_update",
+  );
+  assert.ok(automation, "Codex GUI names this tool codex_14_automation_update");
+  assertCleanObjectParameters(automation.parameters);
+  assert.equal(automation.parameters.description, "Update an automation");
+  assert.equal(automation.parameters.additionalProperties, false);
+  assert.equal(automation.parameters.unevaluatedProperties, undefined);
+  assert.deepEqual(automation.parameters.properties, {
+    id: { type: "string" },
+    name: { type: "string" },
+    enabled: { type: "boolean" },
+  });
+  assert.deepEqual(automation.parameters.required, ["id"]);
+});
+
 test("flattens namespaced Codex tools into function tools", () => {
   const { tools, map } = flattenCodexTools([
     {

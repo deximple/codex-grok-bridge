@@ -108,15 +108,93 @@ function whitelistInputNode(node) {
   return whitelistContentPart(node);
 }
 
+function isObjectFragment(schema) {
+  return (
+    schema &&
+    typeof schema === "object" &&
+    !Array.isArray(schema) &&
+    (schema.type === "object" || schema.type == null)
+  );
+}
+
+function mergeObjectFragments(fragments) {
+  const properties = {};
+  let required;
+  for (const fragment of fragments) {
+    if (fragment.properties && typeof fragment.properties === "object")
+      Object.assign(properties, fragment.properties);
+    if (Array.isArray(fragment.required)) {
+      required =
+        required === undefined
+          ? fragment.required.slice()
+          : required.filter((key) => fragment.required.includes(key));
+    }
+  }
+  return { properties, required };
+}
+
+function emitObjectParameters(source, overrides = {}) {
+  const properties =
+    overrides.properties ??
+    (source.properties && typeof source.properties === "object"
+      ? source.properties
+      : {});
+  const required =
+    overrides.required !== undefined
+      ? overrides.required
+      : Array.isArray(source.required)
+        ? source.required
+        : undefined;
+  const next = { type: "object", properties: { ...properties } };
+  if (required?.length) next.required = required.slice();
+  if (source.additionalProperties !== undefined)
+    next.additionalProperties = source.additionalProperties;
+  if (source.description !== undefined) next.description = source.description;
+  return next;
+}
+
 function usableParameters(parameters) {
-  if (!parameters || typeof parameters !== "object") return OBJECT_SCHEMA;
-  if (
-    parameters.type === "object" ||
-    Array.isArray(parameters.oneOf) ||
-    Array.isArray(parameters.anyOf)
-  )
-    return parameters;
-  return OBJECT_SCHEMA;
+  if (!parameters || typeof parameters !== "object" || Array.isArray(parameters))
+    return OBJECT_SCHEMA;
+  const variants = Array.isArray(parameters.oneOf)
+    ? parameters.oneOf
+    : Array.isArray(parameters.anyOf)
+      ? parameters.anyOf
+      : null;
+  if (!variants) {
+    return parameters.type === "object"
+      ? emitObjectParameters(parameters)
+      : OBJECT_SCHEMA;
+  }
+  const fragments = variants.filter(isObjectFragment);
+  if (fragments.length === 0) {
+    return parameters.type === "object"
+      ? emitObjectParameters(parameters)
+      : OBJECT_SCHEMA;
+  }
+  const merged = mergeObjectFragments(fragments);
+  const properties = {
+    ...(parameters.properties && typeof parameters.properties === "object"
+      ? parameters.properties
+      : {}),
+    ...merged.properties,
+  };
+  let required = merged.required;
+  if (Array.isArray(parameters.required)) {
+    required =
+      required === undefined
+        ? parameters.required.slice()
+        : required.filter((key) => parameters.required.includes(key));
+  }
+  const first = fragments[0];
+  return emitObjectParameters(
+    {
+      additionalProperties:
+        parameters.additionalProperties ?? first.additionalProperties,
+      description: parameters.description ?? first.description,
+    },
+    { properties, required },
+  );
 }
 
 function sanitize(name) {
