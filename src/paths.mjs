@@ -1,4 +1,5 @@
 import path from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 
 export const LINUX_CODEX_BINARY = "/usr/lib/chatgpt/resources/codex";
@@ -24,13 +25,34 @@ export function win32AppDir(home = homedir(), options = {}) {
   return path.join(localAppData(home, options), WIN32_BRIDGE_APP, "app");
 }
 
+export function win32StorePointer(home = homedir(), options = {}, name = "store-app.txt") {
+  return path.join(localAppData(home, options), WIN32_BRIDGE_APP, name);
+}
+
+function readPointer(file, options = {}) {
+  const exists = options.existsSync ?? existsSync;
+  const read = options.readFileSync ?? ((p) => readFileSync(p, "utf8"));
+  if (!exists(file)) return "";
+  return String(read(file)).trim();
+}
+
+function resolveWin32Binary(fileName, pointerName, options = {}) {
+  const env = options.env ?? process.env;
+  const home = options.home ?? homedir();
+  const exists = options.existsSync ?? existsSync;
+  const isolated = path.join(win32AppDir(home, { env }), fileName);
+  if (exists(isolated)) return isolated;
+  const pointed = readPointer(win32StorePointer(home, { env }, pointerName), options);
+  return pointed || isolated;
+}
+
 export function resolveCodexBinary(options = {}) {
   const env = options.env ?? process.env;
   if (env.CODEX_BINARY) return env.CODEX_BINARY;
   const platform = resolvePlatform({ ...options, env });
   if (platform === "linux") return LINUX_CODEX_BINARY;
   if (platform === "win32") {
-    return path.join(win32AppDir(options.home ?? homedir(), { env }), "codex.exe");
+    return resolveWin32Binary("codex.exe", "store-codex.txt", { ...options, env });
   }
   return DARWIN_CODEX_BINARY;
 }
@@ -41,7 +63,7 @@ export function resolveDesktopApp(options = {}) {
   const platform = resolvePlatform({ ...options, env });
   if (platform === "linux") return LINUX_CHATGPT_BIN;
   if (platform === "win32") {
-    return path.join(win32AppDir(options.home ?? homedir(), { env }), "ChatGPT.exe");
+    return resolveWin32Binary("ChatGPT.exe", "store-app.txt", { ...options, env });
   }
   return DARWIN_CODEX_APP;
 }
@@ -93,7 +115,7 @@ export function isGrokDesktopProcess(line, userData, options = {}) {
   const platform = resolvePlatform(options);
   if (platform === "linux") return line.includes(LINUX_CHATGPT_BIN);
   if (platform === "win32") {
-    return /ChatGPT\.exe|Codex\.exe/i.test(line) && !/WindowsApps/i.test(line);
+    return /ChatGPT\.exe|Codex\.exe/i.test(line);
   }
   return /MacOS\/(ChatGPT|Codex)(\s|$)/.test(line);
 }

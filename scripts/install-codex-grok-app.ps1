@@ -37,6 +37,26 @@ $StartDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
 New-Item -ItemType Directory -Force -Path $StartDir | Out-Null
 Copy-Item $Launcher (Join-Path $StartDir "Codex Grok.cmd") -Force
 
+function Write-StorePointer([string]$Name, [string[]]$Filters) {
+  $pointerDir = Split-Path -Parent $App
+  if ($pointerDir -match "(?i)WindowsApps") { return }
+  $pkgs = @(Get-AppxPackage -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "OpenAI\.(ChatGPT|Codex)|ChatGPT" })
+  foreach ($filter in $Filters) {
+    foreach ($pkg in $pkgs) {
+      if (-not $pkg.InstallLocation) { continue }
+      $hit = Get-ChildItem -Path $pkg.InstallLocation -Filter $filter -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+      if (-not $hit) { continue }
+      New-Item -ItemType Directory -Force -Path $pointerDir | Out-Null
+      Set-Content -Path (Join-Path $pointerDir $Name) -Value $hit.FullName -Encoding ASCII
+      Write-Output "store pointer $Name=$($hit.FullName)"
+      return
+    }
+  }
+}
+
+Write-StorePointer "store-app.txt" @("ChatGPT.exe", "Codex.exe")
+Write-StorePointer "store-codex.txt" @("codex.exe")
+
 Write-Output "win32 wrapper $Launcher"
 Write-Output "bridge in $App matches $Root"
 Write-Output "restart any open Codex Grok window to load it"

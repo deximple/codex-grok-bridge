@@ -18,6 +18,7 @@ import {
   resolveDesktopApp,
   resolveGrokBinary,
   win32AppDir,
+  win32StorePointer,
 } from "../src/paths.mjs";
 import { DEFAULT_LIMIT, DEFAULT_QUEUE_LIMIT } from "../src/slots.mjs";
 import { readFileSync } from "node:fs";
@@ -173,6 +174,35 @@ test("win32 uses LocalAppData for the isolated profile and grok.exe", () => {
     true,
   );
   assert.equal(isForbiddenInstallDir("C:/Users/agent/AppData/Local/codex-grok-bridge/app"), false);
+});
+test("win32 launch reads a Store ChatGPT pointer and never writes WindowsApps", () => {
+  const home = "C:/Users/agent";
+  const env = { LOCALAPPDATA: "C:/Users/agent/AppData/Local" };
+  const storeApp = "C:/Program Files/WindowsApps/OpenAI.ChatGPT_1.0/ChatGPT.exe";
+  const storeCodex = "C:/Program Files/WindowsApps/OpenAI.ChatGPT_1.0/resources/codex.exe";
+  const files = {
+    [win32StorePointer(home, { env }, "store-app.txt")]: storeApp,
+    [win32StorePointer(home, { env }, "store-codex.txt")]: storeCodex,
+  };
+  const options = {
+    platform: "win32",
+    home,
+    env,
+    existsSync: (file) => Object.hasOwn(files, file),
+    readFileSync: (file) => files[file],
+  };
+  assert.equal(resolveDesktopApp(options), storeApp);
+  assert.equal(resolveCodexBinary(options), storeCodex);
+  assert.equal(isForbiddenInstallDir(path.dirname(storeApp)), true);
+  const userData = desktopUserDataDir(home, { platform: "win32", env });
+  assert.equal(
+    isGrokDesktopProcess(
+      `99 ${storeApp} --user-data-dir=${userData}`,
+      userData,
+      { platform: "win32", env, home },
+    ),
+    true,
+  );
 });
 
 test("the published package allows npm install on linux", () => {

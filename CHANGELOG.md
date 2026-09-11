@@ -10,6 +10,8 @@ Windows ARM64 test portability: skip Linux-only installer tests, accept native p
 
 UTM Windows 11 ARM64 guest proof (`docs/windows-arm64-guest.md`): Node 22.23.2, `node --test` 156/0/3, isolated installer, loopback `/v1/models` 200.
 
+Windows launch may read a Store ChatGPT/codex pointer under `%LOCALAPPDATA%\codex-grok-bridge` instead of copying out of WindowsApps.
+
 ## 1.0.5 — 2026-09-12
 
 First npm cut that accepts **Linux** (`"os": ["darwin", "linux"]`). Windows stays rejected.
