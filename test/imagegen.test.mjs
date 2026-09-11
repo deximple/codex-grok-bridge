@@ -40,8 +40,10 @@ test("writes the bytes to a private file and names it by format", () => {
   assert.equal(saved.extension, "jpg");
   assert.equal(saved.bytes, jpeg.length);
   assert.ok(readFileSync(saved.file).equals(jpeg));
-  assert.equal(statSync(saved.file).mode & 0o777, 0o600);
-  assert.equal(statSync(dir).mode & 0o777, 0o700);
+  if (process.platform !== "win32") {
+    assert.equal(statSync(saved.file).mode & 0o777, 0o600);
+    assert.equal(statSync(dir).mode & 0o777, 0o700);
+  }
 
   const asPng = saveGeneratedImage(item(png), { dir, now: 1 });
   assert.equal(asPng.extension, "png");

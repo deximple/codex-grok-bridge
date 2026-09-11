@@ -3,7 +3,8 @@
 #
 # macOS: sync JS into /Applications/Codex Grok.app (must already exist).
 # Linux: create ~/.local/share/codex-grok-bridge/app and a user .desktop.
-# Never writes /Applications/Codex.app or /usr/lib/chatgpt.
+# Windows: create %LOCALAPPDATA%\codex-grok-bridge\app and a Start Menu .cmd.
+# Never writes /Applications/Codex.app, /usr/lib/chatgpt, or WindowsApps.
 #
 #   install-codex-grok-app.sh            sync bridge JS (safe, fast)
 #   install-codex-grok-app.sh --full     macOS: rebuild applet; Linux: rewrite launcher
@@ -14,15 +15,23 @@
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
-USER_DATA="$HOME/.local/share/codex-grok-bridge/desktop"
 PLATFORM="${CODEX_GROK_PLATFORM:-$(uname -s)}"
 case "$PLATFORM" in
   Linux|linux) PLATFORM=linux ;;
   Darwin|darwin) PLATFORM=darwin ;;
+  MINGW*|MSYS*|CYGWIN*|Windows_NT|win32|windows) PLATFORM=win32 ;;
 esac
+if [ "$PLATFORM" = win32 ]; then
+  USER_DATA="${LOCALAPPDATA:-$HOME/AppData/Local}/codex-grok-bridge/desktop"
+else
+  USER_DATA="$HOME/.local/share/codex-grok-bridge/desktop"
+fi
 
 if [ "$PLATFORM" = linux ]; then
   APP="${CODEX_GROK_APP:-$HOME/.local/share/codex-grok-bridge/app}"
+  BRIDGE="$APP"
+elif [ "$PLATFORM" = win32 ]; then
+  APP="${CODEX_GROK_APP:-${LOCALAPPDATA:-$HOME/AppData/Local}/codex-grok-bridge/app}"
   BRIDGE="$APP"
 else
   APP="${CODEX_GROK_APP:-/Applications/Codex Grok.app}"
@@ -41,18 +50,18 @@ for arg in "$@"; do
 done
 
 case "$APP" in
-  /usr/lib/chatgpt|/usr/lib/chatgpt/*|/usr/bin/chatgpt|/Applications/Codex.app|/Applications/Codex.app/*)
+  /usr/lib/chatgpt|/usr/lib/chatgpt/*|/usr/bin/chatgpt|/Applications/Codex.app|/Applications/Codex.app/*|*WindowsApps*|*windowsapps*)
     echo "refusing to install into the stock ChatGPT/Codex prefix: $APP" >&2
     exit 1
     ;;
 esac
 
-if [ "$PLATFORM" != linux ] && [ ! -d "$APP/Contents" ]; then
+if [ "$PLATFORM" != linux ] && [ "$PLATFORM" != win32 ] && [ ! -d "$APP/Contents" ]; then
   echo "missing $APP" >&2
   exit 1
 fi
 
-if [ "$FORCE" -eq 0 ] && pgrep -f -- "--user-data-dir=$USER_DATA" >/dev/null 2>&1; then
+if [ "$FORCE" -eq 0 ] && [ "$PLATFORM" != win32 ] && pgrep -f -- "--user-data-dir=$USER_DATA" >/dev/null 2>&1; then
   echo "Codex Grok is running. Close its window first, or pass --force to swap" >&2
   echo "the files under it (the running window keeps its loaded code either way)." >&2
   exit 1
@@ -120,8 +129,28 @@ EOF
   echo "desktop entry $DESKTOP"
 }
 
+write_win32_wrapper() {
+  NODE="${NODE:-$(command -v node || true)}"
+  [ -n "$NODE" ] || { echo "no node on PATH; set NODE=/path/to/node" >&2; exit 1; }
+  mkdir -p "$APP"
+  LAUNCHER="$APP/codex-grok-desktop.cmd"
+  NODE_WIN=$(printf "%s" "$NODE" | tr '/' '\\')
+  {
+    echo "@echo off"
+    echo "set ROOT=%~dp0"
+    echo "\"$NODE_WIN\" \"%ROOT%scripts\\launch-desktop.mjs\" %*"
+  } > "$LAUNCHER"
+  START_DIR="${APPDATA:-$HOME/AppData/Roaming}/Microsoft/Windows/Start Menu/Programs"
+  mkdir -p "$START_DIR"
+  cp "$LAUNCHER" "$START_DIR/Codex Grok.cmd"
+  echo "win32 wrapper $LAUNCHER"
+  echo "start menu $START_DIR/Codex Grok.cmd"
+}
+
 if [ "$PLATFORM" = linux ]; then
   write_linux_wrapper
+elif [ "$PLATFORM" = win32 ]; then
+  write_win32_wrapper
 elif [ "$FULL" -eq 1 ]; then
   NODE="${NODE:-$(command -v node || true)}"
   [ -n "$NODE" ] || { echo "no node on PATH; set NODE=/path/to/node" >&2; exit 1; }

@@ -13,35 +13,9 @@ import { toProxyRequest } from "./tools.mjs";
 import { classifyBridgeError, errorSignature, bridgeErrorMessage } from "./errors.mjs";
 import { createDiagnostics } from "./diagnostics.mjs";
 import { createSlots } from "./slots.mjs";
+import { catalogModelInfos, isGrokModel, MODEL_INFO } from "./models.mjs";
 
-export const MODEL_INFO = {
-  slug: "grok-4.6",
-  display_name: "Grok 4.6 / xAI",
-  description: "Grok 4.6 via grok login; Codex executes tools",
-  default_reasoning_level: "high",
-  supported_reasoning_levels: ["low", "medium", "high", "xhigh"].map(
-    (effort) => ({ effort, description: effort }),
-  ),
-  shell_type: "unified_exec",
-  visibility: "list",
-  supported_in_api: true,
-  priority: 50,
-  availability_nux: null,
-  upgrade: null,
-  support_verbosity: false,
-  default_verbosity: null,
-  apply_patch_tool_type: "freeform",
-  truncation_policy: { mode: "tokens", limit: 10000 },
-  experimental_supported_tools: [],
-  context_window: 500000,
-  input_modalities: ["text", "image"],
-  tool_mode: "direct",
-  node_repl_disabled: true,
-  model_messages: {
-    instructions_template:
-      "You are Grok 4.6 by xAI, running as the Codex model. Use the tools provided by Codex and respect its permissions. Complete the user request accurately.",
-  },
-};
+export { MODEL_INFO };
 
 export function publicBridgeError(error, context = {}) {
   if (error instanceof GrokAuthError) return error.message;
@@ -69,7 +43,7 @@ export function createBridgeServer(options = {}) {
     };
     const route = new URL(req.url, "http://127.0.0.1").pathname;
     if (req.method === "GET" && route === "/v1/models")
-      return json(200, { models: [MODEL_INFO] });
+      return json(200, { models: catalogModelInfos() });
     if (req.method !== "POST" || route !== "/v1/responses")
       return json(404, { error: "Not found" });
     const auth = Buffer.from(req.headers.authorization ?? "");
@@ -95,7 +69,7 @@ export function createBridgeServer(options = {}) {
       }
       requestBytes = size;
       body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-      if (body?.model !== "grok-4.6" || !Array.isArray(body.input))
+      if (!isGrokModel(body?.model) || !Array.isArray(body.input))
         throw new Error();
     } catch {
       return json(400, { error: "Invalid request" });

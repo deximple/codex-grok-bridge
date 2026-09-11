@@ -1,6 +1,7 @@
 node_modules/
 .DS_Store
 *.log
+*.tgz
 
 # Operator-local state, never committed: diagnostic logs, backups of a live
 # install, and anything captured from a real session.

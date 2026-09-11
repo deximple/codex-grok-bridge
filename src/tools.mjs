@@ -4,6 +4,7 @@ import {
   isImageGenerationItem,
   saveGeneratedImage,
 } from "./imagegen.mjs";
+import { resolveGrokModel } from "./models.mjs";
 
 const OBJECT_SCHEMA = { type: "object", properties: {} };
 
@@ -426,7 +427,7 @@ export function toProxyRequest(body) {
   const { tools, map } = flattenCodexTools(body.tools ?? []);
   const effort = EFFORT[body.reasoning?.effort] ?? "high";
   const request = {
-    model: "grok-4.6",
+    model: resolveGrokModel(body.model),
     input: toProxyInput(body.input, map),
     tools,
     reasoning: { effort },

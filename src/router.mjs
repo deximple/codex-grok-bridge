@@ -1,25 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
+import { catalogModelEntries, isGrokModel, MODEL_ENTRY } from "./models.mjs";
 
-export const MODEL_ENTRY = {
-  id: "grok-4.6",
-  model: "grok-4.6",
-  displayName: "Grok 4.6 / xAI",
-  description: "Grok 4.6 · Codex tools",
-  hidden: false,
-  isDefault: false,
-  upgrade: null,
-  upgradeInfo: null,
-  availabilityNux: null,
-  supportedReasoningEfforts: ["low", "medium", "high", "xhigh"].map(
-    (reasoningEffort) => ({ reasoningEffort, description: reasoningEffort }),
-  ),
-  defaultReasoningEffort: "high",
-  inputModalities: ["text", "image"],
-  supportsPersonality: false,
-  multiAgentVersion: null,
-  additionalSpeedTiers: [],
-  serviceTiers: [],
-};
+export { MODEL_ENTRY };
 
 export class Router {
   constructor(catalogPath) {
@@ -45,7 +27,7 @@ export class Router {
     const fresh = this.unstarted.get(p.threadId);
     const snapshot = fresh ?? await rpc("thread/resume", { threadId: p.threadId, excludeTurns: true });
     const model = selected ?? snapshot.model;
-    const provider = model === "grok-4.6"
+    const provider = isGrokModel(model)
       ? "grok_build_cli"
       : model?.startsWith("gpt-") && snapshot.modelProvider === "grok_build_cli"
         ? "openai" : snapshot.modelProvider;
@@ -73,7 +55,7 @@ export class Router {
     const msg = structuredClone(message),
       p = msg.params ?? {};
     const model = p.collaborationMode?.settings?.model ?? p.model;
-    const grok = model === "grok-4.6";
+    const grok = isGrokModel(model);
     if (
       ["thread/start", "thread/resume", "thread/fork"].includes(
         msg.method,
@@ -95,12 +77,12 @@ export class Router {
     this.pending.delete(msg.id);
     if (request.method === "thread/start" && msg.result?.thread?.id)
       this.unstarted.set(msg.result.thread.id, structuredClone(msg.result));
-    if (
-      request.method === "model/list" &&
-      Array.isArray(msg.result?.data) &&
-      !msg.result.data.some((m) => m.id === "grok-4.6")
-    )
-      msg.result.data.push(MODEL_ENTRY);
+    if (request.method === "model/list" && Array.isArray(msg.result?.data)) {
+      for (const entry of catalogModelEntries()) {
+        if (!msg.result.data.some((m) => m.id === entry.id))
+          msg.result.data.push(entry);
+      }
+    }
     if (
       ["thread/start", "thread/resume", "thread/fork"].includes(
         request.method,

@@ -5,6 +5,8 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
 import path from "node:path";
 import { toImageBlocks } from "./images.mjs";
+import { resolveGrokBinary } from "./paths.mjs";
+import { resolveGrokModel } from "./models.mjs";
 
 // The GROK_BRIDGE_INFERENCE=cli fallback. It drives the Grok CLI once per turn
 // with the whole Codex request as a prompt and parses a JSON envelope back out.
@@ -59,7 +61,7 @@ export function buildGrokInvocation(body, options = {}) {
     "--single",
     extractLatestUserPrompt(body.input),
     "--model",
-    "grok-4.6",
+    resolveGrokModel(body.model),
     "--output-format",
     "json",
     "--json-schema",
@@ -117,7 +119,7 @@ export function buildGrokInvocation(body, options = {}) {
     "You are a model backend for Codex. Return exactly the JSON envelope requested in the input. Do not execute your own tools. Tool calls in the envelope are executed by Codex.",
   ];
   return {
-    binary: options.grokBinary ?? path.join(homedir(), ".grok/bin/grok"),
+    binary: options.grokBinary ?? resolveGrokBinary(homedir()),
     args,
     // Run the CLI where Codex is working, not where the bridge happens to live.
     cwd:

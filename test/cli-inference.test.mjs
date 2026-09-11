@@ -151,6 +151,16 @@ test("builds a shell-free Grok CLI invocation and maps ultra to xhigh", () => {
   assert.ok(invocation.args.includes("Read"));
   assert.ok(invocation.args.includes("Grep"));
 });
+test("CLI fallback forwards grok-4.7", () => {
+  const invocation = buildGrokInvocation(
+    requestBody({ model: "grok-4.7" }),
+    { grokBinary: "/opt/grok", fallbackCwd: "/safe/project" },
+  );
+  assert.equal(
+    invocation.args[invocation.args.indexOf("--model") + 1],
+    "grok-4.7",
+  );
+});
 
 test("parses the final Grok JSON object without returning diagnostics", () => {
   assert.deepEqual(parseGrokResult('{"text":"done","sessionId":"s1"}\n'), {
@@ -253,7 +263,7 @@ test("runner executes without a shell and reads prompt from a private temporary 
     binary: process.execPath,
     args: [
       "-e",
-      'const fs=require("node:fs");const p=process.argv[2];if((fs.statSync(p).mode & 511)!==384)process.exit(2);if(!fs.readFileSync(p,"utf8").includes("CODEX REQUEST"))process.exit(3);process.stdout.write(JSON.stringify({text:"ok"}))',
+      'const fs=require("node:fs");const p=process.argv[2];if(process.platform!=="win32"&&(fs.statSync(p).mode & 511)!==384)process.exit(2);if(!fs.readFileSync(p,"utf8").includes("CODEX REQUEST"))process.exit(3);process.stdout.write(JSON.stringify({text:"ok"}))',
       "--",
       "--single",
       "test",

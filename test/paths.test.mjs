@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import path from "node:path";
 import {
   DARWIN_CODEX_APP,
   DARWIN_CODEX_BINARY,
@@ -15,6 +16,9 @@ import {
   linuxDesktopEntryPath,
   resolveCodexBinary,
   resolveDesktopApp,
+  resolveGrokBinary,
+  win32AppDir,
+  win32StorePointer,
 } from "../src/paths.mjs";
 import { DEFAULT_LIMIT, DEFAULT_QUEUE_LIMIT } from "../src/slots.mjs";
 import { readFileSync } from "node:fs";
@@ -45,17 +49,20 @@ test("explicit overrides win so tests can point at a fake binary", () => {
 
 test("the dedicated desktop profile stays under the bridge user-data dir", () => {
   assert.equal(
-    desktopUserDataDir("/home/ubuntu"),
-    "/home/ubuntu/.local/share/codex-grok-bridge/desktop",
+    desktopUserDataDir("/home/ubuntu", { platform: "linux", env: {} }),
+    path.join("/home/ubuntu", ".local/share/codex-grok-bridge/desktop"),
   );
-  assert.equal(linuxAppDir("/home/ubuntu"), "/home/ubuntu/.local/share/codex-grok-bridge/app");
+  assert.equal(
+    linuxAppDir("/home/ubuntu"),
+    path.join("/home/ubuntu", ".local/share/codex-grok-bridge/app"),
+  );
   assert.equal(
     linuxDesktopEntryPath("/home/ubuntu"),
-    "/home/ubuntu/.local/share/applications/codex-grok.desktop",
+    path.join("/home/ubuntu", ".local/share/applications/codex-grok.desktop"),
   );
   assert.equal(
     linuxDesktopEntryPath("/home/ubuntu", "/tmp/xdg"),
-    "/tmp/xdg/applications/codex-grok.desktop",
+    path.join("/tmp/xdg", "applications/codex-grok.desktop"),
   );
 });
 
@@ -103,6 +110,19 @@ test("a Linux ChatGPT process with the dedicated profile is ours", () => {
     ),
     true,
   );
+  const winUser = "C:/Users/agent/AppData/Local/codex-grok-bridge/desktop";
+  assert.equal(
+    isGrokDesktopProcess(
+      `4321 C:/Users/agent/AppData/Local/codex-grok-bridge/app/ChatGPT.exe --user-data-dir=${winUser}`,
+      winUser,
+      {
+        platform: "win32",
+        env: { LOCALAPPDATA: "C:/Users/agent/AppData/Local" },
+        home: "C:/Users/agent",
+      },
+    ),
+    true,
+  );
 });
 
 test("the installer must not write the stock ChatGPT or Codex.app prefix", () => {
@@ -126,9 +146,69 @@ test("slot concurrency stays at 4 with a queue of 8", () => {
   assert.equal(DEFAULT_QUEUE_LIMIT, 8);
 });
 
-test("the published package allows npm install on linux", () => {
+test("win32 uses LocalAppData for the isolated profile and grok.exe", () => {
+  const home = "C:/Users/agent";
+  const env = { LOCALAPPDATA: "C:/Users/agent/AppData/Local" };
+  assert.equal(
+    win32AppDir(home, { env }),
+    path.join(env.LOCALAPPDATA, "codex-grok-bridge", "app"),
+  );
+  assert.equal(
+    desktopUserDataDir(home, { platform: "win32", env }),
+    path.join(env.LOCALAPPDATA, "codex-grok-bridge", "desktop"),
+  );
+  assert.equal(
+    resolveCodexBinary({ platform: "win32", home, env }),
+    path.join(env.LOCALAPPDATA, "codex-grok-bridge", "app", "codex.exe"),
+  );
+  assert.equal(
+    resolveDesktopApp({ platform: "win32", home, env }),
+    path.join(env.LOCALAPPDATA, "codex-grok-bridge", "app", "ChatGPT.exe"),
+  );
+  assert.equal(
+    resolveGrokBinary(home, { platform: "win32", env: {} }),
+    path.join(home, ".grok", "bin", "grok.exe"),
+  );
+  assert.equal(
+    isForbiddenInstallDir("C:/Program Files/WindowsApps/OpenAI.Codex_1.0/app"),
+    true,
+  );
+  assert.equal(isForbiddenInstallDir("C:/Users/agent/AppData/Local/codex-grok-bridge/app"), false);
+});
+test("win32 launch reads a Store ChatGPT pointer and never writes WindowsApps", () => {
+  const home = "C:/Users/agent";
+  const env = { LOCALAPPDATA: "C:/Users/agent/AppData/Local" };
+  const storeApp = "C:/Program Files/WindowsApps/OpenAI.ChatGPT_1.0/ChatGPT.exe";
+  const storeCodex = "C:/Program Files/WindowsApps/OpenAI.ChatGPT_1.0/resources/codex.exe";
+  const files = {
+    [win32StorePointer(home, { env }, "store-app.txt")]: storeApp,
+    [win32StorePointer(home, { env }, "store-codex.txt")]: storeCodex,
+  };
+  const options = {
+    platform: "win32",
+    home,
+    env,
+    existsSync: (file) => Object.hasOwn(files, file),
+    readFileSync: (file) => files[file],
+  };
+  assert.equal(resolveDesktopApp(options), storeApp);
+  assert.equal(resolveCodexBinary(options), storeCodex);
+  assert.equal(isForbiddenInstallDir(path.dirname(storeApp)), true);
+  const userData = desktopUserDataDir(home, { platform: "win32", env });
+  assert.equal(
+    isGrokDesktopProcess(
+      `99 ${storeApp} --user-data-dir=${userData}`,
+      userData,
+      { platform: "win32", env, home },
+    ),
+    true,
+  );
+});
+
+test("the published package allows npm install on darwin, linux, and win32", () => {
   const pkg = JSON.parse(
     readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"),
   );
-  assert.deepEqual(pkg.os, ["darwin", "linux"]);
+  assert.deepEqual(pkg.os, ["darwin", "linux", "win32"]);
+  assert.equal(pkg.version, "1.5.0");
 });

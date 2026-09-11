@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 import { desktopUserDataDir } from "../src/paths.mjs";
 
+const linuxOnly = process.platform === "win32" ? test.skip : test;
 const root = fileURLToPath(new URL("..", import.meta.url));
 const installScript = path.join(root, "scripts/install-codex-grok-app.sh");
 const wrapper = path.join(root, "scripts/codex-wrapper.mjs");
@@ -34,7 +35,7 @@ function run(command, args, options = {}) {
   });
 }
 
-test("the Linux installer creates a separate app and never writes /usr/lib/chatgpt", async () => {
+linuxOnly("the Linux installer creates a separate app and never writes /usr/lib/chatgpt", async () => {
   const home = await mkdtemp(path.join(tmpdir(), "codex-grok-linux-home-"));
   const stock = path.join(home, "stock-chatgpt");
   await mkdir(stock, { recursive: true });
@@ -79,7 +80,7 @@ test("the Linux installer creates a separate app and never writes /usr/lib/chatg
   }
 });
 
-test("codex-wrapper and codex-grok spawn the Linux bundled CLI", async () => {
+linuxOnly("codex-wrapper and codex-grok spawn the Linux bundled CLI", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "codex-grok-binary-"));
   const record = path.join(dir, "record.txt");
   const fake = path.join(dir, "codex");
@@ -122,7 +123,7 @@ test("verify:app-server fails fast when the bundled Codex CLI is missing", async
   assert.match(result.stderr, /skipped: bundled Codex CLI not found/);
 });
 
-test("launch-desktop starts Linux ChatGPT with the wrapper and a separate profile", async () => {
+linuxOnly("launch-desktop starts Linux ChatGPT with the wrapper and a separate profile", async () => {
   const home = await mkdtemp(path.join(tmpdir(), "codex-grok-launch-"));
   const fakeDir = path.join(home, "usr/lib/chatgpt");
   await mkdir(fakeDir, { recursive: true });

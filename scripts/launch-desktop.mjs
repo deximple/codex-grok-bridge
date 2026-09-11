@@ -21,7 +21,28 @@ function log(message) {
   appendFileSync(logFile, `${new Date().toISOString()} ${message}\n`);
 }
 
+function grokPidWin32() {
+  const systemRoot = process.env.SystemRoot || "C:\\Windows";
+  const powershell = `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+  try {
+    const out = execFileSync(
+      powershell,
+      [
+        "-NoProfile",
+        "-Command",
+        `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like ${JSON.stringify(`*--user-data-dir=${userData}*`)} } | Select-Object -First 1 -ExpandProperty ProcessId`,
+      ],
+      { encoding: "utf8", windowsHide: true, timeout: 15000 },
+    );
+    const pid = Number(String(out).trim());
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
 function grokPid() {
+  if (platform === "win32") return grokPidWin32();
   const out = execFileSync("/bin/ps", ["-axo", "pid=,command="], {
     encoding: "utf8",
   });
@@ -51,6 +72,26 @@ function notify(text) {
       `display notification ${JSON.stringify(text)} with title "Codex Grok"`,
     ]);
   } catch {}
+}
+
+function startWin32(wrapper) {
+  const app = resolveDesktopApp();
+  log(`start win32 app=${app} wrapper=${wrapper}`);
+  const child = spawn(app, desktopLaunchArgs(userData), {
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      ...desktopLaunchEnv({ wrapper, userData }),
+    },
+  });
+  child.on("error", (error) => {
+    log(`spawn failed: ${error.message}`);
+    process.exit(1);
+  });
+  child.on("exit", (code) => {
+    log(`chatgpt exit=${code}`);
+    process.exit(code ?? 1);
+  });
 }
 
 function startLinux(wrapper) {
@@ -127,6 +168,7 @@ try {
     }
   }
   if (platform === "linux") startLinux(wrapper);
+  else if (platform === "win32") startWin32(wrapper);
   else startDarwin(wrapper);
 } catch (error) {
   log(`fatal: ${error.message}`);
