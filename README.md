@@ -11,10 +11,10 @@ Codex UI/CLI → app-server → scripts/codex-wrapper.mjs (adds grok-4.6 to the 
              → Codex executes every tool call; results return as the next input
 ```
 
-The published npm package is **macOS-only** (`"os": ["darwin"]`). Windows
-installs are rejected by npm. Linux desktop support is from a checkout: the
-official ChatGPT/Codex `.deb` stays untouched, and
-`scripts/install-codex-grok-app.sh` writes a separate wrapper.
+The published npm package installs on **macOS and Linux** (`"os": ["darwin",
+"linux"]`). Windows installs are rejected by npm. The official ChatGPT/Codex
+`.deb` stays untouched; `scripts/install-codex-grok-app.sh` writes a separate
+wrapper.
 
 
 ---
@@ -56,7 +56,7 @@ re-verification.
 ### Terminal (npm)
 
 ```sh
-npm install -g codex-grok-bridge   # macOS, Node ≥ 22
+npm install -g codex-grok-bridge   # macOS or Linux, Node ≥ 22
 codex-grok                         # launches Codex with Grok 4.6 available
 codex-grok exec --skip-git-repo-check --sandbox workspace-write 'your task'
 ```
@@ -374,7 +374,7 @@ calling으로 옮기고, 상류 Responses 스트림을 전달한 뒤, Codex가 �
 ### 터미널 (npm)
 
 ```sh
-npm install -g codex-grok-bridge   # macOS, Node ≥ 22
+npm install -g codex-grok-bridge   # macOS or Linux, Node ≥ 22
 codex-grok                         # Grok 4.6이 있는 Codex를 띄움
 codex-grok exec --skip-git-repo-check --sandbox workspace-write '작업 내용'
 ```

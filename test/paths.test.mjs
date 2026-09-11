@@ -17,6 +17,8 @@ import {
   resolveDesktopApp,
 } from "../src/paths.mjs";
 import { DEFAULT_LIMIT, DEFAULT_QUEUE_LIMIT } from "../src/slots.mjs";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 test("linux resolves the bundled ChatGPT CLI, not the Mac Codex.app path", () => {
   assert.equal(resolveCodexBinary({ platform: "linux", env: {} }), LINUX_CODEX_BINARY);
@@ -122,4 +124,11 @@ test("the Linux desktop entry launches the wrapper, not stock chatgpt", () => {
 test("slot concurrency stays at 4 with a queue of 8", () => {
   assert.equal(DEFAULT_LIMIT, 4);
   assert.equal(DEFAULT_QUEUE_LIMIT, 8);
+});
+
+test("the published package allows npm install on linux", () => {
+  const pkg = JSON.parse(
+    readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"),
+  );
+  assert.deepEqual(pkg.os, ["darwin", "linux"]);
 });
