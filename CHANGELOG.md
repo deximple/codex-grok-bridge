@@ -8,6 +8,8 @@ Grok 4.7 drop prep: any `grok-*` id routes through the same provider. Extra cata
 
 Windows ARM64 test portability: skip Linux-only installer tests, accept native path separators and ACL modes, and keep stock-prefix refusal working when `path.resolve` is win32.
 
+UTM Windows 11 ARM64 guest proof (`docs/windows-arm64-guest.md`): Node 22.23.2, `node --test` 156/0/3, isolated installer, loopback `/v1/models` 200.
+
 ## 1.0.5 — 2026-09-12
 
 First npm cut that accepts **Linux** (`"os": ["darwin", "linux"]`). Windows stays rejected.
