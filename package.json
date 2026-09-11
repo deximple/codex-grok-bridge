@@ -9,7 +9,8 @@
     "node": ">=22"
   },
   "os": [
-    "darwin"
+    "darwin",
+    "linux"
   ],
   "bin": {
     "codex-grok": "scripts/codex-grok.mjs"

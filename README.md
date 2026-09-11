@@ -11,8 +11,10 @@ Codex UI/CLI → app-server → scripts/codex-wrapper.mjs (adds grok-4.6 to the 
              → Codex executes every tool call; results return as the next input
 ```
 
-The published package is **macOS-only** (`"os": ["darwin"]`). Linux and Windows
-installs are rejected by npm.
+The published npm package installs on **macOS and Linux** (`"os": ["darwin",
+"linux"]`). Windows installs are rejected by npm. The official ChatGPT/Codex
+`.deb` stays untouched; `scripts/install-codex-grok-app.sh` writes a separate
+wrapper.
 
 
 ---
@@ -35,9 +37,9 @@ that tool the same way it calls any other Codex tool.
 
 ## Requirements
 
-- macOS
+- macOS, or Linux with the official ChatGPT/Codex desktop package
 - Node.js ≥ 22
-- `/Applications/Codex.app`
+- `/Applications/Codex.app` (macOS) or `/usr/lib/chatgpt/ChatGPT` (Linux)
 - `grok` CLI at `~/.grok/bin/grok`
 - a completed `grok login`
 
@@ -54,7 +56,7 @@ re-verification.
 ### Terminal (npm)
 
 ```sh
-npm install -g codex-grok-bridge   # macOS, Node ≥ 22
+npm install -g codex-grok-bridge   # macOS or Linux, Node ≥ 22
 codex-grok                         # launches Codex with Grok 4.6 available
 codex-grok exec --skip-git-repo-check --sandbox workspace-write 'your task'
 ```
@@ -74,8 +76,10 @@ node scripts/codex-grok.mjs
 ### Desktop
 
 Double-click **Open Codex with Grok.command** in this folder, or keep a
-**separate** `Codex Grok.app` in sync with
+**separate** desktop wrapper in sync with
 `scripts/install-codex-grok-app.sh` (see [Desktop install and update](#desktop-install-and-update)).
+On Linux that wrapper is `~/.local/share/codex-grok-bridge/app` plus a user
+`.desktop` entry; the stock `/usr/lib/chatgpt` tree is not patched.
 
 In the new Codex window, **select Grok 4.6 / xAI before starting a new
 thread**. Existing GPT models stay on the list. A Codex window that was already
@@ -86,9 +90,9 @@ The dedicated window stores UI data under
 for account, threads and settings. Work and setting changes can show up in other
 Codex windows.
 
-The installer never writes the stock Codex.app bundle, its signature,
-`~/.codex/config.toml`, or Grok auth files. It does not register a launch
-agent or a global environment variable.
+The installer never writes the stock Codex.app bundle, `/usr/lib/chatgpt`,
+their signatures, `~/.codex/config.toml`, or Grok auth files. It does not
+register a launch agent or a global environment variable.
 
 Stop by closing the Codex window this extension opened. Ordinary Codex still
 launches from its usual icon.
@@ -274,7 +278,7 @@ Start here when something breaks. Do not open `~/.grok/auth.json` or
 | `GROK_BRIDGE_INFERENCE=cli` | Fall back to the CLI envelope path |
 | `GROK_BRIDGE_DIAGNOSTICS=off` | Do not write the JSONL log |
 | `NODE` | Absolute `node` binary for the `.command` launcher / desktop scripts |
-| `CODEX_GROK_APP` | Alternate app bundle path for `install-codex-grok-app.sh` (default `/Applications/Codex Grok.app`) |
+| `CODEX_GROK_APP` | Alternate app path for `install-codex-grok-app.sh` (macOS: `/Applications/Codex Grok.app`; Linux: `~/.local/share/codex-grok-bridge/app`) |
 
 ## Verify
 
@@ -293,7 +297,7 @@ inference. A live CLI check spends the user’s quota.
 
 ```sh
 sh scripts/install-codex-grok-app.sh          # sync bridge JS only (default)
-sh scripts/install-codex-grok-app.sh --full   # also rebuild and sign the launcher applet
+sh scripts/install-codex-grok-app.sh --full   # macOS: rebuild and sign the launcher applet
 ```
 
 The default copies this checkout’s `src/` and `scripts/*.mjs` into the bundle,
@@ -302,8 +306,11 @@ never `rm -rf`s the live bundle. It refuses while a Codex Grok window is open
 (`--force` to override). ESM is not hot-reloaded: **reopen the window** after a
 sync.
 
-The script updates an existing `Codex Grok.app`. It does not create one, and it
-does not touch `/Applications/Codex.app`.
+On macOS the script updates an existing `Codex Grok.app`. It does not create
+one, and it does not touch `/Applications/Codex.app`. On Linux it creates
+`~/.local/share/codex-grok-bridge/app` and
+`~/.local/share/applications/codex-grok.desktop`, and it does not write
+`/usr/lib/chatgpt` or `/usr/share/applications/chatgpt.desktop`.
 
 ## Security notes
 
@@ -349,9 +356,9 @@ calling으로 옮기고, 상류 Responses 스트림을 전달한 뒤, Codex가 �
 
 ## 필요한 것
 
-- macOS
+- macOS, 또는 공식 ChatGPT/Codex 데스크톱 패키지가 있는 Linux
 - Node.js 22 이상
-- `/Applications/Codex.app`
+- `/Applications/Codex.app` (macOS) 또는 `/usr/lib/chatgpt/ChatGPT` (Linux)
 - `~/.grok/bin/grok`
 - 완료된 `grok login`
 
@@ -367,7 +374,7 @@ calling으로 옮기고, 상류 Responses 스트림을 전달한 뒤, Codex가 �
 ### 터미널 (npm)
 
 ```sh
-npm install -g codex-grok-bridge   # macOS, Node ≥ 22
+npm install -g codex-grok-bridge   # macOS or Linux, Node ≥ 22
 codex-grok                         # Grok 4.6이 있는 Codex를 띄움
 codex-grok exec --skip-git-repo-check --sandbox workspace-write '작업 내용'
 ```
@@ -387,8 +394,10 @@ node scripts/codex-grok.mjs
 ### 데스크톱
 
 이 폴더의 **Open Codex with Grok.command**를 더블 클릭하거나,
-`scripts/install-codex-grok-app.sh`로 **별도의** `Codex Grok.app`을 체크아웃과
+`scripts/install-codex-grok-app.sh`로 **별도의** 데스크톱 래퍼를 체크아웃과
 맞춥니다([데스크톱 설치와 갱신](#데스크톱-설치와-갱신)).
+Linux에서는 `~/.local/share/codex-grok-bridge/app`과 사용자 `.desktop`이고,
+정품 `/usr/lib/chatgpt`는 패치하지 않습니다.
 
 새로 열린 Codex 창에서 **새 작업을 시작하기 전에 Grok 4.6 / xAI를 선택**하세요.
 기존 GPT 모델도 목록에 남습니다. 이미 열려 있던 일반 Codex 창에는 이 확장이
@@ -398,9 +407,9 @@ node scripts/codex-grok.mjs
 계정·작업·설정은 기존 Codex 홈을 **공유**합니다. 작업 내용과 설정 변경은 다른
 Codex 창에도 보일 수 있습니다.
 
-설치 스크립트는 정품 Codex.app 번들, 코드 서명, `~/.codex/config.toml`, Grok
-인증 파일을 수정하지 않습니다. 자동 시작 서비스나 전역 환경변수도 등록하지
-않습니다.
+설치 스크립트는 정품 Codex.app 번들, `/usr/lib/chatgpt`, 코드 서명,
+`~/.codex/config.toml`, Grok 인증 파일을 수정하지 않습니다. 자동 시작
+서비스나 전역 환경변수도 등록하지 않습니다.
 
 중지하려면 이 확장으로 연 Codex 창을 닫으면 됩니다. 일반 Codex는 기존 아이콘으로
 실행합니다.
@@ -576,7 +585,7 @@ provider에 Codex `request_max_retries` / `stream_max_retries`를 2로 두어
 | `GROK_BRIDGE_INFERENCE=cli` | CLI 봉투 경로로 폴백 |
 | `GROK_BRIDGE_DIAGNOSTICS=off` | JSONL 로그를 쓰지 않음 |
 | `NODE` | `.command` / 데스크톱 스크립트가 쓸 `node` 절대 경로 |
-| `CODEX_GROK_APP` | `install-codex-grok-app.sh`가 쓸 앱 번들 경로 (기본 `/Applications/Codex Grok.app`) |
+| `CODEX_GROK_APP` | `install-codex-grok-app.sh`가 쓸 앱 경로 (macOS: `/Applications/Codex Grok.app`; Linux: `~/.local/share/codex-grok-bridge/app`) |
 
 ## 검증
 
@@ -595,7 +604,7 @@ CLI 검증은 사용자 계정 사용량을 씁니다.
 
 ```sh
 sh scripts/install-codex-grok-app.sh          # 브리지 JS만 동기화 (기본)
-sh scripts/install-codex-grok-app.sh --full   # 런처 applet 재빌드 + 서명
+sh scripts/install-codex-grok-app.sh --full   # macOS: 런처 applet 재빌드 + 서명
 ```
 
 기본 동작은 이 체크아웃의 `src/`와 `scripts/*.mjs`를 번들에 복사하고, 저장소에
@@ -603,8 +612,10 @@ sh scripts/install-codex-grok-app.sh --full   # 런처 applet 재빌드 + 서명
 `rm -rf`하지 않습니다. Codex Grok 창이 열려 있으면 거부합니다(`--force`로
 무시). ESM은 핫리로드되지 않으므로 **동기화 후 창을 다시 열어야** 합니다.
 
-이 스크립트는 이미 있는 `Codex Grok.app`을 갱신합니다. 번들을 새로 만들지
-않고, `/Applications/Codex.app`은 건드리지 않습니다.
+macOS에서는 이미 있는 `Codex Grok.app`을 갱신하며 `/Applications/Codex.app`은
+건드리지 않습니다. Linux에서는 `~/.local/share/codex-grok-bridge/app`과
+`~/.local/share/applications/codex-grok.desktop`을 만들고 `/usr/lib/chatgpt`와
+정품 `chatgpt.desktop`은 쓰지 않습니다.
 
 ## 보안
 

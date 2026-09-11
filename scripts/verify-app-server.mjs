@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -7,6 +8,14 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
+import { resolveCodexBinary } from "../src/paths.mjs";
+
+const bundledCodex = resolveCodexBinary();
+if (!existsSync(bundledCodex)) {
+  console.error(`verify:app-server skipped: bundled Codex CLI not found at ${bundledCodex}`);
+  console.error("Need /Applications/Codex.app (macOS) or /usr/lib/chatgpt/resources/codex (Linux).");
+  process.exit(2);
+}
 
 const home = await mkdtemp(path.join(tmpdir(), "codex-provider-verifier-"));
 const child = spawn(

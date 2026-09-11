@@ -4,8 +4,9 @@ import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 import { startRuntime } from "../src/runtime.mjs";
 import { Router } from "../src/router.mjs";
+import { resolveCodexBinary } from "../src/paths.mjs";
 
-const binary = "/Applications/Codex.app/Contents/Resources/codex";
+const binary = resolveCodexBinary();
 const args = process.argv.slice(2);
 if (!args.includes("app-server")) {
   const child = spawn(binary, args, { stdio: "inherit" });
