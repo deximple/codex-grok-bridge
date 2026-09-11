@@ -53,6 +53,26 @@ function notify(text) {
   } catch {}
 }
 
+function startWin32(wrapper) {
+  const app = resolveDesktopApp();
+  log(`start win32 app=${app} wrapper=${wrapper}`);
+  const child = spawn(app, desktopLaunchArgs(userData), {
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      ...desktopLaunchEnv({ wrapper, userData }),
+    },
+  });
+  child.on("error", (error) => {
+    log(`spawn failed: ${error.message}`);
+    process.exit(1);
+  });
+  child.on("exit", (code) => {
+    log(`chatgpt exit=${code}`);
+    process.exit(code ?? 1);
+  });
+}
+
 function startLinux(wrapper) {
   const app = resolveDesktopApp();
   const pathPrefix = `${path.dirname(process.execPath)}:/usr/local/bin:/usr/bin:/bin`;
@@ -127,6 +147,7 @@ try {
     }
   }
   if (platform === "linux") startLinux(wrapper);
+  else if (platform === "win32") startWin32(wrapper);
   else startDarwin(wrapper);
 } catch (error) {
   log(`fatal: ${error.message}`);

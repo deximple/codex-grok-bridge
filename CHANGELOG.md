@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+Windows wrapper paths (`%LOCALAPPDATA%\codex-grok-bridge`), `grok.exe`, and `install-codex-grok-app.ps1`. `"os"` stays `darwin`+`linux` until ARM64 VM proof.
+
 ## 1.0.5 — 2026-09-12
 
 First npm cut that accepts **Linux** (`"os": ["darwin", "linux"]`). Windows stays rejected.

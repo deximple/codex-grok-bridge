@@ -69,7 +69,7 @@ starts, and tears the provider down with that process.
 ```sh
 git clone https://github.com/deximple/codex-grok-bridge.git
 cd codex-grok-bridge
-npm test                        # 150 tests, no network, no inference
+npm test                        # 151 tests, no network, no inference
 node scripts/codex-grok.mjs
 ```
 
@@ -283,7 +283,7 @@ Start here when something breaks. Do not open `~/.grok/auth.json` or
 ## Verify
 
 ```sh
-npm test                    # 150 tests, no remote inference
+npm test                    # 151 tests, no remote inference
 npm run test:coverage       # 80% line / branch / function gate
 npm run verify:app-server   # real app-server routing; also runs against an installed bundle
 npm audit --omit=dev
@@ -387,7 +387,7 @@ codex-grok exec --skip-git-repo-check --sandbox workspace-write '작업 내용'
 ```sh
 git clone https://github.com/deximple/codex-grok-bridge.git
 cd codex-grok-bridge
-npm test                        # 150건, 네트워크·추론 없음
+npm test                        # 151건, 네트워크·추론 없음
 node scripts/codex-grok.mjs
 ```
 
@@ -590,7 +590,7 @@ provider에 Codex `request_max_retries` / `stream_max_retries`를 2로 두어
 ## 검증
 
 ```sh
-npm test                    # 150건, 외부 추론 없음
+npm test                    # 151건, 외부 추론 없음
 npm run test:coverage       # line/branch/function 80% 게이트
 npm run verify:app-server   # 실제 app-server 라우팅. 설치된 앱 번들에서도 실행
 npm audit --omit=dev

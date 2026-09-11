@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { resolveGrokBinary } from "./paths.mjs";
 import { createSseRewriter } from "./tools.mjs";
 import { requestStream } from "./transport.mjs";
 import { BRIDGE_ERROR, classifyBridgeError } from "./errors.mjs";
@@ -15,7 +15,7 @@ export function detectGrokClientVersion(home = homedir()) {
   try {
     // Synchronous, and on the first request's critical path: a grok binary that
     // hangs would freeze the whole bridge event loop without a timeout.
-    const output = execFileSync(join(home, ".grok/bin/grok"), ["--version"], {
+    const output = execFileSync(resolveGrokBinary(home), ["--version"], {
       encoding: "utf8",
       timeout: 5000,
     });

@@ -36,6 +36,7 @@
     "scripts/codex-grok.mjs",
     "scripts/codex-wrapper.mjs",
     "scripts/install-codex-grok-app.sh",
+    "scripts/install-codex-grok-app.ps1",
     "scripts/launch-desktop.mjs",
     "Open Codex with Grok.command",
     "README.md",

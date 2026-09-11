@@ -15,6 +15,8 @@ import {
   linuxDesktopEntryPath,
   resolveCodexBinary,
   resolveDesktopApp,
+  resolveGrokBinary,
+  win32AppDir,
 } from "../src/paths.mjs";
 import { DEFAULT_LIMIT, DEFAULT_QUEUE_LIMIT } from "../src/slots.mjs";
 import { readFileSync } from "node:fs";
@@ -103,6 +105,19 @@ test("a Linux ChatGPT process with the dedicated profile is ours", () => {
     ),
     true,
   );
+  const winUser = "C:/Users/agent/AppData/Local/codex-grok-bridge/desktop";
+  assert.equal(
+    isGrokDesktopProcess(
+      `4321 C:/Users/agent/AppData/Local/codex-grok-bridge/app/ChatGPT.exe --user-data-dir=${winUser}`,
+      winUser,
+      {
+        platform: "win32",
+        env: { LOCALAPPDATA: "C:/Users/agent/AppData/Local" },
+        home: "C:/Users/agent",
+      },
+    ),
+    true,
+  );
 });
 
 test("the installer must not write the stock ChatGPT or Codex.app prefix", () => {
@@ -124,6 +139,33 @@ test("the Linux desktop entry launches the wrapper, not stock chatgpt", () => {
 test("slot concurrency stays at 4 with a queue of 8", () => {
   assert.equal(DEFAULT_LIMIT, 4);
   assert.equal(DEFAULT_QUEUE_LIMIT, 8);
+});
+
+test("win32 uses LocalAppData for the isolated profile and grok.exe", () => {
+  const home = "C:/Users/agent";
+  const env = { LOCALAPPDATA: "C:/Users/agent/AppData/Local" };
+  assert.equal(
+    win32AppDir(home, { env }),
+    "C:/Users/agent/AppData/Local/codex-grok-bridge/app",
+  );
+  assert.equal(
+    desktopUserDataDir(home, { platform: "win32", env }),
+    "C:/Users/agent/AppData/Local/codex-grok-bridge/desktop",
+  );
+  assert.equal(
+    resolveCodexBinary({ platform: "win32", home, env }),
+    "C:/Users/agent/AppData/Local/codex-grok-bridge/app/codex.exe",
+  );
+  assert.equal(
+    resolveDesktopApp({ platform: "win32", home, env }),
+    "C:/Users/agent/AppData/Local/codex-grok-bridge/app/ChatGPT.exe",
+  );
+  assert.equal(resolveGrokBinary(home, { platform: "win32", env: {} }), "C:/Users/agent/.grok/bin/grok.exe");
+  assert.equal(
+    isForbiddenInstallDir("C:/Program Files/WindowsApps/OpenAI.Codex_1.0/app"),
+    true,
+  );
+  assert.equal(isForbiddenInstallDir("C:/Users/agent/AppData/Local/codex-grok-bridge/app"), false);
 });
 
 test("the published package allows npm install on linux", () => {

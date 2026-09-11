@@ -6,29 +6,59 @@ export const LINUX_CHATGPT_BIN = "/usr/lib/chatgpt/ChatGPT";
 export const DARWIN_CODEX_BINARY = "/Applications/Codex.app/Contents/Resources/codex";
 export const DARWIN_CODEX_APP = "/Applications/Codex.app";
 export const LINUX_STOCK_PREFIX = "/usr/lib/chatgpt";
+export const WIN32_WINDOWSAPPS = "WindowsApps";
+export const WIN32_BRIDGE_APP = "codex-grok-bridge";
 
 export function resolvePlatform(options = {}) {
   const env = options.env ?? process.env;
   return options.platform ?? env.CODEX_GROK_PLATFORM ?? process.platform;
 }
 
+export function localAppData(home = homedir(), options = {}) {
+  const env = options.env ?? process.env;
+  if (env.LOCALAPPDATA) return env.LOCALAPPDATA;
+  return path.join(home, "AppData", "Local");
+}
+
+export function win32AppDir(home = homedir(), options = {}) {
+  return path.join(localAppData(home, options), WIN32_BRIDGE_APP, "app");
+}
+
 export function resolveCodexBinary(options = {}) {
   const env = options.env ?? process.env;
   if (env.CODEX_BINARY) return env.CODEX_BINARY;
-  return resolvePlatform({ ...options, env }) === "linux"
-    ? LINUX_CODEX_BINARY
-    : DARWIN_CODEX_BINARY;
+  const platform = resolvePlatform({ ...options, env });
+  if (platform === "linux") return LINUX_CODEX_BINARY;
+  if (platform === "win32") {
+    return path.join(win32AppDir(options.home ?? homedir(), { env }), "codex.exe");
+  }
+  return DARWIN_CODEX_BINARY;
 }
 
 export function resolveDesktopApp(options = {}) {
   const env = options.env ?? process.env;
   if (env.CODEX_DESKTOP_APP) return env.CODEX_DESKTOP_APP;
-  return resolvePlatform({ ...options, env }) === "linux"
-    ? LINUX_CHATGPT_BIN
-    : DARWIN_CODEX_APP;
+  const platform = resolvePlatform({ ...options, env });
+  if (platform === "linux") return LINUX_CHATGPT_BIN;
+  if (platform === "win32") {
+    return path.join(win32AppDir(options.home ?? homedir(), { env }), "ChatGPT.exe");
+  }
+  return DARWIN_CODEX_APP;
 }
 
-export function desktopUserDataDir(home = homedir()) {
+export function resolveGrokBinary(home = homedir(), options = {}) {
+  const env = options.env ?? process.env;
+  if (env.GROK_BINARY) return env.GROK_BINARY;
+  const platform = resolvePlatform({ ...options, env });
+  const name = platform === "win32" ? "grok.exe" : "grok";
+  return path.join(home, ".grok", "bin", name);
+}
+
+export function desktopUserDataDir(home = homedir(), options = {}) {
+  const env = options.env ?? process.env;
+  if (resolvePlatform({ ...options, env }) === "win32") {
+    return path.join(localAppData(home, { env }), WIN32_BRIDGE_APP, "desktop");
+  }
   return path.join(home, ".local/share/codex-grok-bridge/desktop");
 }
 
@@ -60,9 +90,12 @@ export function isGrokDesktopProcess(line, userData, options = {}) {
   if (line.includes("Helper") || line.includes("crashpad")) return false;
   const app = resolveDesktopApp(options);
   if (line.includes(app)) return true;
-  return resolvePlatform(options) === "linux"
-    ? line.includes(LINUX_CHATGPT_BIN)
-    : /MacOS\/(ChatGPT|Codex)(\s|$)/.test(line);
+  const platform = resolvePlatform(options);
+  if (platform === "linux") return line.includes(LINUX_CHATGPT_BIN);
+  if (platform === "win32") {
+    return /ChatGPT\.exe|Codex\.exe/i.test(line) && !/WindowsApps/i.test(line);
+  }
+  return /MacOS\/(ChatGPT|Codex)(\s|$)/.test(line);
 }
 
 export function isForbiddenInstallDir(app) {
@@ -73,9 +106,11 @@ export function isForbiddenInstallDir(app) {
     "/usr/share/applications/chatgpt.desktop",
     DARWIN_CODEX_APP,
   ];
-  return forbidden.some(
-    (prefix) => resolved === prefix || resolved.startsWith(`${prefix}/`),
-  );
+  if (forbidden.some((prefix) => resolved === prefix || resolved.startsWith(`${prefix}/`))) {
+    return true;
+  }
+  const norm = resolved.replace(/\\/g, "/").toLowerCase();
+  return norm.includes("/windowsapps/") || norm.endsWith("/windowsapps");
 }
 
 export function linuxDesktopEntry({ exec, icon = "chatgpt" }) {
