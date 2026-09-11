@@ -6,6 +6,8 @@ Windows wrapper paths (`%LOCALAPPDATA%\codex-grok-bridge`), `grok.exe`, and `ins
 
 Grok 4.7 drop prep: any `grok-*` id routes through the same provider. Extra catalog slugs come from `GROK_BRIDGE_MODELS` (for example `grok-4.7`) without a rewrite. Default catalog remains `grok-4.6`.
 
+Windows ARM64 test portability: skip Linux-only installer tests, accept native path separators and ACL modes, and keep stock-prefix refusal working when `path.resolve` is win32.
+
 ## 1.0.5 — 2026-09-12
 
 First npm cut that accepts **Linux** (`"os": ["darwin", "linux"]`). Windows stays rejected.
