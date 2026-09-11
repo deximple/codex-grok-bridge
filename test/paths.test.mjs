@@ -49,16 +49,19 @@ test("explicit overrides win so tests can point at a fake binary", () => {
 test("the dedicated desktop profile stays under the bridge user-data dir", () => {
   assert.equal(
     desktopUserDataDir("/home/ubuntu", { platform: "linux", env: {} }),
-    "/home/ubuntu/.local/share/codex-grok-bridge/desktop",
+    path.join("/home/ubuntu", ".local/share/codex-grok-bridge/desktop"),
   );
-  assert.equal(linuxAppDir("/home/ubuntu"), "/home/ubuntu/.local/share/codex-grok-bridge/app");
+  assert.equal(
+    linuxAppDir("/home/ubuntu"),
+    path.join("/home/ubuntu", ".local/share/codex-grok-bridge/app"),
+  );
   assert.equal(
     linuxDesktopEntryPath("/home/ubuntu"),
-    "/home/ubuntu/.local/share/applications/codex-grok.desktop",
+    path.join("/home/ubuntu", ".local/share/applications/codex-grok.desktop"),
   );
   assert.equal(
     linuxDesktopEntryPath("/home/ubuntu", "/tmp/xdg"),
-    "/tmp/xdg/applications/codex-grok.desktop",
+    path.join("/tmp/xdg", "applications/codex-grok.desktop"),
   );
 });
 
