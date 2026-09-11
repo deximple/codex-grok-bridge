@@ -47,7 +47,9 @@ function Write-StorePointer([string]$Name, [string[]]$Filters) {
   foreach ($filter in $Filters) {
     foreach ($pkg in $pkgs) {
       if (-not $pkg.InstallLocation) { continue }
-      $hit = Get-ChildItem -Path $pkg.InstallLocation -Filter $filter -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+      $hits = @(Get-ChildItem -Path $pkg.InstallLocation -Filter $filter -Recurse -ErrorAction SilentlyContinue)
+      $hit = $hits | Where-Object { $_.FullName -match '\\resources\\codex\.exe$' } | Select-Object -First 1
+      if (-not $hit) { $hit = $hits | Select-Object -First 1 }
       if (-not $hit) { continue }
       New-Item -ItemType Directory -Force -Path $pointerDir | Out-Null
       Set-Content -Path (Join-Path $pointerDir $Name) -Value $hit.FullName -Encoding ASCII
