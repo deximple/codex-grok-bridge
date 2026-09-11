@@ -46,4 +46,6 @@ smoke-status=200
 smoke-model=grok-4.6
 ```
 
-ChatGPT/Codex desktop and `grok.exe` are not on this guest yet, so `launch-desktop` cannot open a real window. npm `"os"` still omits `win32` until that desktop binary exists.
+Official `install.ps1` then put **Grok 1.0.25** at `C:\Users\Public\grok-home\.grok\bin\grok.exe`. `grok --version` printed `grok 1.0.25 (f7e67d6988e2)`. The installer labeled that build `windows-x86_64` because the qemu-ga PowerShell process reports `AMD64` even though the OS is ARM64. Native `windows-aarch64` was not what this install path fetched.
+
+ChatGPT/Codex desktop is still missing, so `launch-desktop` cannot open a real window. npm `"os"` still omits `win32` until that desktop binary exists.
