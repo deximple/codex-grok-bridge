@@ -47,7 +47,7 @@ The `.command` launcher resolves paths from its own location, so moving the
 folder does not require edits. Set `NODE=/path/to/node` if `node` is not on
 `PATH`.
 
-Verified against: Codex 0.153.4 / app 26.901.51231, Grok CLI 1.0.24, Node 22.23.0.
+Verified against: Codex 0.153.4 / app 26.901.51231, Grok CLI 1.0.25, Node 22.23.0.
 An app update that changes `CODEX_CLI_PATH` or the app-server protocol needs
 re-verification.
 
@@ -69,7 +69,7 @@ starts, and tears the provider down with that process.
 ```sh
 git clone https://github.com/deximple/codex-grok-bridge.git
 cd codex-grok-bridge
-npm test                        # 134 tests, no network, no inference
+npm test                        # 150 tests, no network, no inference
 node scripts/codex-grok.mjs
 ```
 
@@ -283,7 +283,7 @@ Start here when something breaks. Do not open `~/.grok/auth.json` or
 ## Verify
 
 ```sh
-npm test                    # 134 tests, no remote inference
+npm test                    # 150 tests, no remote inference
 npm run test:coverage       # 80% line / branch / function gate
 npm run verify:app-server   # real app-server routing; also runs against an installed bundle
 npm audit --omit=dev
@@ -365,7 +365,7 @@ calling으로 옮기고, 상류 Responses 스트림을 전달한 뒤, Codex가 �
 `.command` 런처는 자기 위치를 기준으로 경로를 잡으므로 폴더를 옮겨도 수정할
 필요가 없습니다. `PATH`에 `node`가 없으면 `NODE=/path/to/node`로 지정합니다.
 
-검증 버전: Codex 0.153.4 / 앱 26.901.51231, Grok CLI 1.0.24, Node 22.23.0.
+검증 버전: Codex 0.153.4 / 앱 26.901.51231, Grok CLI 1.0.25, Node 22.23.0.
 앱 업데이트가 `CODEX_CLI_PATH`나 app-server 프로토콜을 바꾸면 재검증이
 필요합니다.
 
@@ -387,7 +387,7 @@ codex-grok exec --skip-git-repo-check --sandbox workspace-write '작업 내용'
 ```sh
 git clone https://github.com/deximple/codex-grok-bridge.git
 cd codex-grok-bridge
-npm test                        # 134건, 네트워크·추론 없음
+npm test                        # 150건, 네트워크·추론 없음
 node scripts/codex-grok.mjs
 ```
 
@@ -590,7 +590,7 @@ provider에 Codex `request_max_retries` / `stream_max_retries`를 2로 두어
 ## 검증
 
 ```sh
-npm test                    # 134건, 외부 추론 없음
+npm test                    # 150건, 외부 추론 없음
 npm run test:coverage       # line/branch/function 80% 게이트
 npm run verify:app-server   # 실제 app-server 라우팅. 설치된 앱 번들에서도 실행
 npm audit --omit=dev
