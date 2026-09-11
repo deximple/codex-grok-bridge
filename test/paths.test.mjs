@@ -205,9 +205,10 @@ test("win32 launch reads a Store ChatGPT pointer and never writes WindowsApps", 
   );
 });
 
-test("the published package allows npm install on linux", () => {
+test("the published package allows npm install on darwin, linux, and win32", () => {
   const pkg = JSON.parse(
     readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"),
   );
-  assert.deepEqual(pkg.os, ["darwin", "linux"]);
+  assert.deepEqual(pkg.os, ["darwin", "linux", "win32"]);
+  assert.equal(pkg.version, "1.5.0");
 });

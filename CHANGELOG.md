@@ -2,15 +2,16 @@
 
 ## Unreleased
 
-Windows wrapper paths (`%LOCALAPPDATA%\codex-grok-bridge`), `grok.exe`, and `install-codex-grok-app.ps1`. `"os"` stays `darwin`+`linux` until ARM64 VM proof.
+## 1.5.0 — 2026-09-12
 
-Grok 4.7 drop prep: any `grok-*` id routes through the same provider. Extra catalog slugs come from `GROK_BRIDGE_MODELS` (for example `grok-4.7`) without a rewrite. Default catalog remains `grok-4.6`.
+First cut that accepts **Windows** (`"os": ["darwin", "linux", "win32"]`).
 
-Windows ARM64 test portability: skip Linux-only installer tests, accept native path separators and ACL modes, and keep stock-prefix refusal working when `path.resolve` is win32.
+- Isolated win32 wrapper under `%LOCALAPPDATA%\codex-grok-bridge`. Never writes WindowsApps.
+- Launch reads a Store ChatGPT / `resources/codex.exe` pointer when the isolated copies are missing.
+- Grok 4.7 drop prep: any `grok-*` id uses the Grok provider. Extra catalog slugs via `GROK_BRIDGE_MODELS`.
+- UTM Windows 11 ARM64 guest: Node 22.23.2, `node --test` 156/0/3, official ChatGPT ARM64 MSIX `OpenAI.Codex_26.903.8094.0`, bundled CLI `codex-cli 0.153.4`, grok 1.0.25, loopback `/v1/models` 200. See `docs/windows-arm64-guest.md`.
 
-UTM Windows 11 ARM64 guest proof (`docs/windows-arm64-guest.md`): Node 22.23.2, `node --test` 156/0/3, isolated installer, loopback `/v1/models` 200.
-
-Windows launch may read a Store ChatGPT/codex pointer under `%LOCALAPPDATA%\codex-grok-bridge` instead of copying out of WindowsApps.
+Install: `npm install -g codex-grok-bridge@1.5.0`
 
 ## 1.0.5 — 2026-09-12
 
