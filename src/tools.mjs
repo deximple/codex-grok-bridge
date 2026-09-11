@@ -108,15 +108,45 @@ function whitelistInputNode(node) {
   return whitelistContentPart(node);
 }
 
+function isObjectSchema(schema) {
+  return (
+    schema &&
+    typeof schema === "object" &&
+    !Array.isArray(schema) &&
+    schema.type === "object"
+  );
+}
+
+function collapseUnionRoot(variants) {
+  const objects = variants.filter(isObjectSchema);
+  if (objects.length === 0) return OBJECT_SCHEMA;
+  if (objects.length === 1) return objects[0];
+  const properties = {};
+  let required;
+  for (const variant of objects) {
+    if (variant.properties && typeof variant.properties === "object")
+      Object.assign(properties, variant.properties);
+    const keys = Array.isArray(variant.required) ? variant.required : [];
+    required =
+      required === undefined
+        ? keys.slice()
+        : required.filter((key) => keys.includes(key));
+  }
+  const schema = { type: "object", properties };
+  if (required.length) schema.required = required;
+  return schema;
+}
+
 function usableParameters(parameters) {
   if (!parameters || typeof parameters !== "object") return OBJECT_SCHEMA;
-  if (
-    parameters.type === "object" ||
-    Array.isArray(parameters.oneOf) ||
-    Array.isArray(parameters.anyOf)
-  )
-    return parameters;
-  return OBJECT_SCHEMA;
+  if (parameters.type === "object") return parameters;
+  const variants = Array.isArray(parameters.oneOf)
+    ? parameters.oneOf
+    : Array.isArray(parameters.anyOf)
+      ? parameters.anyOf
+      : null;
+  if (!variants) return OBJECT_SCHEMA;
+  return collapseUnionRoot(variants);
 }
 
 function sanitize(name) {
