@@ -23,7 +23,8 @@ test("writes one 0600 JSONL record per turn and never throws", () => {
   assert.equal(written[0].kind, "dns");
   assert.equal(written[0].elapsedMs, 15071);
   assert.equal(written[0].detail, "Bearer [redacted]");
-  assert.equal(statSync(diagnostics.file).mode & 0o777, 0o600);
+  if (process.platform !== "win32")
+    assert.equal(statSync(diagnostics.file).mode & 0o777, 0o600);
 });
 
 test("can be turned off entirely", () => {

@@ -100,16 +100,28 @@ export function isGrokDesktopProcess(line, userData, options = {}) {
 
 export function isForbiddenInstallDir(app) {
   const resolved = path.resolve(app);
+  const norm = resolved.replace(/\\/g, "/").toLowerCase();
+  const asPosix = String(app).replace(/\\/g, "/");
   const forbidden = [
     LINUX_STOCK_PREFIX,
     "/usr/bin/chatgpt",
     "/usr/share/applications/chatgpt.desktop",
     DARWIN_CODEX_APP,
   ];
-  if (forbidden.some((prefix) => resolved === prefix || resolved.startsWith(`${prefix}/`))) {
+  if (
+    forbidden.some((prefix) => {
+      const p = prefix.toLowerCase();
+      return (
+        asPosix === prefix ||
+        asPosix.startsWith(`${prefix}/`) ||
+        norm === p ||
+        norm.endsWith(p) ||
+        norm.includes(`${p}/`)
+      );
+    })
+  ) {
     return true;
   }
-  const norm = resolved.replace(/\\/g, "/").toLowerCase();
   return norm.includes("/windowsapps/") || norm.endsWith("/windowsapps");
 }
 

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import path from "node:path";
 import {
   DARWIN_CODEX_APP,
   DARWIN_CODEX_BINARY,
@@ -47,7 +48,7 @@ test("explicit overrides win so tests can point at a fake binary", () => {
 
 test("the dedicated desktop profile stays under the bridge user-data dir", () => {
   assert.equal(
-    desktopUserDataDir("/home/ubuntu"),
+    desktopUserDataDir("/home/ubuntu", { platform: "linux", env: {} }),
     "/home/ubuntu/.local/share/codex-grok-bridge/desktop",
   );
   assert.equal(linuxAppDir("/home/ubuntu"), "/home/ubuntu/.local/share/codex-grok-bridge/app");
@@ -146,21 +147,24 @@ test("win32 uses LocalAppData for the isolated profile and grok.exe", () => {
   const env = { LOCALAPPDATA: "C:/Users/agent/AppData/Local" };
   assert.equal(
     win32AppDir(home, { env }),
-    "C:/Users/agent/AppData/Local/codex-grok-bridge/app",
+    path.join(env.LOCALAPPDATA, "codex-grok-bridge", "app"),
   );
   assert.equal(
     desktopUserDataDir(home, { platform: "win32", env }),
-    "C:/Users/agent/AppData/Local/codex-grok-bridge/desktop",
+    path.join(env.LOCALAPPDATA, "codex-grok-bridge", "desktop"),
   );
   assert.equal(
     resolveCodexBinary({ platform: "win32", home, env }),
-    "C:/Users/agent/AppData/Local/codex-grok-bridge/app/codex.exe",
+    path.join(env.LOCALAPPDATA, "codex-grok-bridge", "app", "codex.exe"),
   );
   assert.equal(
     resolveDesktopApp({ platform: "win32", home, env }),
-    "C:/Users/agent/AppData/Local/codex-grok-bridge/app/ChatGPT.exe",
+    path.join(env.LOCALAPPDATA, "codex-grok-bridge", "app", "ChatGPT.exe"),
   );
-  assert.equal(resolveGrokBinary(home, { platform: "win32", env: {} }), "C:/Users/agent/.grok/bin/grok.exe");
+  assert.equal(
+    resolveGrokBinary(home, { platform: "win32", env: {} }),
+    path.join(home, ".grok", "bin", "grok.exe"),
+  );
   assert.equal(
     isForbiddenInstallDir("C:/Program Files/WindowsApps/OpenAI.Codex_1.0/app"),
     true,
