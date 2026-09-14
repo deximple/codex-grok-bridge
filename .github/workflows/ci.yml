@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ["22", "24"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Syntax-check entry points
+        run: |
+          node --check scripts/codex-grok.mjs
+          node --check scripts/codex-wrapper.mjs
+          node --check scripts/launch-desktop.mjs
+
+      - name: Install (zero-dep, verifies manifest)
+        run: npm install --no-audit --no-fund
+
+      - name: Regression tests
+        run: npm test
+
+      - name: Coverage gate (80%)
+        run: npm run test:coverage
+
+      - name: Pack dry-run (files whitelist)
+        run: npm pack --dry-run
