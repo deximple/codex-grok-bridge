@@ -187,6 +187,55 @@ test("strips oneOf from an object-typed parameter root", () => {
   assert.deepEqual(automation.parameters.required, ["id"]);
 });
 
+test("union required treats a missing variant required as empty and keeps the root", () => {
+  const { request } = toProxyRequest({
+    input: [],
+    tools: [
+      {
+        type: "function",
+        name: "search_optional",
+        parameters: {
+          type: "object",
+          properties: {
+            foo: { type: "string" },
+            bar: { type: "string" },
+          },
+          anyOf: [
+            { required: ["foo"] },
+            { properties: { bar: { type: "string" } } },
+          ],
+        },
+      },
+      {
+        type: "function",
+        name: "update_item",
+        parameters: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            name: { type: "string" },
+            enabled: { type: "boolean" },
+          },
+          required: ["id"],
+          oneOf: [{ required: ["name"] }, { required: ["enabled"] }],
+        },
+      },
+    ],
+  });
+
+  const optional = request.tools.find((tool) =>
+    String(tool.name).endsWith("_search_optional"),
+  );
+  assertCleanObjectParameters(optional.parameters);
+  assert.equal(optional.parameters.required, undefined);
+
+  const update = request.tools.find((tool) =>
+    String(tool.name).endsWith("_update_item"),
+  );
+  assertCleanObjectParameters(update.parameters);
+  assert.deepEqual(update.parameters.required, ["id"]);
+});
+
 test("flattens namespaced Codex tools into function tools", () => {
   const { tools, map } = flattenCodexTools([
     {
@@ -250,6 +299,8 @@ test("proxy request forwards grok-4.7 instead of pinning 4.6", () => {
     input: [{ role: "user", content: "hi" }],
   });
   assert.equal(request.model, "grok-4.7");
+  assert.match(request.instructions, /model grok-4\.7 via the grok_build_cli provider/);
+  assert.doesNotMatch(request.instructions, /model grok-4\.6 via/);
 });
 
 test("keeps plain reasoning summaries but strips compaction and encrypted content", () => {

@@ -11,6 +11,8 @@ import {
   desktopUserDataDir,
   isForbiddenInstallDir,
   isGrokDesktopProcess,
+  parseWin32ProcessJson,
+  selectGrokDesktopPid,
   linuxAppDir,
   linuxDesktopEntry,
   linuxDesktopEntryPath,
@@ -66,21 +68,31 @@ test("the dedicated desktop profile stays under the bridge user-data dir", () =>
   );
 });
 
-test("desktop launch env is the same hook Mac Codex Grok.app uses", () => {
+test("desktop launch env prepends pathPrefix to the inherited PATH", () => {
   const userData = desktopUserDataDir("/home/ubuntu");
   assert.deepEqual(desktopLaunchArgs(userData), [`--user-data-dir=${userData}`]);
   assert.deepEqual(
     desktopLaunchEnv({
       wrapper: "/tmp/wrapper.mjs",
       userData,
-      pathPrefix: "/usr/bin",
+      pathPrefix: "/opt/node/bin:/usr/local/bin",
+      env: { PATH: "/home/ubuntu/.local/bin:/usr/bin" },
     }),
     {
       CODEX_CLI_PATH: "/tmp/wrapper.mjs",
       CODEX_APP_SERVER_FORCE_CLI: "1",
       CODEX_ELECTRON_USER_DATA_PATH: userData,
-      PATH: "/usr/bin",
+      PATH: `/opt/node/bin:/usr/local/bin${path.delimiter}/home/ubuntu/.local/bin:/usr/bin`,
     },
+  );
+  assert.deepEqual(
+    desktopLaunchEnv({
+      wrapper: "/tmp/wrapper.mjs",
+      userData,
+      pathPrefix: "/opt/node/bin",
+      env: {},
+    }).PATH,
+    "/opt/node/bin",
   );
 });
 
@@ -202,6 +214,35 @@ test("win32 launch reads a Store ChatGPT pointer and never writes WindowsApps", 
       { platform: "win32", env, home },
     ),
     true,
+  );
+});
+
+test("win32 grokPid ignores the CIM probe and requires the desktop exe", () => {
+  const home = "C:/Users/agent";
+  const env = { LOCALAPPDATA: "C:/Users/agent/AppData/Local" };
+  const userData = desktopUserDataDir(home, { platform: "win32", env });
+  const probe = {
+    ProcessId: 4242,
+    CommandLine:
+      `powershell.exe -NoProfile -Command Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*--user-data-dir=${userData}*' }`,
+  };
+  const helper = {
+    ProcessId: 5001,
+    CommandLine: `C:/Users/agent/AppData/Local/codex-grok-bridge/app/ChatGPT.exe Helper --user-data-dir=${userData}`,
+  };
+  const desktop = {
+    ProcessId: 9001,
+    CommandLine: `C:/Users/agent/AppData/Local/codex-grok-bridge/app/ChatGPT.exe --user-data-dir=${userData}`,
+  };
+  const options = { platform: "win32", env, home, probePid: 4242 };
+  assert.deepEqual(parseWin32ProcessJson(""), []);
+  assert.deepEqual(parseWin32ProcessJson(JSON.stringify(probe)), [probe]);
+  assert.equal(selectGrokDesktopPid([probe], userData, options), null);
+  assert.equal(selectGrokDesktopPid([probe, helper], userData, options), null);
+  assert.equal(selectGrokDesktopPid([probe, helper, desktop], userData, options), 9001);
+  assert.equal(
+    selectGrokDesktopPid([desktop], userData, { ...options, probePid: 9001 }),
+    null,
   );
 });
 

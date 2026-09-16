@@ -136,6 +136,7 @@ linuxOnly("launch-desktop starts Linux ChatGPT with the wrapper and a separate p
   printf 'CODEX_CLI_PATH=%s\\n' "$CODEX_CLI_PATH"
   printf 'CODEX_APP_SERVER_FORCE_CLI=%s\\n' "$CODEX_APP_SERVER_FORCE_CLI"
   printf 'CODEX_ELECTRON_USER_DATA_PATH=%s\\n' "$CODEX_ELECTRON_USER_DATA_PATH"
+  printf 'PATH=%s\\n' "$PATH"
   printf 'ARGS=%s\\n' "$*"
 } > ${JSON.stringify(record)}
 `,
@@ -167,7 +168,81 @@ linuxOnly("launch-desktop starts Linux ChatGPT with the wrapper and a separate p
     assert.match(text, /CODEX_APP_SERVER_FORCE_CLI=1/);
     assert.match(text, new RegExp(`CODEX_ELECTRON_USER_DATA_PATH=${userData}`));
     assert.match(text, new RegExp(`ARGS=--user-data-dir=${userData}`));
+    const prefix = `${path.dirname(process.execPath)}:/usr/local/bin:/usr/bin:/bin`;
+    assert.match(text, new RegExp(`^PATH=${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "m"));
+    const inherited = process.env.PATH || "";
+    if (inherited) {
+      assert.match(text, new RegExp(`PATH=${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}${path.delimiter}`));
+      assert.ok(
+        text.includes(inherited.split(path.delimiter)[0]),
+        "inherited PATH entries must survive the launch env",
+      );
+    }
   } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+linuxOnly("launch-desktop activates an already-running Linux window", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "codex-grok-relaunch-"));
+  const fakeDir = path.join(home, "usr/lib/chatgpt");
+  await mkdir(fakeDir, { recursive: true });
+  const fakeApp = path.join(fakeDir, "ChatGPT");
+  const record = path.join(home, "launch.out");
+  const userData = desktopUserDataDir(home);
+  await writeFile(
+    fakeApp,
+    `#!/bin/sh
+printf 'spawned\\n' >> ${JSON.stringify(record)}
+if [ "\${KEEP:-}" = 1 ]; then
+  while true; do sleep 30; done
+fi
+`,
+  );
+  await chmod(fakeApp, 0o755);
+  const sleeper = spawn(fakeApp, [`--user-data-dir=${userData}`], {
+    env: { ...process.env, HOME: home, KEEP: "1" },
+    stdio: "ignore",
+  });
+  try {
+    await new Promise((resolve, reject) => {
+      const deadline = Date.now() + 2000;
+      const tick = () => {
+        if (sleeper.exitCode != null) {
+          reject(new Error(`sleeper exited ${sleeper.exitCode}`));
+          return;
+        }
+        if (Date.now() > deadline) {
+          reject(new Error("sleeper did not stay running"));
+          return;
+        }
+        setTimeout(resolve, 50);
+      };
+      tick();
+    });
+    const child = spawn(process.execPath, [launchDesktop], {
+      env: {
+        ...process.env,
+        HOME: home,
+        CODEX_GROK_PLATFORM: "linux",
+        CODEX_DESKTOP_APP: fakeApp,
+      },
+      stdio: "ignore",
+    });
+    const [code] = await Promise.race([
+      once(child, "close"),
+      new Promise((_, reject) =>
+        setTimeout(() => {
+          child.kill("SIGKILL");
+          reject(new Error("second launch-desktop timed out"));
+        }, 5000),
+      ),
+    ]);
+    assert.equal(code, 0);
+    const lines = (await readFile(record, "utf8")).trim().split("\n");
+    assert.ok(lines.length >= 2, `expected a second spawn, got ${lines.length}`);
+  } finally {
+    sleeper.kill("SIGKILL");
     await rm(home, { recursive: true, force: true });
   }
 });

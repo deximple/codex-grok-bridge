@@ -25,7 +25,33 @@ New-Item -ItemType Directory -Force -Path (Join-Path $App "scripts"), (Join-Path
 Copy-Item (Join-Path $Root "scripts\*.mjs") (Join-Path $App "scripts") -Force
 Copy-Item (Join-Path $Root "src\*.mjs") (Join-Path $App "src") -Force
 
-$Node = if ($env:NODE) { $env:NODE } else { (Get-Command node -ErrorAction Stop).Source }
+function Resolve-NodeExe {
+  $cmd = Get-Command node -ErrorAction SilentlyContinue
+  if ($cmd -and $cmd.Source) { return $cmd.Source }
+  if ($env:NODE) { return $env:NODE }
+  $candidates = @()
+  if ($env:ProgramFiles) {
+    $candidates += Join-Path $env:ProgramFiles "nodejs\node.exe"
+  }
+  $x86 = ${env:ProgramFiles(x86)}
+  if ($x86) {
+    $candidates += Join-Path $x86 "nodejs\node.exe"
+  }
+  if ($env:LOCALAPPDATA) {
+    $candidates += Join-Path $env:LOCALAPPDATA "Programs\nodejs\node.exe"
+    $candidates += Join-Path $env:LOCALAPPDATA "Programs\node\node.exe"
+  }
+  if ($env:USERPROFILE) {
+    $candidates += Join-Path $env:USERPROFILE "node\node.exe"
+    $candidates += Join-Path $env:USERPROFILE "nodejs\node.exe"
+  }
+  foreach ($candidate in $candidates) {
+    if ($candidate -and (Test-Path -LiteralPath $candidate)) { return $candidate }
+  }
+  Write-Error "node not found. Set NODE to the node.exe path, or install Node.js."
+}
+
+$Node = Resolve-NodeExe
 $Launcher = Join-Path $App "codex-grok-desktop.cmd"
 @"
 @echo off

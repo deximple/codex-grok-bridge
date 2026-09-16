@@ -7,8 +7,10 @@ import {
   desktopLaunchEnv,
   desktopUserDataDir,
   isGrokDesktopProcess,
+  parseWin32ProcessJson,
   resolveDesktopApp,
   resolvePlatform,
+  selectGrokDesktopPid,
 } from "../src/paths.mjs";
 
 const platform = resolvePlatform();
@@ -22,23 +24,39 @@ function log(message) {
 }
 
 function grokPidWin32() {
-  const systemRoot = process.env.SystemRoot || "C:\\Windows";
-  const powershell = `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
   try {
-    const out = execFileSync(
-      powershell,
-      [
-        "-NoProfile",
-        "-Command",
-        `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like ${JSON.stringify(`*--user-data-dir=${userData}*`)} } | Select-Object -First 1 -ExpandProperty ProcessId`,
-      ],
-      { encoding: "utf8", windowsHide: true, timeout: 15000 },
-    );
-    const pid = Number(String(out).trim());
-    return Number.isInteger(pid) && pid > 0 ? pid : null;
+    const injected = process.env.CODEX_GROK_CIM_JSON;
+    const rows =
+      injected != null
+        ? parseWin32ProcessJson(injected)
+        : parseWin32ProcessJson(queryWin32Processes());
+    return selectGrokDesktopPid(rows, userData, {
+      platform: "win32",
+      env: process.env,
+    });
   } catch {
     return null;
   }
+}
+
+function queryWin32Processes() {
+  const systemRoot = process.env.SystemRoot || "C:\\Windows";
+  const powershell = path.join(
+    systemRoot,
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  );
+  return execFileSync(
+    powershell,
+    [
+      "-NoProfile",
+      "-Command",
+      `Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like ${JSON.stringify(`*--user-data-dir=${userData}*`)} } | Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress`,
+    ],
+    { encoding: "utf8", windowsHide: true, timeout: 15000 },
+  );
 }
 
 function grokPid() {
@@ -74,10 +92,18 @@ function notify(text) {
   } catch {}
 }
 
+function desktopCommand(app) {
+  if (/\.(mjs|cjs|js)$/i.test(app)) {
+    return { command: process.execPath, args: [app, ...desktopLaunchArgs(userData)] };
+  }
+  return { command: app, args: desktopLaunchArgs(userData) };
+}
+
 function startWin32(wrapper) {
   const app = resolveDesktopApp();
+  const { command, args } = desktopCommand(app);
   log(`start win32 app=${app} wrapper=${wrapper}`);
-  const child = spawn(app, desktopLaunchArgs(userData), {
+  const child = spawn(command, args, {
     stdio: "inherit",
     env: {
       ...process.env,
@@ -156,15 +182,18 @@ try {
   const running = grokPid();
   if (running) {
     log(`activate pid=${running}`);
-    if (platform !== "darwin") {
+    if (platform === "darwin") {
+      try {
+        activate(running);
+        notify("Codex Grok 창을 앞으로 가져왔습니다.");
+        process.exit(0);
+      } catch (error) {
+        log(`activate failed: ${error.message}`);
+      }
+    } else if (platform === "linux") {
+      // Fall through to startLinux so Electron can focus the existing window.
+    } else {
       process.exit(0);
-    }
-    try {
-      activate(running);
-      notify("Codex Grok 창을 앞으로 가져왔습니다.");
-      process.exit(0);
-    } catch (error) {
-      log(`activate failed: ${error.message}`);
     }
   }
   if (platform === "linux") startLinux(wrapper);

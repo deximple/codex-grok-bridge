@@ -93,14 +93,17 @@ export function linuxDesktopEntryPath(home = homedir(), xdgDataHome) {
   return path.join(dataHome, "applications", "codex-grok.desktop");
 }
 
-export function desktopLaunchEnv({ wrapper, userData, pathPrefix }) {
-  const env = {
+export function desktopLaunchEnv({ wrapper, userData, pathPrefix, env = process.env }) {
+  const next = {
     CODEX_CLI_PATH: wrapper,
     CODEX_APP_SERVER_FORCE_CLI: "1",
     CODEX_ELECTRON_USER_DATA_PATH: userData,
   };
-  if (pathPrefix) env.PATH = pathPrefix;
-  return env;
+  if (pathPrefix) {
+    const inherited = env.PATH ?? env.Path ?? "";
+    next.PATH = inherited ? `${pathPrefix}${path.delimiter}${inherited}` : pathPrefix;
+  }
+  return next;
 }
 
 export function desktopLaunchArgs(userData) {
@@ -118,6 +121,25 @@ export function isGrokDesktopProcess(line, userData, options = {}) {
     return /ChatGPT\.exe|Codex\.exe/i.test(line);
   }
   return /MacOS\/(ChatGPT|Codex)(\s|$)/.test(line);
+}
+
+export function parseWin32ProcessJson(text) {
+  const raw = String(text ?? "").trim();
+  if (!raw) return [];
+  const data = JSON.parse(raw);
+  return Array.isArray(data) ? data : [data];
+}
+
+export function selectGrokDesktopPid(rows, userData, options = {}) {
+  const probePid = options.probePid;
+  for (const row of rows ?? []) {
+    const pid = Number(row?.ProcessId);
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    if (probePid != null && pid === Number(probePid)) continue;
+    const line = String(row?.CommandLine ?? "");
+    if (isGrokDesktopProcess(line, userData, options)) return pid;
+  }
+  return null;
 }
 
 export function isForbiddenInstallDir(app) {
