@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -131,10 +131,7 @@ test("win32 first launch starts ChatGPT when only the CIM probe matches", async 
   });
   const fakeDir = path.join(home, "fake");
   await mkdir(fakeDir, { recursive: true });
-  const fakeApp = path.join(
-    fakeDir,
-    process.platform === "win32" ? "ChatGPT.cmd" : "ChatGPT",
-  );
+  const fakeApp = path.join(fakeDir, "ChatGPT.mjs");
   const record = path.join(home, "launch.out");
   const cim = JSON.stringify([
     {
@@ -143,15 +140,12 @@ test("win32 first launch starts ChatGPT when only the CIM probe matches", async 
     },
   ]);
   try {
-    if (process.platform === "win32") {
-      await writeFile(fakeApp, `@echo off\r\necho started>"${record}"\r\n`);
-    } else {
-      await writeFile(
-        fakeApp,
-        `#!/bin/sh\nprintf 'started\\n' > ${JSON.stringify(record)}\n`,
-      );
-      await chmod(fakeApp, 0o755);
-    }
+    await writeFile(
+      fakeApp,
+      `import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(record)}, "started\\n");
+`,
+    );
     const child = spawn(process.execPath, [launchDesktop], {
       env: {
         ...process.env,

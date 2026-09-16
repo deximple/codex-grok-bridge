@@ -92,10 +92,18 @@ function notify(text) {
   } catch {}
 }
 
+function desktopCommand(app) {
+  if (/\.(mjs|cjs|js)$/i.test(app)) {
+    return { command: process.execPath, args: [app, ...desktopLaunchArgs(userData)] };
+  }
+  return { command: app, args: desktopLaunchArgs(userData) };
+}
+
 function startWin32(wrapper) {
   const app = resolveDesktopApp();
+  const { command, args } = desktopCommand(app);
   log(`start win32 app=${app} wrapper=${wrapper}`);
-  const child = spawn(app, desktopLaunchArgs(userData), {
+  const child = spawn(command, args, {
     stdio: "inherit",
     env: {
       ...process.env,
