@@ -4,7 +4,7 @@ import {
   isImageGenerationItem,
   saveGeneratedImage,
 } from "./imagegen.mjs";
-import { resolveGrokModel } from "./models.mjs";
+import { DEFAULT_GROK_MODEL, resolveGrokModel } from "./models.mjs";
 
 const OBJECT_SCHEMA = { type: "object", properties: {} };
 
@@ -124,12 +124,11 @@ function mergeObjectFragments(fragments) {
   for (const fragment of fragments) {
     if (fragment.properties && typeof fragment.properties === "object")
       Object.assign(properties, fragment.properties);
-    if (Array.isArray(fragment.required)) {
-      required =
-        required === undefined
-          ? fragment.required.slice()
-          : required.filter((key) => fragment.required.includes(key));
-    }
+    const keys = Array.isArray(fragment.required) ? fragment.required : [];
+    required =
+      required === undefined
+        ? keys.slice()
+        : required.filter((key) => keys.includes(key));
   }
   return { properties, required };
 }
@@ -180,12 +179,14 @@ function usableParameters(parameters) {
       : {}),
     ...merged.properties,
   };
-  let required = merged.required;
-  if (Array.isArray(parameters.required)) {
-    required =
-      required === undefined
-        ? parameters.required.slice()
-        : required.filter((key) => parameters.required.includes(key));
+  const intersection = merged.required ?? [];
+  const root = Array.isArray(parameters.required) ? parameters.required : [];
+  const required = [];
+  const seen = new Set();
+  for (const key of [...root, ...intersection]) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    required.push(key);
   }
   const first = fragments[0];
   return emitObjectParameters(
@@ -407,11 +408,16 @@ function toProxyInput(input, map) {
 // no way to answer "is Grok actually attached?" and either hedges or goes
 // hunting through config files. Stated once, in the instructions, it costs a
 // few tokens and removes the whole class of question.
-export const TRANSPORT_PROVENANCE =
-  "Transport: this request is served by the local Codex-Grok bridge — model " +
-  "grok-4.6 via the grok_build_cli provider, with Codex owning tools, history " +
-  "and permissions. If asked whether Grok is attached to the Codex harness, " +
-  "this line is the authoritative answer and no tool call is needed to confirm it.";
+export function transportProvenance(model = DEFAULT_GROK_MODEL) {
+  return (
+    "Transport: this request is served by the local Codex-Grok bridge — model " +
+    `${model} via the grok_build_cli provider, with Codex owning tools, history ` +
+    "and permissions. If asked whether Grok is attached to the Codex harness, " +
+    "this line is the authoritative answer and no tool call is needed to confirm it."
+  );
+}
+
+export const TRANSPORT_PROVENANCE = transportProvenance();
 
 // Codex still injects its imagegen skill. That skill's fallback is OpenAI
 // (`image_gen` or a Python CLI). The model will read the skill and send the
@@ -447,9 +453,10 @@ export function toProxyRequest(body) {
     request.tool_choice = proxyToolChoice(body.tool_choice, map);
     request.parallel_tool_calls = body.parallel_tool_calls !== false;
   }
+  const provenanceLine = transportProvenance(request.model);
   const provenance = imageGenOn
-    ? `${TRANSPORT_PROVENANCE}\n\n${IMAGE_GENERATION_PROVENANCE}`
-    : TRANSPORT_PROVENANCE;
+    ? `${provenanceLine}\n\n${IMAGE_GENERATION_PROVENANCE}`
+    : provenanceLine;
   request.instructions =
     typeof body.instructions === "string" && body.instructions
       ? `${body.instructions}\n\n${provenance}`
