@@ -49,14 +49,16 @@ test("serves the Grok model catalog", async () => {
     const response = await fetch(`${baseUrl}/v1/models?client_version=test`);
     assert.equal(response.status, 200);
     const data = await response.json();
-    assert.equal(data.models[0].slug, "grok-4.6");
-    assert.equal(data.models[0].display_name, "Grok 4.6 / xAI");
+    assert.equal(data.models[0].slug, "grok-4.7");
+    assert.equal(data.models[0].display_name, "Grok 4.7 / xAI");
+    assert.equal(data.models[1].slug, "grok-4.6");
+    assert.equal(data.models[1].display_name, "Grok 4.6 / xAI");
     assert.deepEqual(data.models[0], MODEL_INFO);
   });
 });
-test("accepts grok-4.7 and lists it when GROK_BRIDGE_MODELS is set", async () => {
+test("accepts grok-4.7 by default and lists GROK_BRIDGE_MODELS extras", async () => {
   const previous = process.env.GROK_BRIDGE_MODELS;
-  process.env.GROK_BRIDGE_MODELS = "grok-4.7";
+  process.env.GROK_BRIDGE_MODELS = "grok-4.5";
   try {
     await withServer(
       {
@@ -71,7 +73,10 @@ test("accepts grok-4.7 and lists it when GROK_BRIDGE_MODELS is set", async () =>
       async (baseUrl) => {
         const listed = await fetch(`${baseUrl}/v1/models`);
         const data = await listed.json();
-        assert.equal(data.models[1].slug, "grok-4.7");
+        assert.deepEqual(
+          data.models.map((model) => model.slug),
+          ["grok-4.7", "grok-4.6", "grok-4.5"],
+        );
         const response = await fetch(`${baseUrl}/v1/responses`, {
           method: "POST",
           headers: {

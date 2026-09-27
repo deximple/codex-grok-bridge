@@ -1,5 +1,6 @@
-export const DEFAULT_GROK_MODEL = "grok-4.6";
+export const DEFAULT_GROK_MODEL = "grok-4.7";
 export const GROK_PROVIDER = "grok_build_cli";
+const RETAINED_GROK_MODELS = ["grok-4.6"];
 
 export function isGrokModel(model) {
   return typeof model === "string" && model.startsWith("grok-");
@@ -27,10 +28,10 @@ export function extraGrokModels(env = process.env) {
 }
 
 export function catalogModelIds(env = process.env) {
-  const ids = [DEFAULT_GROK_MODEL];
-  const seen = new Set(ids);
-  for (const id of extraGrokModels(env)) {
-    if (seen.has(id)) continue;
+  const ids = [];
+  const seen = new Set();
+  for (const id of [DEFAULT_GROK_MODEL, ...RETAINED_GROK_MODELS, ...extraGrokModels(env)]) {
+    if (!isGrokModel(id) || seen.has(id)) continue;
     seen.add(id);
     ids.push(id);
   }

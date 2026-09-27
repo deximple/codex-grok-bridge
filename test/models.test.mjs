@@ -35,17 +35,23 @@ test("treats any grok-* id as a Grok model and defaults the rest", () => {
   assert.equal(resolveGrokModel("gpt-6-astra"), DEFAULT_GROK_MODEL);
 });
 
-test("catalog stays grok-4.6 unless GROK_BRIDGE_MODELS adds extras", () => {
+test("catalog defaults to grok-4.7 and keeps grok-4.6", () => {
   withEnv(undefined, () => {
-    assert.deepEqual(catalogModelIds(), [DEFAULT_GROK_MODEL]);
+    assert.equal(DEFAULT_GROK_MODEL, "grok-4.7");
+    assert.deepEqual(catalogModelIds(), ["grok-4.7", "grok-4.6"]);
     assert.equal(catalogModelEntries()[0], MODEL_ENTRY);
+    assert.equal(catalogModelEntries()[0].displayName, "Grok 4.7 / xAI");
+    assert.equal(catalogModelEntries()[1].id, "grok-4.6");
+    assert.equal(catalogModelEntries()[1].displayName, "Grok 4.6 / xAI");
     assert.equal(catalogModelInfos()[0], MODEL_INFO);
+    assert.equal(catalogModelInfos()[0].display_name, "Grok 4.7 / xAI");
+    assert.equal(catalogModelInfos()[1].slug, "grok-4.6");
     assert.deepEqual(extraGrokModels(), []);
   });
-  withEnv("grok-4.7, grok-4.6 grok-4.7 gpt-nope", () => {
-    assert.deepEqual(catalogModelIds(), [DEFAULT_GROK_MODEL, "grok-4.7"]);
-    assert.equal(catalogModelEntries()[1].id, "grok-4.7");
-    assert.equal(catalogModelInfos()[1].slug, "grok-4.7");
+  withEnv("grok-4.5, grok-4.7 grok-4.6 gpt-nope", () => {
+    assert.deepEqual(catalogModelIds(), ["grok-4.7", "grok-4.6", "grok-4.5"]);
+    assert.equal(catalogModelEntries()[2].id, "grok-4.5");
+    assert.equal(catalogModelInfos()[2].slug, "grok-4.5");
   });
 });
 

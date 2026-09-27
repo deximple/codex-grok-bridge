@@ -1,5 +1,5 @@
 #!/bin/sh
-# Double-click to open the dedicated Codex window with Grok 4.6 available.
+# Double-click to open the dedicated Codex window with Grok 4.7 available.
 # Resolves everything from this file's own location, so the checkout can live
 # anywhere and be moved without editing this launcher.
 set -eu

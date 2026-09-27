@@ -54,6 +54,7 @@ try {
   });
   child.stdin.write(JSON.stringify({ method: "initialized" }) + "\n");
   const models = await request("model/list", { limit: 100 });
+  assert.ok(models.data.some((m) => m.id === "grok-4.7"));
   assert.ok(models.data.some((m) => m.id === "grok-4.6"));
   const gpt = models.data.find((m) => m.id.startsWith("gpt"));
   assert.ok(gpt);
@@ -78,7 +79,7 @@ try {
     approvalPolicy: "on-request",
   });
   const transitions = [];
-  for (const [model, provider] of [["grok-4.6", "grok_build_cli"], [gpt.model, "openai"]]) {
+  for (const [model, provider] of [["grok-4.7", "grok_build_cli"], ["grok-4.6", "grok_build_cli"], [gpt.model, "openai"]]) {
     await request("thread/settings/update", { threadId, model });
     const resumed = await request("thread/resume", { threadId, excludeTurns: true });
     assert.equal(resumed.thread.id, threadId);
