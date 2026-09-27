@@ -110,6 +110,7 @@ printf '%s\\n' "$@" > ${JSON.stringify(record)}
     const grokArgs = await readFile(record, "utf8");
     assert.match(grokArgs, /model_provider="grok_build_cli"/);
     assert.match(grokArgs, /^exec\n/m);
+    assert.match(grokArgs, /^-m\ngrok-4\.7$/m);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -2,6 +2,7 @@
 import { spawn } from "node:child_process";
 import { startRuntime } from "../src/runtime.mjs";
 import { resolveCodexBinary } from "../src/paths.mjs";
+import { DEFAULT_GROK_MODEL } from "../src/models.mjs";
 const runtime = await startRuntime();
 const userArgs = process.argv.slice(2);
 const overrides = [
@@ -11,7 +12,7 @@ const overrides = [
   "-c",
   `model_catalog_json=${JSON.stringify(runtime.catalogPath)}`,
   "-m",
-  "grok-4.6",
+  DEFAULT_GROK_MODEL,
 ];
 const args =
   userArgs[0] === "exec"

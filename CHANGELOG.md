@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 1.6.0 — 2026-09-27
+
+- Default catalog model is `grok-4.7` (`Grok 4.7 / xAI`). `grok-4.6` stays listed so existing threads still resolve.
+- `grok-*` still routes to `grok_build_cli`. No other model ids were added. `GROK_BRIDGE_MODELS` still appends extra `grok-*` ids.
+
 ## 1.5.0 — 2026-09-12
 
 First cut that accepts **Windows** (`"os": ["darwin", "linux", "win32"]`).

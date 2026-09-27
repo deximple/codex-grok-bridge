@@ -1,11 +1,12 @@
 # codex-grok-bridge
 
-Run **Grok 4.6 as the model inside Codex**. Codex still owns tools, permissions,
-history and MCP. Inference uses the installed `grok` CLI login session — not an
+Run **Grok 4.7 as the model inside Codex**. Codex still owns tools, permissions,
+history and MCP. `grok-4.6` stays on the model list so existing threads still
+resolve. Inference uses the installed `grok` CLI login session — not an
 xAI API key.
 
 ```
-Codex UI/CLI → app-server → scripts/codex-wrapper.mjs (adds grok-4.6 to the model list)
+Codex UI/CLI → app-server → scripts/codex-wrapper.mjs (adds grok-4.7 and grok-4.6 to the model list)
              → localhost /v1/responses (the bridge)
              → cli-chat-proxy.grok.com
              → Codex executes every tool call; results return as the next input
@@ -20,7 +21,7 @@ prefixes stay untouched; `scripts/install-codex-grok-app.sh` and
 ---
 ## What this is
 
-A local bridge that puts Grok 4.6 on Codex’s model list and sends Codex
+A local bridge that puts Grok 4.7 on Codex’s model list and sends Codex
 `/v1/responses` traffic to `cli-chat-proxy.grok.com`. Grok does the inference.
 Codex runs every tool call (shell, patch, MCP, …) and feeds the results back as
 the next request’s `input`. That is the same agent loop as the GPT path.
@@ -32,9 +33,9 @@ so Codex still recognizes them.
 Fourteen files under `src/`. Zero runtime dependencies. Node.js ≥ 22.
 
 This is not a second-opinion review product and not a Grok-native search
-product. New Grok ids, including 4.7 when the CLI lists them, use the same
-`grok-*` route. Set `GROK_BRIDGE_MODELS=grok-4.7` to show extras in the catalog
-before they are the default. If Codex exposes a web-search tool, Grok can call
+product. The picker shows `grok-4.7` (Grok 4.7 / xAI) and keeps `grok-4.6`.
+Any other `grok-*` id uses the same route. `GROK_BRIDGE_MODELS` adds further
+`grok-*` ids. If Codex exposes a web-search tool, Grok can call
 that tool the same way it calls any other Codex tool.
 
 ## Requirements
@@ -59,7 +60,7 @@ re-verification.
 
 ```sh
 npm install -g codex-grok-bridge   # macOS, Linux, or Windows; Node ≥ 22
-codex-grok                         # launches Codex with Grok 4.6 available
+codex-grok                         # launches Codex with Grok 4.7 available
 codex-grok exec --skip-git-repo-check --sandbox workspace-write 'your task'
 ```
 
@@ -84,9 +85,9 @@ On Linux that wrapper is `~/.local/share/codex-grok-bridge/app` plus a user
 `.desktop` entry; the stock `/usr/lib/chatgpt` tree is not patched. On Windows
 it is `%LOCALAPPDATA%\codex-grok-bridge`; `WindowsApps` is never written.
 
-In the new Codex window, **select Grok 4.6 / xAI before starting a new
-thread**. Existing GPT models stay on the list. A Codex window that was already
-open does not get this extension.
+In the new Codex window, **select Grok 4.7 / xAI before starting a new
+thread**. Existing GPT models stay on the list, and so does `grok-4.6`. A Codex
+window that was already open does not get this extension.
 
 The dedicated window stores UI data under
 `~/.local/share/codex-grok-bridge/desktop` and **shares** the normal Codex home
@@ -280,7 +281,7 @@ Start here when something breaks. Do not open `~/.grok/auth.json` or
 | `GROK_BRIDGE_TRANSPORT=fetch` | Use Node `fetch` instead of `node:http(s)` |
 | `GROK_BRIDGE_INFERENCE=cli` | Fall back to the CLI envelope path |
 | `GROK_BRIDGE_DIAGNOSTICS=off` | Do not write the JSONL log |
-| `GROK_BRIDGE_MODELS` | Extra `grok-*` catalog ids (comma or space), e.g. `grok-4.7` |
+| `GROK_BRIDGE_MODELS` | Extra `grok-*` catalog ids (comma or space) beyond `grok-4.7` and `grok-4.6` |
 | `NODE` | Absolute `node` binary for the `.command` launcher / desktop scripts |
 | `CODEX_GROK_APP` | Alternate app path for the desktop installer (macOS: `/Applications/Codex Grok.app`; Linux: `~/.local/share/codex-grok-bridge/app`; Windows: `%LOCALAPPDATA%\codex-grok-bridge\app`) |
 
@@ -347,7 +348,7 @@ responses. Codex’s and Grok’s own retention policies still apply.
 
 ## 이게 뭔가
 
-Grok 4.6을 Codex 모델 목록에 넣고, Codex의 `/v1/responses`를
+Grok 4.7을 Codex 모델 목록에 넣고, Codex의 `/v1/responses`를
 `cli-chat-proxy.grok.com`으로 넘기는 로컬 브리지입니다. 추론은 Grok이 합니다.
 도구 호출(셸, 패치, MCP, …)은 Codex가 실행하고, 결과는 다음 요청의 `input`으로
 돌아갑니다. GPT 경로와 같은 에이전트 루프입니다.
@@ -359,10 +360,11 @@ calling으로 옮기고, 상류 Responses 스트림을 전달한 뒤, Codex가 �
 `src/` 아래 파일 14개. 런타임 의존성 없음. Node.js 22 이상. 1.5.0부터 npm
 `"os"`는 `darwin` / `linux` / `win32`입니다.
 
-코드 리뷰 전용 제품이 아니고 Grok 네이티브 검색 제품도 아닙니다. CLI가 새
-id(4.7 포함)를 내놓으면 같은 `grok-*` 경로로 붙습니다. 기본 카탈로그에 먼저
-보이게 하려면 `GROK_BRIDGE_MODELS=grok-4.7`을 씁니다. Codex가 웹 검색 도구를
-노출하면 Grok은 다른 Codex 도구와 같이 그 도구를 호출할 수 있습니다.
+코드 리뷰 전용 제품이 아니고 Grok 네이티브 검색 제품도 아닙니다. 피커에는
+`grok-4.7`(Grok 4.7 / xAI)이 기본으로 보이고 `grok-4.6`도 남습니다. 그 외
+`grok-*` id도 같은 경로로 붙고, `GROK_BRIDGE_MODELS`로 카탈로그에 더합니다.
+Codex가 웹 검색 도구를 노출하면 Grok은 다른 Codex 도구와 같이 그 도구를
+호출할 수 있습니다.
 
 ## 필요한 것
 
@@ -385,7 +387,7 @@ id(4.7 포함)를 내놓으면 같은 `grok-*` 경로로 붙습니다. 기본 �
 
 ```sh
 npm install -g codex-grok-bridge   # macOS, Linux, Windows; Node ≥ 22
-codex-grok                         # Grok 4.6이 있는 Codex를 띄움
+codex-grok                         # Grok 4.7이 있는 Codex를 띄움
 codex-grok exec --skip-git-repo-check --sandbox workspace-write '작업 내용'
 ```
 
@@ -410,9 +412,9 @@ Linux에서는 `~/.local/share/codex-grok-bridge/app`과 사용자 `.desktop`이
 정품 `/usr/lib/chatgpt`는 패치하지 않습니다. Windows에서는
 `%LOCALAPPDATA%\codex-grok-bridge`이고 `WindowsApps`는 쓰지 않습니다.
 
-새로 열린 Codex 창에서 **새 작업을 시작하기 전에 Grok 4.6 / xAI를 선택**하세요.
-기존 GPT 모델도 목록에 남습니다. 이미 열려 있던 일반 Codex 창에는 이 확장이
-주입되지 않습니다.
+새로 열린 Codex 창에서 **새 작업을 시작하기 전에 Grok 4.7 / xAI를 선택**하세요.
+기존 GPT 모델과 `grok-4.6`도 목록에 남습니다. 이미 열려 있던 일반 Codex 창에는
+이 확장이 주입되지 않습니다.
 
 전용 창은 UI 데이터를 `~/.local/share/codex-grok-bridge/desktop`에 두고,
 계정·작업·설정은 기존 Codex 홈을 **공유**합니다. 작업 내용과 설정 변경은 다른
@@ -595,7 +597,7 @@ provider에 Codex `request_max_retries` / `stream_max_retries`를 2로 두어
 | `GROK_BRIDGE_TRANSPORT=fetch` | `node:http(s)` 대신 Node `fetch` |
 | `GROK_BRIDGE_INFERENCE=cli` | CLI 봉투 경로로 폴백 |
 | `GROK_BRIDGE_DIAGNOSTICS=off` | JSONL 로그를 쓰지 않음 |
-| `GROK_BRIDGE_MODELS` | 카탈로그에 더할 `grok-*` id (쉼표/공백). 예: `grok-4.7` |
+| `GROK_BRIDGE_MODELS` | `grok-4.7`과 `grok-4.6` 외에 카탈로그에 더할 `grok-*` id (쉼표/공백) |
 | `NODE` | `.command` / 데스크톱 스크립트가 쓸 `node` 절대 경로 |
 | `CODEX_GROK_APP` | 데스크톱 설치기가 쓸 앱 경로 (macOS: `/Applications/Codex Grok.app`; Linux: `~/.local/share/codex-grok-bridge/app`; Windows: `%LOCALAPPDATA%\codex-grok-bridge\app`) |
 

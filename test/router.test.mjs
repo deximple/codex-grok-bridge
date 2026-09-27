@@ -1,18 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Router, MODEL_ENTRY } from "../src/router.mjs";
-test("adds Grok exactly once and preserves existing models", () => {
+test("injects grok-4.7 and grok-4.6 once and preserves existing models", () => {
   const router = new Router("/catalog.json");
   router.outgoing({ id: 1, method: "model/list" });
   const result = router.incoming({
     id: 1,
     result: { data: [{ id: "gpt" }], nextCursor: null },
   });
-  assert.deepEqual(result.result.data, [{ id: "gpt" }, MODEL_ENTRY]);
+  assert.equal(result.result.data[1], MODEL_ENTRY);
+  assert.deepEqual(
+    result.result.data.map((model) => model.id),
+    ["gpt", "grok-4.7", "grok-4.6"],
+  );
 });
-test("routes grok-4.7 and injects extra catalog ids from GROK_BRIDGE_MODELS", () => {
+test("routes grok-4.7 and appends extra catalog ids from GROK_BRIDGE_MODELS", () => {
   const previous = process.env.GROK_BRIDGE_MODELS;
-  process.env.GROK_BRIDGE_MODELS = "grok-4.7";
+  process.env.GROK_BRIDGE_MODELS = "grok-4.5, grok-4.7 grok-4.6 gpt-nope";
   try {
     const router = new Router("/catalog.json");
     const started = router.outgoing({
@@ -26,8 +30,10 @@ test("routes grok-4.7 and injects extra catalog ids from GROK_BRIDGE_MODELS", ()
       id: 1,
       result: { data: [{ id: "gpt" }], nextCursor: null },
     });
-    assert.equal(listed.result.data[1].id, "grok-4.6");
-    assert.equal(listed.result.data[2].id, "grok-4.7");
+    assert.deepEqual(
+      listed.result.data.map((model) => model.id),
+      ["gpt", "grok-4.7", "grok-4.6", "grok-4.5"],
+    );
   } finally {
     if (previous === undefined) delete process.env.GROK_BRIDGE_MODELS;
     else process.env.GROK_BRIDGE_MODELS = previous;

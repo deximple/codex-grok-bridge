@@ -35,7 +35,7 @@
 - `src/cli-inference.mjs` — `GROK_BRIDGE_INFERENCE=cli` 폴백. `bridge.mjs`에서 분리했다.
 - `src/imagegen.mjs` — Grok 네이티브 이미지 생성. 브리지가 `image_generation` 도구를 직접 선언하고, 돌아온 바이트를 파일로 저장해 assistant 메시지로 넘긴다. Codex는 이 프로바이더에 이미지 생성 도구를 **주지 않는다**(263개 중 없음). 생성만 되고 투명 배경·진짜 편집은 안 된다 — 알파 없는 포맷이면 모델에게 그렇게 알린다.
 - `src/slots.mjs` — 유한 동시성(4) + 큐(8). **1로 되돌리지 말 것**: Codex `spawn_agent` 자식 추론이 부모 턴과 겹쳐 429로 죽는다. 상류는 동시 6건을 문제없이 처리한다(실측).
-- `src/models.mjs` — 기본 카탈로그는 `grok-4.6`. `grok-*`는 모두 Grok 제공자로 라우팅한다. `GROK_BRIDGE_MODELS`로 4.7 같은 추가 id를 카탈로그에 넣는다.
+- `src/models.mjs` — 기본 카탈로그는 `grok-4.7`이고 `grok-4.6`도 남긴다. `grok-*`는 모두 Grok 제공자로 라우팅한다. `GROK_BRIDGE_MODELS`로 그 외 `grok-*` id를 카탈로그에 넣는다.
 - `src/tools.mjs`의 `TRANSPORT_PROVENANCE` — 브리지가 `instructions` 끝에 붙이는 출처 한 줄. Codex는 provider·model을 프롬프트에 넣지 않으므로, 이 줄이 "Grok이 붙었는가"의 유일한 프롬프트 내 근거다. `GROK_BRIDGE_IMAGE_GEN`이 꺼져 있지 않으면 그 뒤에 `IMAGE_GENERATION_PROVENANCE`를 붙여 Codex imagegen 스킬(OpenAI)을 읽지 말라고 한다.
 - 배포는 `sh scripts/install-codex-grok-app.sh` 한 줄이다. 앱이 켜져 있으면 거부한다.
 - Linux는 같은 스크립트가 `~/.local/share/codex-grok-bridge/app`과 사용자 `.desktop`을 만든다. `/usr/lib/chatgpt`와 정품 `chatgpt.desktop`은 건드리지 않는다. 번들 CLI는 `/usr/lib/chatgpt/resources/codex`다.
