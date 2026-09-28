@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.6.1 — 2026-09-28
+
 - Darwin bundled CLI resolves `Codex.app/Contents/Resources/codex-cli/bin/codex` when that file exists (Codex 26.924). The legacy `Contents/Resources/codex` path remains the fallback. `CODEX_BINARY` still wins. Linux and Windows layouts are unchanged.
 
 ## 1.6.0 — 2026-09-27
