@@ -9,6 +9,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { MODEL_INFO } from "../../src/bridge.mjs";
+import { resolveCodexBinary } from "../../src/paths.mjs";
 
 const token = randomBytes(16).toString("hex");
 const dir = await mkdtemp(path.join(tmpdir(), "probe-"));
@@ -28,7 +29,7 @@ server.listen(0, "127.0.0.1");
 await once(server, "listening");
 const port = server.address().port;
 const started = Date.now();
-const child = spawn("/Applications/Codex.app/Contents/Resources/codex", [
+const child = spawn(resolveCodexBinary(), [
   "exec",
   "-c", `model_providers.grok_build_cli.name="stub"`,
   "-c", `model_providers.grok_build_cli.base_url="http://127.0.0.1:${port}/v1"`,

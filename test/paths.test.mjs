@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   DARWIN_CODEX_APP,
   DARWIN_CODEX_BINARY,
+  DARWIN_CODEX_CLI_BINARY,
   LINUX_CHATGPT_BIN,
   LINUX_CODEX_BINARY,
   desktopLaunchArgs,
@@ -33,8 +34,44 @@ test("linux resolves the bundled ChatGPT CLI, not the Mac Codex.app path", () =>
   assert.equal(LINUX_CHATGPT_BIN, "/usr/lib/chatgpt/ChatGPT");
 });
 
-test("darwin keeps the Codex.app bundled CLI", () => {
-  assert.equal(resolveCodexBinary({ platform: "darwin", env: {} }), DARWIN_CODEX_BINARY);
+test("darwin prefers the Codex 26.924 bundled CLI and keeps the legacy path", () => {
+  assert.equal(
+    DARWIN_CODEX_CLI_BINARY,
+    "/Applications/Codex.app/Contents/Resources/codex-cli/bin/codex",
+  );
+  assert.equal(DARWIN_CODEX_BINARY, "/Applications/Codex.app/Contents/Resources/codex");
+  assert.equal(
+    resolveCodexBinary({
+      platform: "darwin",
+      env: {},
+      existsSync: (file) => file === DARWIN_CODEX_CLI_BINARY,
+    }),
+    DARWIN_CODEX_CLI_BINARY,
+  );
+  assert.equal(
+    resolveCodexBinary({
+      platform: "darwin",
+      env: {},
+      existsSync: () => false,
+    }),
+    DARWIN_CODEX_BINARY,
+  );
+  assert.equal(
+    resolveCodexBinary({
+      platform: "darwin",
+      env: { CODEX_BINARY: "/tmp/codex" },
+      existsSync: () => true,
+    }),
+    "/tmp/codex",
+  );
+  assert.equal(
+    resolveCodexBinary({
+      platform: "linux",
+      env: {},
+      existsSync: () => true,
+    }),
+    LINUX_CODEX_BINARY,
+  );
   assert.equal(resolveDesktopApp({ platform: "darwin", env: {} }), DARWIN_CODEX_APP);
 });
 

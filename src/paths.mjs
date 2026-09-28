@@ -4,6 +4,8 @@ import { homedir } from "node:os";
 
 export const LINUX_CODEX_BINARY = "/usr/lib/chatgpt/resources/codex";
 export const LINUX_CHATGPT_BIN = "/usr/lib/chatgpt/ChatGPT";
+export const DARWIN_CODEX_CLI_BINARY =
+  "/Applications/Codex.app/Contents/Resources/codex-cli/bin/codex";
 export const DARWIN_CODEX_BINARY = "/Applications/Codex.app/Contents/Resources/codex";
 export const DARWIN_CODEX_APP = "/Applications/Codex.app";
 export const LINUX_STOCK_PREFIX = "/usr/lib/chatgpt";
@@ -54,6 +56,8 @@ export function resolveCodexBinary(options = {}) {
   if (platform === "win32") {
     return resolveWin32Binary("codex.exe", "store-codex.txt", { ...options, env });
   }
+  const exists = options.existsSync ?? existsSync;
+  if (exists(DARWIN_CODEX_CLI_BINARY)) return DARWIN_CODEX_CLI_BINARY;
   return DARWIN_CODEX_BINARY;
 }
 
