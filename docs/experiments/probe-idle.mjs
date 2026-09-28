@@ -4,6 +4,7 @@
 // If Codex gives up at ~15s, the clock is Codex's (stream_idle_timeout_ms).
 import { spawn } from "node:child_process";
 import { startRuntime } from "../../src/runtime.mjs";
+import { resolveCodexBinary } from "../../src/paths.mjs";
 
 const stallSeconds = Number(process.argv[2] ?? 60);
 let requestAt = null;
@@ -25,7 +26,7 @@ const proxyFetch = async () => {
 
 const runtime = await startRuntime({ proxyFetch, grokHome: "/tmp/grok-bridge-diag/fakehome" });
 const started = Date.now();
-const child = spawn("/Applications/Codex.app/Contents/Resources/codex", [
+const child = spawn(resolveCodexBinary(), [
   "exec", ...runtime.args,
   "-c", 'model_provider="grok_build_cli"',
   "-c", `model_catalog_json=${JSON.stringify(runtime.catalogPath)}`,

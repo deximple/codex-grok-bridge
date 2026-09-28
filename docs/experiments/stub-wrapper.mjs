@@ -6,6 +6,7 @@ import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 import { startRuntime } from "../../src/runtime.mjs";
 import { Router } from "../../src/router.mjs";
+import { resolveCodexBinary } from "../../src/paths.mjs";
 
 const STALL_MS = Number(process.env.STUB_STALL_MS ?? 40000);
 const proxyFetch = async () => {
@@ -25,7 +26,7 @@ const proxyFetch = async () => {
   return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
 };
 
-const binary = "/Applications/Codex.app/Contents/Resources/codex";
+const binary = resolveCodexBinary();
 const args = process.argv.slice(2);
 import { MODEL_INFO } from "../../src/bridge.mjs";
 if (process.env.CTX_WINDOW) MODEL_INFO.context_window = Number(process.env.CTX_WINDOW);
