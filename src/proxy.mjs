@@ -138,7 +138,7 @@ export async function openProxyStreamWithRetry(options, attempts = 2) {
   throw lastError;
 }
 
-export async function pipeProxySse(stream, output, map) {
+export async function pipeProxySse(stream, output, map, usageBox) {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -166,5 +166,7 @@ export async function pipeProxySse(stream, output, map) {
     // unread holds the upstream socket open for the rest of the response.
     await reader.cancel(error).catch(() => {});
     throw error;
+  } finally {
+    if (usageBox) usageBox.cacheUsage = rewrite.cacheUsage ?? null;
   }
 }

@@ -5,6 +5,13 @@ import {
   saveGeneratedImage,
 } from "./imagegen.mjs";
 import { DEFAULT_GROK_MODEL, resolveGrokModel } from "./models.mjs";
+import {
+  applyCacheUsage,
+  logicalFingerprint,
+  readCacheUsage,
+  stableJsonValue,
+  stableProxyName,
+} from "./prefix.mjs";
 
 const OBJECT_SCHEMA = { type: "object", properties: {} };
 
@@ -227,7 +234,14 @@ function decodeCustomInput(argumentsValue) {
 }
 
 function addFunction(flattened, map, spec) {
-  const proxyName = `codex_${flattened.length}_${sanitize(spec.name)}`;
+  // Index names change when Codex reorders tools, which rewrites every
+  // earlier function_call and breaks the prompt-cache prefix.
+  let proxyName = stableProxyName(spec, sanitize(spec.name));
+  if (map.has(proxyName)) {
+    let n = 2;
+    while (map.has(`${proxyName}_${n}`)) n += 1;
+    proxyName = `${proxyName}_${n}`;
+  }
   map.set(proxyName, {
     kind: spec.kind,
     namespace: spec.namespace,
@@ -239,10 +253,11 @@ function addFunction(flattened, map, spec) {
     description: spec.namespace
       ? `[${spec.namespace}] ${spec.description || spec.name}`
       : spec.description || spec.name,
-    parameters:
+    parameters: stableJsonValue(
       spec.kind === "custom"
         ? structuredClone(CUSTOM_INPUT_SCHEMA)
         : usableParameters(spec.parameters),
+    ),
   });
 }
 
@@ -284,7 +299,7 @@ export function flattenCodexTools(tools = []) {
       }
       continue;
     }
-    flattened.push(structuredClone(tool));
+    flattened.push(stableJsonValue(structuredClone(tool)));
   }
   return { tools: flattened, map };
 }
@@ -392,15 +407,34 @@ function toProxyInputNode(node, map, state) {
   return whitelistInputNode(next);
 }
 
-function toProxyInput(input, map) {
-  const items = toProxyInputNode(input, map, { callIds: new Map() });
-  if (!Array.isArray(items)) return items;
-  return items.filter(
-    (item) =>
-      item &&
-      typeof item === "object" &&
-      (item.type == null || GROK_INPUT_ITEM_TYPES.has(item.type)),
+function isForwardedItem(item) {
+  return (
+    item &&
+    item !== DROP &&
+    typeof item === "object" &&
+    !Array.isArray(item) &&
+    (item.type == null || GROK_INPUT_ITEM_TYPES.has(item.type))
   );
+}
+
+function projectInput(input, map) {
+  if (!Array.isArray(input)) {
+    const items = toProxyInputNode(input, map, { callIds: new Map() });
+    return { items, pairs: [] };
+  }
+  const state = { callIds: new Map() };
+  const pairs = [];
+  for (const item of input) {
+    const fingerprint = logicalFingerprint(item);
+    const next = toProxyInputNode(item, map, state);
+    if (!isForwardedItem(next)) continue;
+    pairs.push({ fingerprint, item: next });
+  }
+  return { items: pairs.map((pair) => pair.item), pairs };
+}
+
+function toProxyInput(input, map) {
+  return projectInput(input, map).items;
 }
 
 // Only the bridge knows a request is being served by the bridge. Codex does not
@@ -432,9 +466,10 @@ export const IMAGE_GENERATION_PROVENANCE =
 export function toProxyRequest(body) {
   const { tools, map } = flattenCodexTools(body.tools ?? []);
   const effort = EFFORT[body.reasoning?.effort] ?? "high";
+  const projected = projectInput(body.input, map);
   const request = {
     model: resolveGrokModel(body.model),
-    input: toProxyInput(body.input, map),
+    input: projected.items,
     tools,
     reasoning: { effort },
     stream: true,
@@ -463,7 +498,7 @@ export function toProxyRequest(body) {
       : provenance;
   if (typeof body.prompt_cache_key === "string" && body.prompt_cache_key)
     request.prompt_cache_key = body.prompt_cache_key;
-  return { request, map };
+  return { request, map, projected: projected.pairs };
 }
 
 function rememberProxyItem(item, origin, state) {
@@ -508,8 +543,19 @@ function absorbGeneratedImage(item, state) {
   };
 }
 
+const USAGE_EVENTS = new Set(["response.completed", "response.incomplete"]);
+
 function rewriteResponseEvent(value, map, state) {
   if (!value || typeof value !== "object") return value;
+  if (
+    USAGE_EVENTS.has(value.type) &&
+    value.response &&
+    typeof value.response.usage === "object"
+  ) {
+    applyCacheUsage(value.response.usage);
+    const cache = readCacheUsage(value.response.usage);
+    if (cache) state.cacheUsage = cache;
+  }
   if (
     typeof value.item === "object" &&
     value.item &&
@@ -569,6 +615,13 @@ export function createSseRewriter(map, options = {}) {
     callIds: new Map(),
     itemIds: new Map(),
     imageOptions: options.imageOptions,
+    cacheUsage: null,
   };
-  return (block) => rewriteSseBlock(block, map, state);
+  const rewrite = (block) => rewriteSseBlock(block, map, state);
+  Object.defineProperty(rewrite, "cacheUsage", {
+    get() {
+      return state.cacheUsage;
+    },
+  });
+  return rewrite;
 }

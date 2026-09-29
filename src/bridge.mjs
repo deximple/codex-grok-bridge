@@ -9,6 +9,12 @@ import {
   runGrok,
 } from "./cli-inference.mjs";
 import { openProxyStreamWithRetry, pipeProxySse } from "./proxy.mjs";
+import {
+  applyCacheUsage,
+  createPrefixMemory,
+  readCacheUsage,
+  stableConvId,
+} from "./prefix.mjs";
 import { toProxyRequest } from "./tools.mjs";
 import { classifyBridgeError, errorSignature, bridgeErrorMessage } from "./errors.mjs";
 import { createDiagnostics } from "./diagnostics.mjs";
@@ -36,6 +42,7 @@ export function createBridgeServer(options = {}) {
     limit: options.maxConcurrentInference,
     queueLimit: options.maxQueuedInference,
   });
+  const prefixes = createPrefixMemory();
   return http.createServer(async (req, res) => {
     const json = (status, data) => {
       res.writeHead(status, { "content-type": "application/json" });
@@ -112,6 +119,7 @@ export function createBridgeServer(options = {}) {
     const queuedAt = Date.now();
     let acquired = false;
     let queuedMs = 0;
+    let cacheUsage = null;
     try {
       await slots.acquire(controller.signal);
       acquired = true;
@@ -135,14 +143,18 @@ export function createBridgeServer(options = {}) {
             parsed.usage?.input_tokens ?? parsed.usage?.inputTokens ?? 0,
           outputTokens =
             parsed.usage?.output_tokens ?? parsed.usage?.outputTokens ?? 0;
+        const usage = {
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
+          total_tokens: inputTokens + outputTokens,
+        };
+        cacheUsage = readCacheUsage(parsed.usage);
+        if (cacheUsage) Object.assign(usage, cacheUsage);
+        applyCacheUsage(usage);
         event("response.completed", {
           response: {
             id,
-            usage: {
-              input_tokens: inputTokens,
-              output_tokens: outputTokens,
-              total_tokens: inputTokens + outputTokens,
-            },
+            usage,
           },
         });
       } else {
@@ -150,7 +162,15 @@ export function createBridgeServer(options = {}) {
         // Grok takes input_image blocks natively; only unusable attachments
         // are swapped for an explanation, so one bad image cannot make the
         // upstream reject the whole conversation.
-        const { request, map } = toProxyRequest(sanitizeImages(body));
+        const threadId = req.headers["thread-id"];
+        const convId = stableConvId(
+          Array.isArray(threadId) ? threadId[0] : threadId,
+          body.prompt_cache_key,
+        );
+        const { request, map, projected } = toProxyRequest(sanitizeImages(body));
+        if (convId) request.prompt_cache_key = convId;
+        request.input = prefixes.reuse(convId, projected);
+        const usageBox = {};
         const proxy = await openProxyStreamWithRetry({
           token: session.token,
           userId: session.userId,
@@ -158,8 +178,8 @@ export function createBridgeServer(options = {}) {
           signal: controller.signal,
           fetchImpl: options.proxyFetch,
           baseUrl: options.proxyBaseUrl,
-          convId: body.prompt_cache_key,
-          sessionId: req.headers["thread-id"],
+          convId,
+          sessionId: Array.isArray(threadId) ? threadId[0] : threadId,
           onRetry: ({ attempt, kind }) =>
             diagnostics.record({
               event: "turn_retried",
@@ -168,11 +188,16 @@ export function createBridgeServer(options = {}) {
               elapsedMs: Date.now() - startedAt,
             }),
         });
-        await pipeProxySse(proxy.body, res, map);
+        try {
+          await pipeProxySse(proxy.body, res, map, usageBox);
+        } finally {
+          cacheUsage = usageBox.cacheUsage ?? null;
+        }
       }
       diagnostics.record({
         event: "turn_ok",
         ...shape,
+        ...(cacheUsage ?? {}),
         queuedMs,
         elapsedMs: Date.now() - startedAt,
       });
@@ -183,6 +208,7 @@ export function createBridgeServer(options = {}) {
         kind,
         signature: errorSignature(error),
         ...shape,
+        ...(cacheUsage ?? {}),
         queuedMs,
         elapsedMs: Date.now() - startedAt,
         detail: error?.message,

@@ -92,7 +92,7 @@ test("proxy path streams rewritten Responses events without spawning CLI", async
     assert.equal(response.status, 200);
     assert.match(captured.url, /\/responses$/);
     assert.match(captured.init.headers.authorization, /session-token-value/);
-    assert.equal(captured.init.headers["x-grok-conv-id"], "cache-1");
+    assert.equal(captured.init.headers["x-grok-conv-id"], "thread-xyz");
     assert.equal(captured.init.headers["x-grok-session-id"], "thread-xyz");
     assert.ok(captured.init.headers["x-grok-client-version"]);
     assert.equal(
@@ -101,6 +101,7 @@ test("proxy path streams rewritten Responses events without spawning CLI", async
     );
     const proxyBody = JSON.parse(captured.init.body);
     assert.equal(proxyBody.store, false);
+    assert.equal(proxyBody.prompt_cache_key, "thread-xyz");
     assert.doesNotMatch(proxyBody.tools[0].name, /^exec_command$/);
     assert.match(text, /"name":"exec_command"/);
     assert.match(text, /response\.completed/);
