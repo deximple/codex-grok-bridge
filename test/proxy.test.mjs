@@ -321,6 +321,28 @@ test("a rejected payload is never re-sent", async () => {
   assert.equal(attempts, 1, "422 is deterministic; retrying only burns quota");
 });
 
+test("a closed socket is not re-sent; the prompt may already have been billed", async () => {
+  for (const code of ["ECONNRESET", "EPIPE", "UND_ERR_SOCKET"]) {
+    let attempts = 0;
+    const body = { input: "full skill and MCP context", tools: [{ type: "function", name: "shell" }] };
+    await assert.rejects(
+      () =>
+        openProxyStreamWithRetry({
+          token: "t",
+          body,
+          baseUrl: "https://example.invalid/v1",
+          fetchImpl: async (url, init) => {
+            attempts += 1;
+            assert.equal(JSON.parse(init.body).input, body.input);
+            throw networkFailure(code, code === "UND_ERR_SOCKET" ? "SocketError" : "Error");
+          },
+        }),
+      (error) => error.cause?.code === code,
+    );
+    assert.equal(attempts, 1, `${code} must not resubmit the same prompt`);
+  }
+});
+
 test("an aborted turn is never re-sent", async () => {
   let attempts = 0;
   const controller = new AbortController();
