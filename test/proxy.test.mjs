@@ -6,7 +6,12 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createBridgeServer } from "../src/bridge.mjs";
-import { pipeProxySse, openProxyStreamWithRetry } from "../src/proxy.mjs";
+import {
+  clearClientVersionCache,
+  detectGrokClientVersion,
+  pipeProxySse,
+  openProxyStreamWithRetry,
+} from "../src/proxy.mjs";
 
 test("proxy path streams rewritten Responses events without spawning CLI", async () => {
   const home = await mkdtemp(join(tmpdir(), "grok-home-"));
@@ -304,6 +309,28 @@ test("a stream that dies before it opens is re-sent once", async () => {
   assert.deepEqual(retries, [{ attempt: 1, kind: "dns" }]);
 });
 
+test("a closed socket is not re-sent; the prompt may already have been billed", async () => {
+  for (const code of ["ECONNRESET", "EPIPE", "UND_ERR_SOCKET"]) {
+    let attempts = 0;
+    const body = { input: "full skill and MCP context", tools: [{ type: "function", name: "shell" }] };
+    await assert.rejects(
+      () =>
+        openProxyStreamWithRetry({
+          token: "t",
+          body,
+          baseUrl: "https://example.invalid/v1",
+          fetchImpl: async (url, init) => {
+            attempts += 1;
+            assert.equal(JSON.parse(init.body).input, body.input);
+            throw networkFailure(code, code === "UND_ERR_SOCKET" ? "SocketError" : "Error");
+          },
+        }),
+      (error) => error.cause?.code === code,
+    );
+    assert.equal(attempts, 1, `${code} must not resubmit the same prompt`);
+  }
+});
+
 test("a rejected payload is never re-sent", async () => {
   let attempts = 0;
   await assert.rejects(
@@ -357,4 +384,19 @@ test("retries are bounded and the original failure is what surfaces", async () =
     (error) => error.cause.code === "EAI_AGAIN",
   );
   assert.equal(attempts, 2);
+});
+
+test("a failed grok --version is unknown, not the stale 1.0.24", async () => {
+  const previous = process.env.GROK_BINARY;
+  delete process.env.GROK_BINARY;
+  const home = await mkdtemp(join(tmpdir(), "grok-version-"));
+  try {
+    clearClientVersionCache();
+    assert.equal(detectGrokClientVersion(home), "unknown");
+  } finally {
+    clearClientVersionCache();
+    if (previous === undefined) delete process.env.GROK_BINARY;
+    else process.env.GROK_BINARY = previous;
+    await rm(home, { recursive: true, force: true });
+  }
 });
