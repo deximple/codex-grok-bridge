@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- A socket reset (`ECONNRESET`, `EPIPE`, `UND_ERR_SOCKET`) after the request body is written is not retried. DNS and connect failures before the body is accepted are still retried once.
+- When `grok --version` fails or does not report a version, the client version is `unknown` instead of the stale `1.0.24`.
+
 ## 1.7.0 — 2026-09-29
 
 - One `x-grok-conv-id` per Codex thread, and the forwarded transcript prefix stays byte-stable so prompt cache can hit. The full transcript is still sent.

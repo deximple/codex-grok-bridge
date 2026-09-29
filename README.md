@@ -120,10 +120,12 @@ address when one exists, so a 5–20 s tool gap does not force a fresh name
 lookup every time. `GROK_BRIDGE_TRANSPORT=fetch` restores the older `fetch`
 path.
 
-A request that dies **before** the first SSE block is written to Codex is
-retried once. After the first block, the bridge never retries — Codex already
-saw bytes, so a replay would duplicate them. Deterministic refusals (422) and
-user aborts are not retried either.
+A DNS or connection failure, before the proxy has accepted the body, is
+retried once. A socket reset after the body is written is not: the upstream
+may already have billed that prompt, and a resend would multiply the input
+tokens. After the first SSE block the bridge never retries either — Codex
+already saw bytes. Deterministic refusals (422) and user aborts are not
+retried.
 
 If the Responses path misbehaves, `GROK_BRIDGE_INFERENCE=cli` falls back to the
 older CLI envelope. That path pastes the whole JSON into a prompt each turn, so
@@ -447,10 +449,11 @@ Codex 창에도 보일 수 있습니다.
 실행으로 5–20초가 비어도 매번 이름을 다시 찾지 않기 위해서입니다.
 `GROK_BRIDGE_TRANSPORT=fetch`로 이전 `fetch` 경로로 되돌릴 수 있습니다.
 
-Codex에 첫 SSE 블록을 쓰기 **전**에 죽은 요청은 한 번 다시 보냅니다. 아직
-아무것도 전달하지 않았으므로 재전송이 대화를 오염시키지 않습니다. 첫 블록을
-쓴 뒤에는 절대 재시도하지 않습니다. 422 같은 결정적 거절과 사용자 중단도
-재시도하지 않습니다.
+본문이 프록시에 전달되기 전의 DNS·연결 실패는 한 번 다시 보냅니다. 본문을
+쓴 뒤의 소켓 리셋은 재전송하지 않습니다. 상류가 그 프롬프트를 이미 과금했을
+수 있고, 다시 보내면 입력 토큰이 곱해집니다. 첫 SSE 블록 이후에도 재시도하지
+않습니다. Codex가 이미 바이트를 봤기 때문입니다. 422 같은 결정적 거절과
+사용자 중단도 재시도하지 않습니다.
 
 Responses 경로가 이상하면 `GROK_BRIDGE_INFERENCE=cli`로 이전 CLI 봉투 경로를
 씁니다. 매 턴 전체 JSON을 프롬프트로 넣으므로 더 느리고 비싸며, 토큰 단위
