@@ -171,10 +171,11 @@ test("strips oneOf from an object-typed parameter root", () => {
   const { request } = toProxyRequest({ input: [], tools: original });
   assert.deepEqual(original, snapshot);
 
-  const automation = request.tools.find(
-    (tool) => tool.name === "codex_14_automation_update",
+  const automation = request.tools.find((tool) =>
+    String(tool.name).endsWith("_automation_update"),
   );
-  assert.ok(automation, "Codex GUI names this tool codex_14_automation_update");
+  assert.ok(automation);
+  assert.match(automation.name, /^codex_[0-9a-f]{8}_automation_update$/);
   assertCleanObjectParameters(automation.parameters);
   assert.equal(automation.parameters.description, "Update an automation");
   assert.equal(automation.parameters.additionalProperties, false);
@@ -263,7 +264,7 @@ test("flattens namespaced Codex tools into function tools", () => {
   ]);
   assert.equal(tools.length, 3);
   assert.equal(tools[0].type, "function");
-  assert.match(tools[0].name, /^codex_0_/);
+  assert.match(tools[0].name, /^codex_[0-9a-f]{8}_/);
   assert.equal(map.get(tools[1].name).namespace, "mcp__exa");
   assert.equal(map.get(tools[2].name).name, "web_search");
   assert.equal(tools[2].parameters.required[0], "query");
@@ -494,7 +495,7 @@ test("forwards only Grok-accepted fields on input items", () => {
     "name",
     "type",
   ]);
-  assert.match(request.input[2].name, /^codex_0_exec_command$/);
+  assert.match(request.input[2].name, /^codex_[0-9a-f]{8}_exec_command$/);
   assert.equal(request.input[2].id, undefined);
   assert.equal(request.input[2].status, undefined);
   assert.equal(request.input[2].recipient, undefined);
@@ -698,10 +699,10 @@ test("normalizes custom tools and prior history for the Grok proxy", () => {
     ],
   });
   const [execCall, execOutput, patchCall, patchOutput] = request.input;
-  assert.match(execCall.name, /^codex_0_exec_command$/);
+  assert.match(execCall.name, /^codex_[0-9a-f]{8}_exec_command$/);
   assert.equal(execOutput.name, execCall.name);
   assert.equal(patchCall.type, "function_call");
-  assert.match(patchCall.name, /^codex_1_apply_patch$/);
+  assert.match(patchCall.name, /^codex_[0-9a-f]{8}_apply_patch$/);
   assert.equal(patchCall.namespace, undefined);
   assert.deepEqual(JSON.parse(patchCall.arguments), { input: patch });
   assert.equal(patchCall.input, undefined);

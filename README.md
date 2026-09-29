@@ -130,8 +130,11 @@ older CLI envelope. That path pastes the whole JSON into a prompt each turn, so
 it is slower and more expensive, has no token-by-token streaming, and is capped
 at three minutes per request.
 
-The default Responses path streams. Codex `prompt_cache_key` is forwarded as
-`x-grok-conv-id`.
+The default Responses path streams. One Codex thread keeps a single
+`x-grok-conv-id`: the `thread-id` header when Codex sends it, otherwise
+`prompt_cache_key`. That same id is written into `prompt_cache_key`. An
+unchanged transcript prefix is resent byte-for-byte; the new items are
+appended, not substituted for the history.
 
 ## What works and what does not
 
@@ -453,8 +456,10 @@ Responses 경로가 이상하면 `GROK_BRIDGE_INFERENCE=cli`로 이전 CLI 봉�
 씁니다. 매 턴 전체 JSON을 프롬프트로 넣으므로 더 느리고 비싸며, 토큰 단위
 실시간 출력이 없고, 요청당 3분 제한입니다.
 
-기본 Responses 경로는 스트림을 전달합니다. Codex `prompt_cache_key`는
-`x-grok-conv-id`로 넘깁니다.
+기본 Responses 경로는 스트림을 전달합니다. Codex 스레드마다 `x-grok-conv-id`는
+하나입니다. `thread-id` 헤더가 있으면 그 값이고, 없으면 `prompt_cache_key`입니다.
+같은 id를 `prompt_cache_key`에도 넣습니다. 바뀌지 않은 트랜스크립트 접두는
+바이트 그대로 다시 보내고, 새 항목은 그 뒤에 붙입니다.
 
 ## 확인된 동작과 제한
 

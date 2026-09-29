@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 1.7.0 — 2026-09-29
+
+- One `x-grok-conv-id` per Codex thread, and the forwarded transcript prefix stays byte-stable so prompt cache can hit. The full transcript is still sent.
+- Upstream `cached_prompt_tokens` and `cache_read_input_tokens` are copied onto `response.completed` usage and the diagnostics log when the proxy sends them, including `0`. Missing counters are not invented.
+
 ## 1.6.1 — 2026-09-28
 
 - Darwin bundled CLI resolves `Codex.app/Contents/Resources/codex-cli/bin/codex` when that file exists (Codex 26.924). The legacy `Contents/Resources/codex` path remains the fallback. `CODEX_BINARY` still wins. Linux and Windows layouts are unchanged.
