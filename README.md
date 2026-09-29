@@ -120,10 +120,12 @@ address when one exists, so a 5–20 s tool gap does not force a fresh name
 lookup every time. `GROK_BRIDGE_TRANSPORT=fetch` restores the older `fetch`
 path.
 
-A request that dies **before** the first SSE block is written to Codex is
-retried once. After the first block, the bridge never retries — Codex already
-saw bytes, so a replay would duplicate them. Deterministic refusals (422) and
-user aborts are not retried either.
+A DNS or connection failure, before the proxy has accepted the body, is
+retried once. A socket reset after the body is written is not: the upstream
+may already have billed that prompt, and a resend would multiply the input
+tokens. After the first SSE block the bridge never retries either — Codex
+already saw bytes. Deterministic refusals (422) and user aborts are not
+retried.
 
 If the Responses path misbehaves, `GROK_BRIDGE_INFERENCE=cli` falls back to the
 older CLI envelope. That path pastes the whole JSON into a prompt each turn, so

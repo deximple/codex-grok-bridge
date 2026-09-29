@@ -108,14 +108,13 @@ async function writeBlock(output, block) {
   if (!output.write(block)) await drained(output);
 }
 
-// Nothing has reached Codex until the first SSE block is written, so a stream
-// that dies before it opens is safe to send again. After that it never is:
-// re-sending would duplicate items Codex has already recorded.
-const RETRYABLE = new Set([
-  BRIDGE_ERROR.DNS,
-  BRIDGE_ERROR.CONNECT,
-  BRIDGE_ERROR.UPSTREAM_CLOSED,
-]);
+// DNS and connect failures happen before the proxy has the request, so one
+// resend does not bill the prompt. A socket that closes after the body is
+// written (ECONNRESET, EPIPE, UND_ERR_SOCKET) is not retried: the upstream may
+// already have accepted the full prompt, and sending it again multiplies the
+// input tokens. After the first SSE block Codex has recorded items, so that
+// path is never retried either — Codex itself resends a mid-stream reset.
+const RETRYABLE = new Set([BRIDGE_ERROR.DNS, BRIDGE_ERROR.CONNECT]);
 
 export async function openProxyStreamWithRetry(options, attempts = 2) {
   const rounds = Math.max(1, attempts);
