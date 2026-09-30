@@ -40,7 +40,14 @@ const CONNECT_CODES = new Set([
   "DEPTH_ZERO_SELF_SIGNED_CERT", "ERR_TLS_CERT_ALTNAME_INVALID",
 ]);
 const TIMEOUT_CODES = new Set(["UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT", "ETIMEDOUT"]);
-const CLOSED_CODES = new Set(["UND_ERR_SOCKET", "ECONNRESET", "EPIPE"]);
+const CLOSED_CODES = new Set([
+  "UND_ERR_SOCKET",
+  "ECONNRESET",
+  "EPIPE",
+  // The body ended without response.completed. Same class as a socket reset:
+  // the reply never finished, and Codex has not been given a partial one.
+  "ERR_UPSTREAM_PREMATURE_CLOSE",
+]);
 const ABORT_CODES = new Set([
   "ABORT_ERR", "ERR_STREAM_DESTROYED", "ERR_STREAM_WRITE_AFTER_END", "ERR_STREAM_PREMATURE_CLOSE",
 ]);

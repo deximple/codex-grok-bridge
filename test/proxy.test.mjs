@@ -207,7 +207,7 @@ test("proxy path reports abort instead of a generic validation error", async () 
   }
 });
 
-test("the SSE pipe respects backpressure instead of buffering the whole response", async () => {
+test("the SSE pipe writes nothing until the reply finishes, then respects backpressure", async () => {
   const { Writable } = await import("node:stream");
   const written = [];
   let pending = null;
@@ -220,19 +220,21 @@ test("the SSE pipe respects backpressure instead of buffering the whole response
       pending = callback;
     },
   });
-  const blocks = [
-    'event: a\ndata: {"type":"a"}\n\n',
-    'event: b\ndata: {"type":"b"}\n\n',
-    'event: c\ndata: {"type":"c"}\n\n',
-  ];
+  let controller;
   const stream = new ReadableStream({
-    start(controller) {
-      for (const block of blocks)
-        controller.enqueue(new TextEncoder().encode(block));
-      controller.close();
+    start(c) {
+      controller = c;
     },
   });
+  const enc = new TextEncoder();
   const piping = pipeProxySse(stream, slow, new Map());
+  controller.enqueue(enc.encode('event: a\ndata: {"type":"a"}\n\n'));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(written.length, 0, "no client byte before the reply finishes");
+  controller.enqueue(
+    enc.encode('event: response.completed\ndata: {"type":"response.completed"}\n\n'),
+  );
+  controller.close();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(written.length, 1, "must stop after the first un-drained write");
   while (pending) {
@@ -242,8 +244,9 @@ test("the SSE pipe respects backpressure instead of buffering the whole response
     await new Promise((resolve) => setImmediate(resolve));
   }
   await piping;
-  assert.equal(written.length, 3, "every block must still arrive, in order");
-  assert.match(written[2], /"type":"c"/);
+  assert.equal(written.length, 2, "every block must still arrive, in order");
+  assert.match(written[0], /"type":"a"/);
+  assert.match(written[1], /response\.completed/);
 });
 
 test("the SSE pipe stops and reports when the client disappears mid-stream", async () => {
@@ -309,7 +312,7 @@ test("a stream that dies before it opens is re-sent once", async () => {
   assert.deepEqual(retries, [{ attempt: 1, kind: "dns" }]);
 });
 
-test("a closed socket is not re-sent; the prompt may already have been billed", async () => {
+test("a closed socket is re-sent only until two retries are spent", async () => {
   for (const code of ["ECONNRESET", "EPIPE", "UND_ERR_SOCKET"]) {
     let attempts = 0;
     const body = { input: "full skill and MCP context", tools: [{ type: "function", name: "shell" }] };
@@ -327,7 +330,7 @@ test("a closed socket is not re-sent; the prompt may already have been billed", 
         }),
       (error) => error.cause?.code === code,
     );
-    assert.equal(attempts, 1, `${code} must not resubmit the same prompt`);
+    assert.equal(attempts, 3, `${code} stops after the first try and two retries`);
   }
 });
 
@@ -383,7 +386,126 @@ test("retries are bounded and the original failure is what surfaces", async () =
       }),
     (error) => error.cause.code === "EAI_AGAIN",
   );
-  assert.equal(attempts, 2);
+  assert.equal(attempts, 3);
+});
+
+async function withBridge(proxyFetch, run) {
+  const home = await mkdtemp(join(tmpdir(), "grok-home-"));
+  await mkdir(join(home, ".grok"));
+  await writeFile(
+    join(home, ".grok/auth.json"),
+    JSON.stringify({ s: { key: "k" } }),
+  );
+  const server = createBridgeServer({
+    token: "bridge",
+    grokHome: home,
+    proxyFetch,
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    return await run(server.address().port);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(home, { recursive: true, force: true });
+  }
+}
+
+async function postTurn(port) {
+  const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+    method: "POST",
+    headers: { authorization: "Bearer bridge" },
+    body: JSON.stringify({
+      model: "grok-4.6",
+      input: [{ role: "user", content: "hi" }],
+    }),
+  });
+  assert.equal(response.status, 200);
+  return response.text();
+}
+
+test("a reset before any client write is retried into one complete stream", async () => {
+  for (const mode of ["reset", "premature"]) {
+    let calls = 0;
+    const text = await withBridge(async () => {
+      calls += 1;
+      const enc = new TextEncoder();
+      if (calls === 1) {
+        let sent = false;
+        return new Response(
+          new ReadableStream({
+            pull(controller) {
+              if (sent) {
+                if (mode === "reset") {
+                  controller.error(
+                    Object.assign(new Error("reset"), { code: "ECONNRESET" }),
+                  );
+                } else controller.close();
+                return;
+              }
+              sent = true;
+              controller.enqueue(
+                enc.encode(
+                  'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"PARTIAL"}\n\n',
+                ),
+              );
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              enc.encode(
+                'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"FINAL"}\n\n' +
+                  'event: response.completed\ndata: {"type":"response.completed"}\n\n',
+              ),
+            );
+            controller.close();
+          },
+        }),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    }, postTurn);
+    assert.equal(calls, 2, mode);
+    assert.doesNotMatch(text, /PARTIAL/, mode);
+    assert.match(text, /FINAL/, mode);
+    assert.equal(text.match(/event: response\.completed/g).length, 1, mode);
+    assert.doesNotMatch(text, /response\.failed/, mode);
+  }
+});
+
+test("a delivered client byte is not followed by a second upstream request", async () => {
+  let calls = 0;
+  const text = await withBridge(() => {
+    calls += 1;
+    const enc = new TextEncoder();
+    let pulls = 0;
+    return new Response(
+      new ReadableStream({
+        pull(controller) {
+          pulls += 1;
+          if (pulls === 1) {
+            controller.enqueue(
+              enc.encode(
+                'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_once"}}\n\n',
+              ),
+            );
+            return;
+          }
+          controller.error(
+            Object.assign(new Error("reset"), { code: "ECONNRESET" }),
+          );
+        },
+      }),
+      { status: 200, headers: { "content-type": "text/event-stream" } },
+    );
+  }, postTurn);
+  assert.equal(calls, 1);
+  assert.match(text, /resp_once/);
 });
 
 test("a failed grok --version is unknown, not the stale 1.0.24", async () => {

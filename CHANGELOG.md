@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.7.1 — 2026-09-30
 
-- A socket reset (`ECONNRESET`, `EPIPE`, `UND_ERR_SOCKET`) after the request body is written is not retried. DNS and connect failures before the body is accepted are still retried once.
+- The bridge holds the upstream reply and sends it to Codex only after `response.completed`. A reset before that (`ECONNRESET`, `EPIPE`, `UND_ERR_SOCKET`, or a close before the reply finishes) is retried up to two more times, and only if Codex has not been sent a byte. This provider's Codex `request_max_retries` and `stream_max_retries` are 0. A retry sends the prompt again, so that attempt's input tokens can be billed again.
 - When `grok --version` fails or does not report a version, the client version is `unknown` instead of the stale `1.0.24`.
 
 ## 1.7.0 — 2026-09-29
