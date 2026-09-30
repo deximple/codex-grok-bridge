@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `POST /v1/images/generations` and `POST /v1/images/edits` are forwarded to the Imagine API with the grok login bearer. Codex's `gpt-image-2` body is rewritten to `grok-imagine-image-quality` and `b64_json`. OpenAI `file_id` edits are refused. No `XAI_API_KEY`.
 - Codex input items Grok does not accept (`local_shell_call`, `web_search_call`, `tool_search_call`, `tool_search_output`, `additional_tools`, `image_generation_call`, and unmapped custom tool items) keep their readable text as user `input_text` messages, the same shape as a compaction summary. `encrypted_content`, `encrypted_function_args`, `internal_*` fields, and image-byte `result` values stay dropped.
 - A Grok thread can generate a video without an API key. The bridge declares `grok_bridge_generate_video` on the upstream request and, when the model calls it, posts to `https://api.x.ai/v1/videos/generations` with the grok login bearer, polls `GET /videos/{request_id}`, and returns the video URL to the model as the tool result. A refusal from that API stays a tool error and does not fail the turn.
 

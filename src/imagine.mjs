@@ -1,0 +1,150 @@
+// Codex posts OpenAI Images requests on the provider base
+// (`POST /v1/images/generations`, `POST /v1/images/edits`). grok-build sends
+// the same two paths to the Imagine API with the login bearer, not an
+// XAI_API_KEY. The bodies are not the same: Codex hardcodes `gpt-image-2`
+// plus `size` / `quality` / `background`, and edits use `{image_url}` or
+// `{file_id}`. Imagine wants `grok-imagine-image-quality`, `response_format:
+// b64_json`, and `{url}` references.
+
+export const DEFAULT_IMAGINE_API_BASE = "https://api.x.ai/v1";
+export const IMAGINE_MODEL = "grok-imagine-image-quality";
+
+const IMAGINE_TIMEOUT_MS = 300_000;
+
+function promptOf(input) {
+  const prompt = typeof input?.prompt === "string" ? input.prompt.trim() : "";
+  if (!prompt) {
+    const error = new Error("Image generation requires a prompt.");
+    error.status = 400;
+    throw error;
+  }
+  return prompt;
+}
+
+function basePayload(prompt) {
+  return {
+    model: IMAGINE_MODEL,
+    prompt,
+    n: 1,
+    resolution: "1k",
+    response_format: "b64_json",
+  };
+}
+
+export function imagineGenerationBody(input) {
+  return basePayload(promptOf(input));
+}
+
+export function imagineEditBody(input) {
+  const prompt = promptOf(input);
+  const images = Array.isArray(input?.images) ? input.images : [];
+  const urls = [];
+  for (const image of images) {
+    if (!image || typeof image !== "object") continue;
+    if (typeof image.image_url === "string" && image.image_url.trim()) {
+      urls.push(image.image_url.trim());
+      continue;
+    }
+    if (typeof image.file_id === "string" && image.file_id.trim()) {
+      const error = new Error("OpenAI file ids cannot be edited with Grok.");
+      error.status = 400;
+      throw error;
+    }
+  }
+  if (!urls.length) {
+    const error = new Error("Image edit requires a reference image.");
+    error.status = 400;
+    throw error;
+  }
+  const payload = basePayload(prompt);
+  if (urls.length === 1) payload.image = { url: urls[0] };
+  else {
+    payload.images = urls.map((url) => ({ url }));
+    payload.aspect_ratio = "auto";
+  }
+  return payload;
+}
+
+export function codexImageResponse(payload) {
+  const data = [];
+  if (Array.isArray(payload?.data)) {
+    for (const item of payload.data) {
+      if (item && typeof item.b64_json === "string" && item.b64_json.length)
+        data.push({ b64_json: item.b64_json });
+    }
+  }
+  if (!data.length) {
+    const error = new Error("Image generation returned no image.");
+    error.status = 502;
+    throw error;
+  }
+  const created = Number.isInteger(payload?.created)
+    ? payload.created
+    : Math.floor(Date.now() / 1000);
+  return { created, data };
+}
+
+function scrub(text, token) {
+  let out = String(text ?? "");
+  out = out.replace(/Bearer\s+\S+/gi, "Bearer [redacted]");
+  if (token) out = out.split(token).join("[redacted]");
+  return out;
+}
+
+async function imagineHttp(fetchImpl, url, init) {
+  const response = await fetchImpl(url, { ...init, redirect: "manual" });
+  const text = await response.text().catch(() => "");
+  if (response.status >= 300 && response.status < 400) {
+    const error = new Error("Image generation failed (redirect).");
+    error.status = 502;
+    throw error;
+  }
+  let body = null;
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = null;
+    }
+  }
+  return { status: response.status, body };
+}
+
+export async function forwardImagine(options) {
+  const token = options.token;
+  const kind = options.kind === "edits" ? "edits" : "generations";
+  const payload =
+    kind === "edits" ? imagineEditBody(options.body) : imagineGenerationBody(options.body);
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const base = (options.baseUrl ?? DEFAULT_IMAGINE_API_BASE).replace(/\/$/, "");
+  const timeout = AbortSignal.timeout(IMAGINE_TIMEOUT_MS);
+  const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+  let result;
+  try {
+    result = await imagineHttp(fetchImpl, `${base}/images/${kind}`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal,
+    });
+  } catch (error) {
+    if (error?.status) throw error;
+    const wrapped = new Error(scrub(error?.message || "Image generation failed.", token));
+    wrapped.status = 502;
+    throw wrapped;
+  }
+  if (result.status === 401 || result.status === 403) {
+    const error = new Error("Grok login expired. Run grok login.");
+    error.status = 401;
+    throw error;
+  }
+  if (result.status < 200 || result.status >= 300) {
+    const error = new Error(`Image generation failed (${result.status}).`);
+    error.status = result.status >= 400 && result.status < 500 ? result.status : 502;
+    throw error;
+  }
+  return codexImageResponse(result.body);
+}
