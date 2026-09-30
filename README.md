@@ -107,8 +107,8 @@ launches from its usual icon.
 2. The wrapper adds Grok to the model catalog and sets the provider of a new
    Grok thread to `grok_build_cli`.
 3. Codex `/v1/responses` requests go to the localhost bridge.
-4. The bridge flattens Codex tools (plain functions, namespaced functions,
-   freeform custom tools, `web_search`) into function tools, then pipes the
+4. The bridge flattens Codex function and custom tools into function tools,
+   forwards `web_search` as xAI's server-side tool, then pipes the
    `cli-chat-proxy.grok.com` Responses stream through.
 5. Tool results return as the next Codex request `input`.
 
@@ -453,8 +453,8 @@ Codex 창에도 보일 수 있습니다.
 2. 래퍼가 모델 목록에 Grok를 추가하고, 새 Grok 작업의 제공자를
    `grok_build_cli`로 설정합니다.
 3. Codex의 `/v1/responses` 요청은 localhost 브리지로 갑니다.
-4. 브리지는 Codex 도구(일반 함수, namespace 함수, freeform 커스텀, `web_search`)를
-   function tool로 펼친 뒤 `cli-chat-proxy.grok.com` Responses 스트림을 이어줍니다.
+4. 브리지는 Codex 함수·커스텀 도구를 function tool로 펼치고, `web_search`는
+   xAI 서버 도구로 넘긴 뒤 `cli-chat-proxy.grok.com` Responses 스트림을 이어줍니다.
 5. 도구 결과는 다음 Codex 요청의 `input`으로 돌아갑니다.
 
 인증은 `grok login` 세션입니다. `XAI_API_KEY`는 쓰지 않습니다.
