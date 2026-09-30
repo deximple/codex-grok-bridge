@@ -139,9 +139,8 @@ before any of it is sent.
 Codex keeps the conversation and sends the whole turn each time. Grok can
 treat the unchanged beginning as a cache. If the connection drops before
 Codex has been sent any bytes, the bridge tries again. Codex does not send
-that same request again. Cloud tasks are not in this release. Voice is the
-provider websocket: Codex dials `/v1/realtime` on this bridge, and the bridge
-relays it to `wss://api.x.ai/v1/realtime` with the grok login bearer.
+that same request again. Voice, cloud tasks, and video are not in this
+release.
 
 If the Responses path misbehaves, `GROK_BRIDGE_INFERENCE=cli` falls back to the
 older CLI envelope. That path pastes the whole JSON into a prompt each turn, so
@@ -259,7 +258,7 @@ starting a new thread, before the first turn is saved.
 
 ### Not in this release
 
-Cloud tasks are not in this release.
+Voice, cloud tasks, and video generation are not in this release.
 
 Upstream sometimes resets the connection mid-response (three measured cases:
 25 s / 27 s / 253 s, 726 KB–22 MB). The bridge holds the reply and, if that
@@ -482,10 +481,8 @@ Codex 창에도 보일 수 있습니다.
 
 Codex가 대화를 갖고 있고, 턴마다 그 턴 전체를 보냅니다. 앞부분이 그대로면
 Grok는 그 부분을 캐시로 볼 수 있습니다. Codex에 바이트를 보내기 전에 연결이
-끊기면 브리지가 다시 시도합니다. Codex는 그 요청을 또 보내지 않습니다. 클라우드
-작업은 이번 릴리스에 없습니다. 음성은 제공자 웹소켓입니다. Codex가 이 브리지의
-`/v1/realtime`에 붙으면, 브리지는 grok 로그인 베어러로
-`wss://api.x.ai/v1/realtime`에 잇습니다.
+끊기면 브리지가 다시 시도합니다. Codex는 그 요청을 또 보내지 않습니다. 음성,
+클라우드 작업, 영상은 이번 릴리스에 없습니다.
 
 Responses 경로가 이상하면 `GROK_BRIDGE_INFERENCE=cli`로 이전 CLI 봉투 경로를
 씁니다. 매 턴 전체 JSON을 프롬프트로 넣으므로 더 느리고 비싸며, 토큰 단위
@@ -595,7 +592,7 @@ OpenAI 경로가 맞습니다.
 
 ### 이번 릴리스에 없는 것
 
-클라우드 작업은 이번 릴리스에 없습니다.
+음성, 클라우드 작업, 영상 생성은 이번 릴리스에 없습니다.
 
 상류가 응답 중간에 연결을 리셋하는 경우가 있습니다(실측 3건: 25초 / 27초 /
 253초, 726 KB–22 MB). 브리지는 응답을 들고 있다가, Codex에 그 응답을 보내기

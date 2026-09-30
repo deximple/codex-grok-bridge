@@ -3,7 +3,6 @@
 ## Unreleased
 
 - A Grok thread can generate a video without an API key. The bridge declares `grok_bridge_generate_video` on the upstream request and, when the model calls it, posts to `https://api.x.ai/v1/videos/generations` with the grok login bearer, polls `GET /videos/{request_id}`, and returns the video URL to the model as the tool result. A refusal from that API stays a tool error and does not fail the turn.
-- Codex voice uses that same grok login bearer. The app-server still owns `thread/realtime` and dials this provider at `/v1/realtime`. The bridge relays that websocket to `wss://api.x.ai/v1/realtime`. A missing or rejected login fails the socket and does not invent audio.
 
 ## 1.7.1 — 2026-09-30
 

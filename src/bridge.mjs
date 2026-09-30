@@ -21,7 +21,6 @@ import { classifyBridgeError, errorSignature, bridgeErrorMessage } from "./error
 import { createDiagnostics } from "./diagnostics.mjs";
 import { createSlots } from "./slots.mjs";
 import { catalogModelInfos, isGrokModel, MODEL_INFO } from "./models.mjs";
-import { attachRealtime } from "./realtime.mjs";
 
 export { MODEL_INFO };
 
@@ -82,7 +81,7 @@ export function createBridgeServer(options = {}) {
     queueLimit: options.maxQueuedInference,
   });
   const prefixes = createPrefixMemory();
-  const server = http.createServer(async (req, res) => {
+  return http.createServer(async (req, res) => {
     const json = (status, data) => {
       res.writeHead(status, { "content-type": "application/json" });
       res.end(JSON.stringify(data));
@@ -294,11 +293,4 @@ export function createBridgeServer(options = {}) {
       res.end();
     }
   });
-  attachRealtime(server, {
-    token: options.token,
-    grokHome: options.grokHome,
-    readBearer: options.readRealtimeBearer,
-    connect: options.connectRealtime,
-  });
-  return server;
 }
