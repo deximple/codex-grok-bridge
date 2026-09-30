@@ -50,12 +50,14 @@ const DROP = Symbol("drop");
 // Items whose payload only the originating provider can read. "reasoning" is
 // deliberately absent: Codex reasoning items carry a plain-text summary that is
 // useful to Grok across a multi-call turn, and only their encrypted_content is
-// opaque - that field is stripped by the key filter below.
-const PROVIDER_OPAQUE_TYPES = new Set([
+// opaque - that field is stripped by the key filter below. Compaction items are
+// likewise absent: a stored summary is rewritten into a user message, and an
+// item with no readable text is dropped.
+const PROVIDER_OPAQUE_TYPES = new Set(["encrypted_content"]);
+const COMPACTION_ITEM_TYPES = new Set([
   "compaction",
   "compaction_summary",
   "context_compaction",
-  "encrypted_content",
 ]);
 const GROK_INPUT_ITEM_TYPES = new Set([
   "message",
@@ -316,6 +318,35 @@ export function proxyToolChoice(choice, map) {
   return "auto";
 }
 
+function readableString(value) {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function textsFromValue(value) {
+  const direct = readableString(value);
+  if (direct) return [direct];
+  if (!Array.isArray(value)) return [];
+  const texts = [];
+  for (const part of value) {
+    if (!part || typeof part !== "object" || part.type === "encrypted_content")
+      continue;
+    const text = readableString(part.text);
+    if (text) texts.push(text);
+  }
+  return texts;
+}
+
+// Codex replaces older history with a compaction item. The encrypted blob is
+// provider-private, but the item may already carry the summary as plain text.
+// That text is what Grok can read; everything else on the item is dropped.
+function compactionInputTexts(node) {
+  for (const key of ["summary", "content", "text", "message"]) {
+    const texts = textsFromValue(node[key]);
+    if (texts.length) return texts;
+  }
+  return [];
+}
+
 function toProxyInputNode(node, map, state) {
   if (!node || typeof node !== "object") return node;
   if (Array.isArray(node)) {
@@ -340,6 +371,16 @@ function toProxyInputNode(node, map, state) {
       continue;
     const converted = toProxyInputNode(value, map, state);
     if (converted !== DROP) next[key] = converted;
+  }
+
+  if (COMPACTION_ITEM_TYPES.has(next.type)) {
+    const texts = compactionInputTexts(next);
+    if (!texts.length) return DROP;
+    return whitelistInputNode({
+      type: "message",
+      role: "user",
+      content: texts.map((text) => ({ type: "input_text", text })),
+    });
   }
 
   if (next.type === "reasoning") {
