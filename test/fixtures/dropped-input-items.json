@@ -1,0 +1,337 @@
+{
+  "forwarded": [
+    {
+      "name": "local_shell_call",
+      "item": {
+        "type": "local_shell_call",
+        "call_id": "call-shell",
+        "status": "completed",
+        "action": {
+          "type": "exec",
+          "command": ["echo", "hi"],
+          "working_directory": "/workspace",
+          "timeout_ms": 1000,
+          "env": { "TOKEN": "secret-env-token" },
+          "user": "root"
+        },
+        "encrypted_content": "secret-encrypted",
+        "encrypted_function_args": "secret-args",
+        "internal_chat_message_metadata_passthrough": { "turn_id": "secret-turn" }
+      },
+      "content": [
+        { "type": "input_text", "text": "echo hi" },
+        { "type": "input_text", "text": "/workspace" }
+      ]
+    },
+    {
+      "name": "local_shell_call command string",
+      "item": {
+        "type": "local_shell_call",
+        "status": "completed",
+        "action": {
+          "type": "exec",
+          "command": "echo hi",
+          "commands": ["unused"]
+        }
+      },
+      "content": [
+        { "type": "input_text", "text": "echo hi" },
+        { "type": "input_text", "text": "unused" }
+      ]
+    },
+    {
+      "name": "web_search_call search",
+      "item": {
+        "type": "web_search_call",
+        "id": "ws_1",
+        "status": "completed",
+        "action": {
+          "type": "search",
+          "query": "weather seattle",
+          "queries": ["weather seattle", "seattle weather now"]
+        },
+        "encrypted_content": "secret-encrypted"
+      },
+      "content": [
+        { "type": "input_text", "text": "weather seattle" },
+        { "type": "input_text", "text": "seattle weather now" }
+      ]
+    },
+    {
+      "name": "web_search_call open_page",
+      "item": {
+        "type": "web_search_call",
+        "status": "completed",
+        "action": { "type": "open_page", "url": "https://example.com/docs" }
+      },
+      "content": [
+        { "type": "input_text", "text": "https://example.com/docs" }
+      ]
+    },
+    {
+      "name": "web_search_call find_in_page",
+      "item": {
+        "type": "web_search_call",
+        "status": "in_progress",
+        "action": {
+          "type": "find_in_page",
+          "url": "https://example.com/docs",
+          "pattern": "installation"
+        }
+      },
+      "content": [
+        { "type": "input_text", "text": "https://example.com/docs" },
+        { "type": "input_text", "text": "installation" }
+      ]
+    },
+    {
+      "name": "tool_search_call",
+      "item": {
+        "type": "tool_search_call",
+        "call_id": "ts-1",
+        "status": "completed",
+        "execution": "client",
+        "arguments": { "query": "calendar events", "limit": 5 },
+        "encrypted_function_args": "secret-args"
+      },
+      "content": [
+        { "type": "input_text", "text": "calendar events" }
+      ]
+    },
+    {
+      "name": "tool_search_call arguments string",
+      "item": {
+        "type": "tool_search_call",
+        "call_id": "ts-2",
+        "execution": "client",
+        "arguments": "{\"query\":\"echo message\",\"limit\":3}"
+      },
+      "content": [
+        { "type": "input_text", "text": "echo message" }
+      ]
+    },
+    {
+      "name": "tool_search_call plain arguments",
+      "item": {
+        "type": "tool_search_call",
+        "call_id": "ts-3",
+        "execution": "client",
+        "arguments": "calendar events"
+      },
+      "content": [
+        { "type": "input_text", "text": "calendar events" }
+      ]
+    },
+    {
+      "name": "tool_search_output",
+      "item": {
+        "type": "tool_search_output",
+        "call_id": "ts-1",
+        "status": "completed",
+        "execution": "client",
+        "tools": [
+          {
+            "type": "function",
+            "name": "create_event",
+            "description": "Create a calendar event.",
+            "encrypted_content": "secret-encrypted",
+            "internal_note": "secret-internal",
+            "parameters": {
+              "type": "object",
+              "properties": { "title": { "type": "string" } }
+            }
+          }
+        ]
+      },
+      "content": [
+        {
+          "type": "input_text",
+          "text": "[{\"type\":\"function\",\"name\":\"create_event\",\"description\":\"Create a calendar event.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\"}}}}]"
+        }
+      ]
+    },
+    {
+      "name": "additional_tools",
+      "item": {
+        "type": "additional_tools",
+        "role": "developer",
+        "tools": [
+          {
+            "type": "function",
+            "name": "ping",
+            "description": "Send a ping."
+          }
+        ]
+      },
+      "content": [
+        {
+          "type": "input_text",
+          "text": "[{\"type\":\"function\",\"name\":\"ping\",\"description\":\"Send a ping.\"}]"
+        }
+      ]
+    },
+    {
+      "name": "image_generation_call revised_prompt",
+      "item": {
+        "type": "image_generation_call",
+        "id": "ig_123",
+        "status": "completed",
+        "revised_prompt": "A small blue square",
+        "result": "Zm9vYmFyQmFzZTY0"
+      },
+      "content": [
+        { "type": "input_text", "text": "A small blue square" }
+      ]
+    },
+    {
+      "name": "unmapped custom_tool_call",
+      "item": {
+        "type": "custom_tool_call",
+        "call_id": "patch-missing",
+        "name": "apply_patch",
+        "input": "*** Begin Patch\n+ok\n",
+        "encrypted_function_args": "secret-args",
+        "internal_chat_message_metadata_passthrough": { "turn_id": "secret-turn" }
+      },
+      "content": [
+        { "type": "input_text", "text": "*** Begin Patch\n+ok\n" }
+      ]
+    },
+    {
+      "name": "unmapped custom_tool_call_output",
+      "item": {
+        "type": "custom_tool_call_output",
+        "call_id": "patch-missing",
+        "output": [
+          { "type": "input_text", "text": "applied" },
+          { "type": "encrypted_content", "encrypted_content": "secret-encrypted" }
+        ]
+      },
+      "content": [
+        { "type": "input_text", "text": "applied" }
+      ]
+    },
+    {
+      "name": "local_shell_call_output",
+      "item": {
+        "type": "local_shell_call_output",
+        "call_id": "lso-1",
+        "output": {
+          "content": [{ "type": "input_text", "text": "from-content" }],
+          "stderr": " "
+        }
+      },
+      "content": [
+        { "type": "input_text", "text": "from-content" }
+      ]
+    },
+    {
+      "name": "shell_call_output",
+      "item": {
+        "type": "shell_call_output",
+        "call_id": "shell-out",
+        "status": "completed",
+        "output": [
+          {
+            "stdout": "BRIDGE_OK\n",
+            "stderr": "warn",
+            "outcome": { "type": "exit", "exit_code": 0 }
+          }
+        ],
+        "encrypted_content": "secret-encrypted"
+      },
+      "content": [
+        { "type": "input_text", "text": "BRIDGE_OK\n" },
+        { "type": "input_text", "text": "warn" }
+      ]
+    }
+  ],
+  "dropped": [
+    {
+      "name": "compaction_trigger",
+      "item": { "type": "compaction_trigger" }
+    },
+    {
+      "name": "ghost_snapshot",
+      "item": {
+        "type": "ghost_snapshot",
+        "ghost_commit": {
+          "id": "ghost-1",
+          "parent": null,
+          "preexisting_untracked_files": [],
+          "preexisting_untracked_dirs": []
+        }
+      }
+    },
+    {
+      "name": "item_reference",
+      "item": { "type": "item_reference", "id": "msg_123" }
+    },
+    {
+      "name": "image_generation_call result only",
+      "item": {
+        "type": "image_generation_call",
+        "id": "ig_bare",
+        "status": "completed",
+        "result": "Zm9vYmFyQmFzZTY0"
+      }
+    },
+    {
+      "name": "web_search_call without action",
+      "item": {
+        "type": "web_search_call",
+        "id": "ws_partial",
+        "status": "in_progress",
+        "encrypted_content": "secret-encrypted"
+      }
+    },
+    {
+      "name": "local_shell_call without command",
+      "item": {
+        "type": "local_shell_call",
+        "call_id": "call-empty",
+        "status": "completed",
+        "action": { "type": "exec", "command": ["  "], "env": { "TOKEN": "secret-env-token" } },
+        "encrypted_content": "secret-encrypted"
+      }
+    },
+    {
+      "name": "tool_search_call without query",
+      "item": {
+        "type": "tool_search_call",
+        "call_id": "ts-empty",
+        "execution": "client",
+        "arguments": { "limit": 5 },
+        "encrypted_function_args": "secret-args"
+      }
+    },
+    {
+      "name": "tool_search_output empty tools",
+      "item": {
+        "type": "tool_search_output",
+        "call_id": "ts-empty",
+        "status": "completed",
+        "execution": "client",
+        "tools": []
+      }
+    },
+    {
+      "name": "additional_tools empty",
+      "item": { "type": "additional_tools", "role": "developer", "tools": [] }
+    },
+    {
+      "name": "custom_tool_call blank input",
+      "item": {
+        "type": "custom_tool_call",
+        "call_id": "blank",
+        "name": "apply_patch",
+        "input": "   ",
+        "encrypted_content": "secret-encrypted"
+      }
+    },
+    {
+      "name": "encrypted_content item",
+      "item": { "type": "encrypted_content", "encrypted_content": "secret-encrypted" }
+    }
+  ]
+}
