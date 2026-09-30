@@ -30,13 +30,45 @@ The bridge does **not** execute Grok-native tools. It translates Codex tools int
 function calling, streams the upstream Responses events, and rewrites names back
 so Codex still recognizes them.
 
-Fourteen files under `src/`. Zero runtime dependencies. Node.js ≥ 22.
+Eighteen files under `src/`. Zero runtime dependencies. Node.js ≥ 22.
 
 This is not a second-opinion review product and not a Grok-native search
 product. The picker shows `grok-4.7` (Grok 4.7 / xAI) and keeps `grok-4.6`.
 Any other `grok-*` id uses the same route. `GROK_BRIDGE_MODELS` adds further
-`grok-*` ids. If Codex exposes a web-search tool, Grok can call
-that tool the same way it calls any other Codex tool.
+`grok-*` ids. Codex `web_search` is xAI's server-side tool, not a function
+the bridge runs. See Release history.
+
+## Release history
+
+What each recent version added. Older cuts are in `CHANGELOG.md`.
+
+### 1.7.2 — 2026-09-30
+
+- Readable compaction summaries are passed through as user messages. A compaction item that only carries encrypted or internal fields is still dropped.
+- `grok_bridge_generate_video`. The bridge declares this tool and, when the model calls it, posts to `https://api.x.ai/v1/videos/generations` with the grok login bearer, polls `GET /videos/{request_id}`, and returns the video URL as the tool result. A refusal from that API stays a tool error and does not fail the turn.
+- Readable text from Codex input items that used to be dropped is forwarded as user `input_text`: shell, search, tool-search, a revised image prompt, and custom tool text. Encrypted blobs and image-byte results stay dropped.
+- `POST /v1/images/generations` and `POST /v1/images/edits` are forwarded to the Imagine API with the grok login bearer. Codex's `gpt-image-2` body is rewritten to `grok-imagine-image-quality` and `b64_json`. OpenAI `file_id` edits are refused. No `XAI_API_KEY`.
+- Codex `web_search` is kept as one server-side `{type:"web_search"}` tool. `web_search_call` results are passed through to Codex.
+- Voice WebRTC (`POST /v1/realtime/calls`) and Codex cloud tasks are not in this package.
+
+### 1.7.1 — 2026-09-30
+
+- The bridge holds the upstream reply and sends it to Codex only after `response.completed`. A reset before that (`ECONNRESET`, `EPIPE`, `UND_ERR_SOCKET`, or a close before the reply finishes) is retried up to two more times, and only if Codex has not been sent a byte. This provider's Codex `request_max_retries` and `stream_max_retries` are 0. A retry sends the prompt again, so that attempt's input tokens can be billed again.
+- When `grok --version` fails or does not report a version, the client version is `unknown` instead of the stale `1.0.24`.
+
+### 1.7.0 — 2026-09-29
+
+- One `x-grok-conv-id` per Codex thread, and the forwarded transcript prefix stays byte-stable so the prompt cache can hit. The full transcript is still sent.
+- Upstream `cached_prompt_tokens` and `cache_read_input_tokens` are copied onto `response.completed` usage and the diagnostics log when the proxy sends them, including `0`. Missing counters are not invented.
+
+### 1.6.1 — 2026-09-28
+
+- Darwin bundled CLI resolves `Codex.app/Contents/Resources/codex-cli/bin/codex` when that file exists (Codex 26.924). The legacy `Contents/Resources/codex` path remains the fallback. `CODEX_BINARY` still wins. Linux and Windows layouts are unchanged.
+
+### 1.6.0 — 2026-09-27
+
+- Default catalog model is `grok-4.7` (`Grok 4.7 / xAI`). `grok-4.6` stays listed so existing threads still resolve.
+- `grok-*` still routes to `grok_build_cli`. No other model ids were added. `GROK_BRIDGE_MODELS` still appends extra `grok-*` ids.
 
 ## Requirements
 
@@ -72,7 +104,7 @@ starts, and tears the provider down with that process.
 ```sh
 git clone https://github.com/deximple/codex-grok-bridge.git
 cd codex-grok-bridge
-npm test                        # 174 tests, no network, no inference
+npm test                        # 191 tests, no network, no inference
 node scripts/codex-grok.mjs
 ```
 
@@ -139,8 +171,8 @@ before any of it is sent.
 Codex keeps the conversation and sends the whole turn each time. Grok can
 treat the unchanged beginning as a cache. If the connection drops before
 Codex has been sent any bytes, the bridge tries again. Codex does not send
-that same request again. Voice, cloud tasks, and video are not in this
-release.
+that same request again. Voice WebRTC (`POST /v1/realtime/calls`) and
+Codex cloud tasks are not in this package.
 
 If the Responses path misbehaves, `GROK_BRIDGE_INFERENCE=cli` falls back to the
 older CLI envelope. That path pastes the whole JSON into a prompt each turn, so
@@ -258,7 +290,7 @@ starting a new thread, before the first turn is saved.
 
 ### Not in this release
 
-Voice, cloud tasks, and video generation are not in this release.
+Voice WebRTC (`POST /v1/realtime/calls`) and Codex cloud tasks are not in this package.
 
 Upstream sometimes resets the connection mid-response (three measured cases:
 25 s / 27 s / 253 s, 726 KB–22 MB). The bridge holds the reply and, if that
@@ -308,7 +340,7 @@ Start here when something breaks. Do not open `~/.grok/auth.json` or
 ## Verify
 
 ```sh
-npm test                    # 174 tests, no remote inference
+npm test                    # 191 tests, no remote inference
 npm run test:coverage       # 80% line / branch / function gate
 npm run verify:app-server   # real app-server routing; also runs against an installed bundle
 npm audit --omit=dev
@@ -377,14 +409,46 @@ Grok 4.7을 Codex 모델 목록에 넣고, Codex의 `/v1/responses`를
 calling으로 옮기고, 상류 Responses 스트림을 전달한 뒤, Codex가 알아보는
 이름으로 되돌립니다.
 
-`src/` 아래 파일 14개. 런타임 의존성 없음. Node.js 22 이상. 1.5.0부터 npm
+`src/` 아래 파일 18개. 런타임 의존성 없음. Node.js 22 이상. 1.5.0부터 npm
 `"os"`는 `darwin` / `linux` / `win32`입니다.
 
 코드 리뷰 전용 제품이 아니고 Grok 네이티브 검색 제품도 아닙니다. 피커에는
 `grok-4.7`(Grok 4.7 / xAI)이 기본으로 보이고 `grok-4.6`도 남습니다. 그 외
 `grok-*` id도 같은 경로로 붙고, `GROK_BRIDGE_MODELS`로 카탈로그에 더합니다.
-Codex가 웹 검색 도구를 노출하면 Grok은 다른 Codex 도구와 같이 그 도구를
-호출할 수 있습니다.
+Codex `web_search`는 브리지가 실행하는 함수가 아니라 xAI 서버 도구입니다.
+릴리스 기록을 보세요.
+
+## 릴리스 기록
+
+최근 버전이 더한 것입니다. 그 이전은 `CHANGELOG.md`에 있습니다.
+
+### 1.7.2 — 2026-09-30
+
+- 읽을 수 있는 compaction 요약을 사용자 메시지로 넘깁니다. 암호화된 내용이나 내부 필드만 있는 compaction 항목은 그대로 버립니다.
+- `grok_bridge_generate_video`. 브리지가 이 도구를 선언하고, 모델이 호출하면 grok 로그인 bearer로 `https://api.x.ai/v1/videos/generations`에 보낸 뒤 `GET /videos/{request_id}`를 폴링하고, 영상 URL을 도구 결과로 돌려줍니다. 그 API의 거절은 도구 오류로 남고 턴을 실패시키지 않습니다.
+- 예전에는 버리던 Codex 입력 항목의 읽을 수 있는 글을 사용자 `input_text`로 넘깁니다. 셸, 검색, tool-search, 수정된 이미지 프롬프트, 커스텀 도구 텍스트입니다. 암호화된 blob과 이미지 바이트 결과는 그대로 버립니다.
+- `POST /v1/images/generations`와 `POST /v1/images/edits`를 grok 로그인 bearer로 Imagine API에 넘깁니다. Codex의 `gpt-image-2` 본문은 `grok-imagine-image-quality`와 `b64_json`으로 바꿉니다. OpenAI `file_id` 편집은 거절합니다. `XAI_API_KEY`는 쓰지 않습니다.
+- Codex `web_search`는 서버 측 `{type:"web_search"}` 도구 하나로 유지합니다. `web_search_call` 결과는 Codex로 통과합니다.
+- 음성 WebRTC(`POST /v1/realtime/calls`)와 Codex 클라우드 작업은 이 패키지에 없습니다.
+
+### 1.7.1 — 2026-09-30
+
+- 브리지는 상류 응답을 `response.completed` 이후에만 Codex로 보냅니다. 그 전의 리셋(`ECONNRESET`, `EPIPE`, `UND_ERR_SOCKET`, 또는 응답이 끝나기 전의 닫힘)은 최대 두 번 더 재시도하며, Codex에 바이트를 아직 보내지 않았을 때만 합니다. 이 provider의 Codex `request_max_retries`와 `stream_max_retries`는 0입니다. 재시도는 프롬프트를 다시 보내므로 그 시도의 입력 토큰이 다시 과금될 수 있습니다.
+- `grok --version`이 실패하거나 버전을 보고하지 않으면 클라이언트 버전은 오래된 `1.0.24` 대신 `unknown`입니다.
+
+### 1.7.0 — 2026-09-29
+
+- Codex 스레드마다 `x-grok-conv-id`는 하나이고, 전달하는 트랜스크립트 접두는 바이트 그대로라 프롬프트 캐시가 맞을 수 있습니다. 전체 트랜스크립트는 그대로 보냅니다.
+- 상류가 보내면 `cached_prompt_tokens`와 `cache_read_input_tokens`를 `response.completed` usage와 진단 로그에 복사합니다. `0`도 포함합니다. 없는 카운터는 만들지 않습니다.
+
+### 1.6.1 — 2026-09-28
+
+- Darwin 번들 CLI는 파일이 있으면 `Codex.app/Contents/Resources/codex-cli/bin/codex`를 씁니다(Codex 26.924). 예전 `Contents/Resources/codex`는 폴백으로 남습니다. `CODEX_BINARY`가 우선합니다. Linux와 Windows 배치는 그대로입니다.
+
+### 1.6.0 — 2026-09-27
+
+- 기본 카탈로그 모델은 `grok-4.7`(Grok 4.7 / xAI)입니다. `grok-4.6`은 기존 스레드가 계속 맞게 목록에 남습니다.
+- `grok-*`는 여전히 `grok_build_cli`로 갑니다. 다른 모델 id는 추가하지 않았습니다. `GROK_BRIDGE_MODELS`는 그 외 `grok-*` id를 카탈로그에 더합니다.
 
 ## 필요한 것
 
@@ -419,7 +483,7 @@ codex-grok exec --skip-git-repo-check --sandbox workspace-write '작업 내용'
 ```sh
 git clone https://github.com/deximple/codex-grok-bridge.git
 cd codex-grok-bridge
-npm test                        # 174건, 네트워크·추론 없음
+npm test                        # 191건, 네트워크·추론 없음
 node scripts/codex-grok.mjs
 ```
 
@@ -481,8 +545,8 @@ Codex 창에도 보일 수 있습니다.
 
 Codex가 대화를 갖고 있고, 턴마다 그 턴 전체를 보냅니다. 앞부분이 그대로면
 Grok는 그 부분을 캐시로 볼 수 있습니다. Codex에 바이트를 보내기 전에 연결이
-끊기면 브리지가 다시 시도합니다. Codex는 그 요청을 또 보내지 않습니다. 음성,
-클라우드 작업, 영상은 이번 릴리스에 없습니다.
+끊기면 브리지가 다시 시도합니다. Codex는 그 요청을 또 보내지 않습니다. 음성
+WebRTC(`POST /v1/realtime/calls`)와 Codex 클라우드 작업은 이 패키지에 없습니다.
 
 Responses 경로가 이상하면 `GROK_BRIDGE_INFERENCE=cli`로 이전 CLI 봉투 경로를
 씁니다. 매 턴 전체 JSON을 프롬프트로 넣으므로 더 느리고 비싸며, 토큰 단위
@@ -592,7 +656,7 @@ OpenAI 경로가 맞습니다.
 
 ### 이번 릴리스에 없는 것
 
-음성, 클라우드 작업, 영상 생성은 이번 릴리스에 없습니다.
+음성 WebRTC(`POST /v1/realtime/calls`)와 Codex 클라우드 작업은 이 패키지에 없습니다.
 
 상류가 응답 중간에 연결을 리셋하는 경우가 있습니다(실측 3건: 25초 / 27초 /
 253초, 726 KB–22 MB). 브리지는 응답을 들고 있다가, Codex에 그 응답을 보내기
@@ -640,7 +704,7 @@ OpenAI 경로가 맞습니다.
 ## 검증
 
 ```sh
-npm test                    # 174건, 외부 추론 없음
+npm test                    # 191건, 외부 추론 없음
 npm run test:coverage       # line/branch/function 80% 게이트
 npm run verify:app-server   # 실제 app-server 라우팅. 설치된 앱 번들에서도 실행
 npm audit --omit=dev
