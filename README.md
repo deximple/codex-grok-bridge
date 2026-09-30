@@ -72,7 +72,7 @@ starts, and tears the provider down with that process.
 ```sh
 git clone https://github.com/deximple/codex-grok-bridge.git
 cd codex-grok-bridge
-npm test                        # 160 tests, no network, no inference
+npm test                        # 174 tests, no network, no inference
 node scripts/codex-grok.mjs
 ```
 
@@ -120,12 +120,27 @@ address when one exists, so a 5–20 s tool gap does not force a fresh name
 lookup every time. `GROK_BRIDGE_TRANSPORT=fetch` restores the older `fetch`
 path.
 
-A DNS or connection failure, before the proxy has accepted the body, is
-retried once. A socket reset after the body is written is not: the upstream
-may already have billed that prompt, and a resend would multiply the input
-tokens. After the first SSE block the bridge never retries either — Codex
-already saw bytes. Deterministic refusals (422) and user aborts are not
-retried.
+The bridge holds Grok’s reply until it finishes (`response.completed`). No
+byte of that reply is sent to Codex before then. If the connection drops
+first — a reset (`ECONNRESET`, `EPIPE`, `UND_ERR_SOCKET`) or a close before
+the reply finishes — the bridge sends the same request again, up to two more
+times. DNS and connection failures use that same budget. This provider sets
+Codex `request_max_retries` and `stream_max_retries` to 0, so Codex does not
+send the prompt again as well. If any byte of the reply was already sent to
+Codex, the bridge does not resubmit. A retry sends the prompt to Grok again,
+so that attempt’s input tokens can be billed again. This replaces Codex
+resending the prompt up to two extra times. User aborts and deterministic 422
+responses are not retried. Codex still gives the stream five minutes of
+silence (`stream_idle_timeout_ms`); a reply that takes longer can be cut off
+before any of it is sent.
+
+### In short
+
+Codex keeps the conversation and sends the whole turn each time. Grok can
+treat the unchanged beginning as a cache. If the connection drops before
+Codex has been sent any bytes, the bridge tries again. Codex does not send
+that same request again. Voice, cloud tasks, and video are not in this
+release.
 
 If the Responses path misbehaves, `GROK_BRIDGE_INFERENCE=cli` falls back to the
 older CLI envelope. That path pastes the whole JSON into a prompt each turn, so
@@ -241,15 +256,15 @@ ephemeral threads and child agents refuse a switch. Other subscribers can block
 the reload; if they do, no inference is sent. Pick the model you want when
 starting a new thread, before the first turn is saved.
 
-### Not guaranteed
+### Not in this release
 
-Voice, cloud tasks, and video generation are not promised.
+Voice, cloud tasks, and video generation are not in this release.
 
 Upstream sometimes resets the connection mid-response (three measured cases:
-25 s / 27 s / 253 s, 726 KB–22 MB). The bridge cannot retry after the first
-SSE byte. The provider sets Codex `request_max_retries` / `stream_max_retries`
-to 2 so **Codex** can resend the same request. Only the side that owns the
-conversation can retry safely.
+25 s / 27 s / 253 s, 726 KB–22 MB). The bridge holds the reply and, if that
+drop happens before Codex has been sent any of it, tries the same request up
+to two more times. Codex does not also resend it. A retry can bill the input
+tokens for that attempt again.
 
 ## Diagnostics
 
@@ -293,7 +308,7 @@ Start here when something breaks. Do not open `~/.grok/auth.json` or
 ## Verify
 
 ```sh
-npm test                    # 160 tests, no remote inference
+npm test                    # 174 tests, no remote inference
 npm run test:coverage       # 80% line / branch / function gate
 npm run verify:app-server   # real app-server routing; also runs against an installed bundle
 npm audit --omit=dev
@@ -404,7 +419,7 @@ codex-grok exec --skip-git-repo-check --sandbox workspace-write '작업 내용'
 ```sh
 git clone https://github.com/deximple/codex-grok-bridge.git
 cd codex-grok-bridge
-npm test                        # 160건, 네트워크·추론 없음
+npm test                        # 174건, 네트워크·추론 없음
 node scripts/codex-grok.mjs
 ```
 
@@ -449,11 +464,25 @@ Codex 창에도 보일 수 있습니다.
 실행으로 5–20초가 비어도 매번 이름을 다시 찾지 않기 위해서입니다.
 `GROK_BRIDGE_TRANSPORT=fetch`로 이전 `fetch` 경로로 되돌릴 수 있습니다.
 
-본문이 프록시에 전달되기 전의 DNS·연결 실패는 한 번 다시 보냅니다. 본문을
-쓴 뒤의 소켓 리셋은 재전송하지 않습니다. 상류가 그 프롬프트를 이미 과금했을
-수 있고, 다시 보내면 입력 토큰이 곱해집니다. 첫 SSE 블록 이후에도 재시도하지
-않습니다. Codex가 이미 바이트를 봤기 때문입니다. 422 같은 결정적 거절과
-사용자 중단도 재시도하지 않습니다.
+브리지는 Grok의 응답이 끝날 때까지(`response.completed`) 들고 있습니다.
+그 전에 Codex로 응답 바이트를 보내지 않습니다. 그 전에 연결이 끊기면 —
+리셋(`ECONNRESET`, `EPIPE`, `UND_ERR_SOCKET`)이거나, 응답이 끝나기 전에
+닫힌 경우 — 브리지가 같은 요청을 최대 두 번 더 보냅니다. DNS·연결 실패도
+같은 횟수를 씁니다. 이 provider는 Codex `request_max_retries`와
+`stream_max_retries`를 0으로 두어, Codex가 그 프롬프트를 또 보내지 않게
+합니다. 응답 바이트를 Codex에 이미 보냈다면 브리지는 다시 보내지 않습니다.
+재시도는 프롬프트를 Grok에 다시 보내므로, 그 시도의 입력 토큰이 다시 과금될
+수 있습니다. Codex가 프롬프트를 최대 두 번 더 보내던 것을 이것으로 대신합니다.
+사용자 중단과 422 같은 결정적 거절은 재시도하지 않습니다. Codex는 응답
+바이트 없이 5분(`stream_idle_timeout_ms`)을 기다립니다. 그보다 오래 걸리면
+보내기 전에 끊길 수 있습니다.
+
+### 쉽게 말하면
+
+Codex가 대화를 갖고 있고, 턴마다 그 턴 전체를 보냅니다. 앞부분이 그대로면
+Grok는 그 부분을 캐시로 볼 수 있습니다. Codex에 바이트를 보내기 전에 연결이
+끊기면 브리지가 다시 시도합니다. Codex는 그 요청을 또 보내지 않습니다. 음성,
+클라우드 작업, 영상은 이번 릴리스에 없습니다.
 
 Responses 경로가 이상하면 `GROK_BRIDGE_INFERENCE=cli`로 이전 CLI 봉투 경로를
 씁니다. 매 턴 전체 JSON을 프롬프트로 넣으므로 더 느리고 비싸며, 토큰 단위
@@ -561,15 +590,14 @@ OpenAI 경로가 맞습니다.
 구독자가 재로드를 막으면 추론을 보내지 않습니다. 첫 턴이 저장되기 전에 새
 작업을 시작할 때 원하는 모델을 고르세요.
 
-### 아직 보장하지 않는 것
+### 이번 릴리스에 없는 것
 
-음성, 클라우드 작업, 영상 생성은 약속하지 않습니다.
+음성, 클라우드 작업, 영상 생성은 이번 릴리스에 없습니다.
 
 상류가 응답 중간에 연결을 리셋하는 경우가 있습니다(실측 3건: 25초 / 27초 /
-253초, 726 KB–22 MB). 첫 SSE 바이트 이후에는 브리지가 재시도할 수 없습니다.
-provider에 Codex `request_max_retries` / `stream_max_retries`를 2로 두어
-**Codex**가 같은 요청을 다시 보내게 했습니다. 대화를 소유한 쪽만 안전하게
-재시도할 수 있습니다.
+253초, 726 KB–22 MB). 브리지는 응답을 들고 있다가, Codex에 그 응답을 보내기
+전에 끊기면 같은 요청을 최대 두 번 더 시도합니다. Codex가 또 보내지는
+않습니다. 재시도하면 그 시도의 입력 토큰이 다시 과금될 수 있습니다.
 
 ## 진단 로그
 
@@ -612,7 +640,7 @@ provider에 Codex `request_max_retries` / `stream_max_retries`를 2로 두어
 ## 검증
 
 ```sh
-npm test                    # 160건, 외부 추론 없음
+npm test                    # 174건, 외부 추론 없음
 npm run test:coverage       # line/branch/function 80% 게이트
 npm run verify:app-server   # 실제 app-server 라우팅. 설치된 앱 번들에서도 실행
 npm audit --omit=dev

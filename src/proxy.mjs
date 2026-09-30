@@ -79,9 +79,9 @@ export async function openProxyStream(options) {
   return response;
 }
 
-// Resolve when the consumer has drained, reject if it goes away first. Without
-// this, a slow client makes the bridge buffer the whole Grok response in memory,
-// and a client that vanishes mid-stream is never noticed.
+// The upstream reply is already buffered until it finishes. This wait applies
+// only while that buffer is flushed: a slow Codex exerts backpressure, and a
+// client that vanishes is noticed instead of being written forever.
 function drained(output) {
   return new Promise((resolve, reject) => {
     const settle = (fn, value) => {
@@ -105,23 +105,68 @@ function drained(output) {
   });
 }
 
-async function writeBlock(output, block) {
-  if (output.destroyed || output.writableEnded)
-    throw Object.assign(new Error("The client closed the stream"), {
-      code: "ERR_STREAM_PREMATURE_CLOSE",
-    });
-  if (!output.write(block)) await drained(output);
+// First try, then two more. That is the budget Codex used to spend on
+// request_max_retries / stream_max_retries. A retry sends the prompt again, so
+// the input tokens for that attempt can be billed again.
+export const PROXY_ATTEMPTS = 3;
+
+// DNS and connect failures are included. A socket reset (ECONNRESET, EPIPE,
+// UND_ERR_SOCKET) or a body that ends before response.completed is included
+// only while Codex has not been sent a byte. User aborts and deterministic
+// 422s are not in this set.
+const RETRYABLE = new Set([
+  BRIDGE_ERROR.DNS,
+  BRIDGE_ERROR.CONNECT,
+  BRIDGE_ERROR.UPSTREAM_CLOSED,
+]);
+
+// response.incomplete is the other usage event this code already treats as the
+// end of a response. response.failed here is a finished upstream event, not a
+// dropped socket, so it is forwarded instead of retried.
+const TERMINAL_EVENTS = new Set([
+  "response.completed",
+  "response.incomplete",
+  "response.failed",
+]);
+
+export function isTerminalSseBlock(part) {
+  for (const line of part.split("\n")) {
+    if (line.startsWith("event:") && TERMINAL_EVENTS.has(line.slice(6).trim()))
+      return true;
+    if (!line.startsWith("data:")) continue;
+    const payload = line.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+    try {
+      const value = JSON.parse(payload);
+      if (TERMINAL_EVENTS.has(value?.type)) return true;
+    } catch {
+      // A non-JSON data line cannot be the terminal event.
+    }
+  }
+  return false;
 }
 
-// DNS and connect failures happen before the proxy has the request, so one
-// resend does not bill the prompt. A socket that closes after the body is
-// written (ECONNRESET, EPIPE, UND_ERR_SOCKET) is not retried: the upstream may
-// already have accepted the full prompt, and sending it again multiplies the
-// input tokens. After the first SSE block Codex has recorded items, so that
-// path is never retried either — Codex itself resends a mid-stream reset.
-const RETRYABLE = new Set([BRIDGE_ERROR.DNS, BRIDGE_ERROR.CONNECT]);
+function prematureUpstreamClose() {
+  return Object.assign(new Error("Grok closed the connection before finishing"), {
+    code: "ERR_UPSTREAM_PREMATURE_CLOSE",
+  });
+}
 
-export async function openProxyStreamWithRetry(options, attempts = 2) {
+function clientClosed() {
+  return Object.assign(new Error("The client closed the stream"), {
+    code: "ERR_STREAM_PREMATURE_CLOSE",
+  });
+}
+
+// Returns the retry kind, or null when this failure must surface as-is.
+function retryKind(error, options, attempt, rounds, clientBytes) {
+  if (clientBytes > 0 || options.signal?.aborted || attempt === rounds)
+    return null;
+  const kind = classifyBridgeError(error);
+  return RETRYABLE.has(kind) ? kind : null;
+}
+
+export async function openProxyStreamWithRetry(options, attempts = PROXY_ATTEMPTS) {
   const rounds = Math.max(1, attempts);
   let lastError;
   for (let attempt = 1; attempt <= rounds; attempt += 1) {
@@ -129,48 +174,113 @@ export async function openProxyStreamWithRetry(options, attempts = 2) {
       return await openProxyStream(options);
     } catch (error) {
       lastError = error;
-      const kind = classifyBridgeError(error);
-      if (
-        !RETRYABLE.has(kind) ||
-        options.signal?.aborted ||
-        attempt === rounds
-      )
-        break;
+      const kind = retryKind(error, options, attempt, rounds, 0);
+      if (!kind) break;
       options.onRetry?.({ attempt, kind });
     }
   }
   throw lastError;
 }
 
-export async function pipeProxySse(stream, output, map, usageBox) {
+function completeBlocks(buffer) {
+  const parts = buffer.split("\n\n");
+  const rest = parts.pop() ?? "";
+  return { parts: parts.filter((part) => part.trim()), rest };
+}
+
+// Read the upstream body to memory. Write to Codex only after a terminal
+// event, so a reset before that has not shown Codex a partial reply.
+export async function pipeProxySse(stream, output, map, usageBox, onClientByte) {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   const rewrite = createSseRewriter(map);
+  const pending = [];
+  let clientBytes = 0;
+  let finished = false;
+  let failed = false;
+
+  const flush = async (parts) => {
+    for (const part of parts) {
+      const rewritten = rewrite(part);
+      if (rewritten === null) continue;
+      const block = `${rewritten}\n\n`;
+      if (output.destroyed || output.writableEnded) throw clientClosed();
+      // Count the byte as soon as the client stream accepts it. A later drain
+      // error must not look like "Codex saw nothing" and resubmit the prompt.
+      const accepted = output.write(block);
+      clientBytes += Buffer.byteLength(block);
+      onClientByte?.();
+      if (!accepted) await drained(output);
+    }
+  };
+
+  const accept = async (parts) => {
+    if (!parts.length) return;
+    if (finished) {
+      await flush(parts);
+      return;
+    }
+    const terminalAt = parts.findIndex((part) => isTerminalSseBlock(part));
+    if (terminalAt === -1) {
+      pending.push(...parts);
+      return;
+    }
+    pending.push(...parts.slice(0, terminalAt + 1));
+    await flush(pending);
+    pending.length = 0;
+    finished = true;
+    await flush(parts.slice(terminalAt + 1));
+  };
+
   try {
     while (true) {
+      if (output.destroyed || output.writableEnded) throw clientClosed();
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      const parts = buffer.split("\n\n");
-      buffer = parts.pop();
-      for (const part of parts) {
-        if (!part.trim()) continue;
-        const rewritten = rewrite(part);
-        if (rewritten !== null) await writeBlock(output, rewritten + "\n\n");
-      }
+      const split = completeBlocks(buffer);
+      buffer = split.rest;
+      await accept(split.parts);
     }
     buffer += decoder.decode();
-    if (buffer.trim()) {
-      const rewritten = rewrite(buffer);
-      if (rewritten !== null) await writeBlock(output, rewritten + "\n\n");
-    }
+    if (buffer.trim()) await accept([buffer]);
+    if (!finished) throw prematureUpstreamClose();
   } catch (error) {
-    // Stop pulling from Grok the moment the client is gone; leaving the body
+    failed = true;
+    // Stop pulling from Grok the moment this attempt is over; leaving the body
     // unread holds the upstream socket open for the rest of the response.
     await reader.cancel(error).catch(() => {});
+    if (error && typeof error === "object") error.clientBytes = clientBytes;
     throw error;
   } finally {
+    if (!failed) reader.releaseLock();
     if (usageBox) usageBox.cacheUsage = rewrite.cacheUsage ?? null;
   }
+}
+
+// Open and read one attempt. If the socket dies before Codex has a byte, send
+// the same request again. Once a byte has been written, never resubmit.
+export async function relayProxySse(options, output, map, usageBox, attempts = PROXY_ATTEMPTS) {
+  const rounds = Math.max(1, attempts);
+  let lastError;
+  for (let attempt = 1; attempt <= rounds; attempt += 1) {
+    try {
+      const response = await openProxyStream(options);
+      await pipeProxySse(response.body, output, map, usageBox, options.onClientByte);
+      return response;
+    } catch (error) {
+      lastError = error;
+      const kind = retryKind(
+        error,
+        options,
+        attempt,
+        rounds,
+        error?.clientBytes ?? 0,
+      );
+      if (!kind) break;
+      options.onRetry?.({ attempt, kind });
+    }
+  }
+  throw lastError;
 }

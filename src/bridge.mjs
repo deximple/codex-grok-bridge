@@ -8,7 +8,7 @@ import {
   parseGrokResult,
   runGrok,
 } from "./cli-inference.mjs";
-import { openProxyStreamWithRetry, pipeProxySse } from "./proxy.mjs";
+import { relayProxySse } from "./proxy.mjs";
 import {
   applyCacheUsage,
   createPrefixMemory,
@@ -101,8 +101,14 @@ export function createBridgeServer(options = {}) {
       );
     const id = "resp_" + randomUUID();
     const startedAt = Date.now();
+    // A keepalive comment is an SSE byte. Writing one before the reply finishes
+    // would make a later upstream reset unsafe to retry, so the proxy path
+    // stays quiet until the first real event is handed to Codex. The CLI path
+    // writes its own events and may keep the socket warm while it runs.
+    let responseStarted = false;
     const keepalive = setInterval(() => {
-      if (!res.destroyed && !res.writableEnded) res.write(": keepalive\n\n");
+      if (!responseStarted || res.destroyed || res.writableEnded) return;
+      res.write(": keepalive\n\n");
     }, 10000);
     const useCli =
       Boolean(options.runGrok) ||
@@ -125,6 +131,7 @@ export function createBridgeServer(options = {}) {
       acquired = true;
       queuedMs = Date.now() - queuedAt;
       if (useCli) {
+        responseStarted = true;
         event("response.created", { response: { id } });
         const invocation = buildGrokInvocation(body, options);
         invocation.threadId = req.headers["thread-id"];
@@ -171,25 +178,32 @@ export function createBridgeServer(options = {}) {
         if (convId) request.prompt_cache_key = convId;
         request.input = prefixes.reuse(convId, projected);
         const usageBox = {};
-        const proxy = await openProxyStreamWithRetry({
-          token: session.token,
-          userId: session.userId,
-          body: request,
-          signal: controller.signal,
-          fetchImpl: options.proxyFetch,
-          baseUrl: options.proxyBaseUrl,
-          convId,
-          sessionId: Array.isArray(threadId) ? threadId[0] : threadId,
-          onRetry: ({ attempt, kind }) =>
-            diagnostics.record({
-              event: "turn_retried",
-              kind,
-              attempt,
-              elapsedMs: Date.now() - startedAt,
-            }),
-        });
         try {
-          await pipeProxySse(proxy.body, res, map, usageBox);
+          await relayProxySse(
+            {
+              token: session.token,
+              userId: session.userId,
+              body: request,
+              signal: controller.signal,
+              fetchImpl: options.proxyFetch,
+              baseUrl: options.proxyBaseUrl,
+              convId,
+              sessionId: Array.isArray(threadId) ? threadId[0] : threadId,
+              onClientByte: () => {
+                responseStarted = true;
+              },
+              onRetry: ({ attempt, kind }) =>
+                diagnostics.record({
+                  event: "turn_retried",
+                  kind,
+                  attempt,
+                  elapsedMs: Date.now() - startedAt,
+                }),
+            },
+            res,
+            map,
+            usageBox,
+          );
         } finally {
           cacheUsage = usageBox.cacheUsage ?? null;
         }

@@ -11,7 +11,7 @@ test("runtime binds loopback and removes its temporary catalog", async () => {
   await assert.rejects(access(runtime.catalogPath));
 });
 
-test("the provider lets Codex retry, because the bridge cannot", async () => {
+test("the Grok provider leaves retries to the bridge", async () => {
   const runtime = await startRuntime();
   try {
     const config = Object.fromEntries(
@@ -22,9 +22,9 @@ test("the provider lets Codex retry, because the bridge cannot", async () => {
           return [key, rest.join("=")];
         }),
     );
-    // A mid-stream reset is only recoverable by whoever owns the conversation.
-    assert.equal(config.stream_max_retries, "2");
-    assert.equal(config.request_max_retries, "2");
+    // Codex must not resend the prompt; the bridge retries before any SSE byte.
+    assert.equal(config.stream_max_retries, "0");
+    assert.equal(config.request_max_retries, "0");
     assert.equal(config.stream_idle_timeout_ms, "300000");
   } finally {
     await runtime.close();
