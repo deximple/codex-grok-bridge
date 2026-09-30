@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A Grok thread can generate a video without an API key. The bridge declares `grok_bridge_generate_video` on the upstream request and, when the model calls it, posts to `https://api.x.ai/v1/videos/generations` with the grok login bearer, polls `GET /videos/{request_id}`, and returns the video URL to the model as the tool result. A refusal from that API stays a tool error and does not fail the turn.
+
 ## 1.7.1 — 2026-09-30
 
 - The bridge holds the upstream reply and sends it to Codex only after `response.completed`. A reset before that (`ECONNRESET`, `EPIPE`, `UND_ERR_SOCKET`, or a close before the reply finishes) is retried up to two more times, and only if Codex has not been sent a byte. This provider's Codex `request_max_retries` and `stream_max_retries` are 0. A retry sends the prompt again, so that attempt's input tokens can be billed again.

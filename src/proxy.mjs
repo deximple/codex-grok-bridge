@@ -261,13 +261,13 @@ export async function pipeProxySse(stream, output, map, usageBox, onClientByte) 
 
 // Open and read one attempt. If the socket dies before Codex has a byte, send
 // the same request again. Once a byte has been written, never resubmit.
-export async function relayProxySse(options, output, map, usageBox, attempts = PROXY_ATTEMPTS) {
+async function relayAttempts(options, consume, attempts = PROXY_ATTEMPTS) {
   const rounds = Math.max(1, attempts);
   let lastError;
   for (let attempt = 1; attempt <= rounds; attempt += 1) {
     try {
       const response = await openProxyStream(options);
-      await pipeProxySse(response.body, output, map, usageBox, options.onClientByte);
+      await consume(response);
       return response;
     } catch (error) {
       lastError = error;
@@ -283,4 +283,89 @@ export async function relayProxySse(options, output, map, usageBox, attempts = P
     }
   }
   throw lastError;
+}
+
+export async function relayProxySse(options, output, map, usageBox, attempts = PROXY_ATTEMPTS) {
+  return relayAttempts(
+    options,
+    (response) =>
+      pipeProxySse(response.body, output, map, usageBox, options.onClientByte),
+    attempts,
+  );
+}
+
+// Read until response.completed (or the other terminal events). Do not write
+// those bytes yet: a video tool call has to be answered before Codex sees the
+// turn, and a reset before that write is still safe to retry.
+export async function readUntilTerminal(stream, output) {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const collected = [];
+  let released = false;
+  const finish = async (error) => {
+    if (released) return;
+    released = true;
+    await reader.cancel(error).catch(() => {});
+  };
+  try {
+    while (true) {
+      if (output?.destroyed || output?.writableEnded) throw clientClosed();
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const split = completeBlocks(buffer);
+      buffer = split.rest;
+      collected.push(...split.parts);
+      if (collected.some((part) => isTerminalSseBlock(part))) {
+        await finish();
+        return collected;
+      }
+    }
+    buffer += decoder.decode();
+    if (buffer.trim()) collected.push(buffer);
+    if (!collected.some((part) => isTerminalSseBlock(part)))
+      throw prematureUpstreamClose();
+    await finish();
+    return collected;
+  } catch (error) {
+    await finish(error);
+    if (error && typeof error === "object" && error.clientBytes == null)
+      error.clientBytes = 0;
+    throw error;
+  }
+}
+
+export async function readRelayProxySse(options, output, attempts = PROXY_ATTEMPTS) {
+  let parts;
+  await relayAttempts(
+    options,
+    async (response) => {
+      parts = await readUntilTerminal(response.body, output);
+    },
+    attempts,
+  );
+  return parts;
+}
+
+export async function emitProxySse(parts, output, map, usageBox, onClientByte) {
+  const rewrite = createSseRewriter(map);
+  let clientBytes = 0;
+  try {
+    for (const part of parts) {
+      const rewritten = rewrite(part);
+      if (rewritten === null) continue;
+      const block = `${rewritten}\n\n`;
+      if (output.destroyed || output.writableEnded) throw clientClosed();
+      const accepted = output.write(block);
+      clientBytes += Buffer.byteLength(block);
+      onClientByte?.();
+      if (!accepted) await drained(output);
+    }
+  } catch (error) {
+    if (error && typeof error === "object") error.clientBytes = clientBytes;
+    throw error;
+  } finally {
+    if (usageBox) usageBox.cacheUsage = rewrite.cacheUsage ?? null;
+  }
 }
