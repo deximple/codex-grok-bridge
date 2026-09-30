@@ -267,8 +267,75 @@ test("flattens namespaced Codex tools into function tools", () => {
   assert.equal(tools[0].type, "function");
   assert.match(tools[0].name, /^codex_[0-9a-f]{8}_/);
   assert.equal(map.get(tools[1].name).namespace, "mcp__exa");
-  assert.equal(map.get(tools[2].name).name, "web_search");
-  assert.equal(tools[2].parameters.required[0], "query");
+  assert.deepEqual(tools[2], { type: "web_search" });
+  assert.equal(
+    [...map.values()].some((origin) => origin.kind === "web_search"),
+    false,
+  );
+});
+
+test("forwards one Codex web_search server tool and passes web_search_call through", () => {
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/web-search.json", import.meta.url)),
+  );
+  const { tools, map } = flattenCodexTools([
+    ...fixture.tools,
+    {
+      type: "function",
+      name: "web_search",
+      description: "Client-side search",
+      parameters: { type: "object", properties: {} },
+    },
+  ]);
+  const serverTools = tools.filter((tool) => tool.type === "web_search");
+  assert.deepEqual(serverTools, [fixture.expected]);
+  assert.equal(
+    tools.filter((tool) => tool.type === "function" && tool.name === "web_search")
+      .length,
+    0,
+  );
+  const exec = tools.find((tool) => map.get(tool.name)?.name === "exec_command");
+  const patch = tools.find((tool) => map.get(tool.name)?.name === "apply_patch");
+  const clientSearch = tools.find(
+    (tool) =>
+      map.get(tool.name)?.kind === "function" &&
+      map.get(tool.name)?.name === "web_search",
+  );
+  assert.match(exec.name, /^codex_[0-9a-f]{8}_exec_command$/);
+  assert.match(patch.name, /^codex_[0-9a-f]{8}_apply_patch$/);
+  assert.match(clientSearch.name, /^codex_[0-9a-f]{8}_web_search$/);
+  assert.equal(map.get(patch.name).kind, "custom");
+
+  const { request } = toProxyRequest({
+    input: [{ role: "user", content: "hi" }],
+    tools: fixture.tools,
+    tool_choice: { name: "web_search" },
+  });
+  assert.deepEqual(
+    request.tools.filter((tool) => tool.type === "web_search"),
+    [fixture.expected],
+  );
+  assert.equal(
+    request.tools.some((tool) => tool.name === "web_search"),
+    false,
+  );
+  assert.equal(request.tool_choice, "auto");
+
+  for (const eventType of [
+    "response.output_item.added",
+    "response.output_item.done",
+  ]) {
+    const block = rewriteSseBlock(
+      `event: ${eventType}\ndata: ${JSON.stringify({
+        type: eventType,
+        item: fixture.outputItem,
+      })}`,
+      new Map(),
+    );
+    assert.ok(block, `${eventType} must reach Codex`);
+    const payload = JSON.parse(block.split("data: ")[1]);
+    assert.deepEqual(payload.item, fixture.outputItem);
+  }
 });
 
 test("proxy request drops Codex client metadata and provider-opaque blobs", () => {

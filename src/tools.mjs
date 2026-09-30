@@ -28,14 +28,6 @@ const CUSTOM_INPUT_SCHEMA = {
   additionalProperties: false,
 };
 
-const WEB_SEARCH_SCHEMA = {
-  type: "object",
-  properties: {
-    query: { type: "string", description: "Search query" },
-  },
-  required: ["query"],
-};
-
 const EFFORT = {
   ultra: "xhigh",
   max: "xhigh",
@@ -236,6 +228,21 @@ function decodeCustomInput(argumentsValue) {
   return argumentsValue;
 }
 
+function plainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+// xAI runs `{type:"web_search"}` on the server. A hashed function is never
+// called, so Codex's hosted tool stays one server tool. Keep filters and
+// allowed_domains; every other field on that tool is dropped.
+function keptWebSearchFields(tool) {
+  const next = {};
+  if (plainObject(tool.filters)) next.filters = tool.filters;
+  if (Array.isArray(tool.allowed_domains))
+    next.allowed_domains = tool.allowed_domains;
+  return next;
+}
+
 function addFunction(flattened, map, spec) {
   // Index names change when Codex reorders tools, which rewrites every
   // earlier function_call and breaks the prompt-cache prefix.
@@ -267,8 +274,25 @@ function addFunction(flattened, map, spec) {
 export function flattenCodexTools(tools = []) {
   const flattened = [];
   const map = new Map();
+  let webSearch = null;
   for (const tool of tools) {
     if (!tool || typeof tool !== "object") continue;
+    if (tool.type === "web_search") {
+      const kept = keptWebSearchFields(tool);
+      if (!webSearch) {
+        webSearch = { type: "web_search", ...kept };
+        flattened.push(webSearch);
+      } else {
+        if (webSearch.filters === undefined && kept.filters !== undefined)
+          webSearch.filters = kept.filters;
+        if (
+          webSearch.allowed_domains === undefined &&
+          kept.allowed_domains !== undefined
+        )
+          webSearch.allowed_domains = kept.allowed_domains;
+      }
+      continue;
+    }
     if (tool.type === "function" || tool.type === "custom") {
       addFunction(flattened, map, {
         kind: tool.type === "custom" ? "custom" : "function",
@@ -276,16 +300,6 @@ export function flattenCodexTools(tools = []) {
         name: tool.name,
         description: tool.description,
         parameters: tool.parameters,
-      });
-      continue;
-    }
-    if (tool.type === "web_search") {
-      addFunction(flattened, map, {
-        kind: "web_search",
-        namespace: null,
-        name: "web_search",
-        description: tool.description || "Search the web",
-        parameters: tool.parameters || WEB_SEARCH_SCHEMA,
       });
       continue;
     }
@@ -303,6 +317,10 @@ export function flattenCodexTools(tools = []) {
       continue;
     }
     flattened.push(stableJsonValue(structuredClone(tool)));
+  }
+  if (webSearch) {
+    const index = flattened.indexOf(webSearch);
+    flattened[index] = stableJsonValue(structuredClone(webSearch));
   }
   return { tools: flattened, map };
 }
