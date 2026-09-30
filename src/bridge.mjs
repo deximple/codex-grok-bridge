@@ -10,6 +10,7 @@ import {
 } from "./cli-inference.mjs";
 import { emitProxySse, readRelayProxySse } from "./proxy.mjs";
 import { videoCallsFromParts, videoToolOutput } from "./videogen.mjs";
+import { forwardImagine } from "./imagine.mjs";
 import {
   applyCacheUsage,
   createPrefixMemory,
@@ -61,6 +62,52 @@ async function relayWithVideo(options, output, map, usageBox, onClientByte) {
   }
 }
 
+async function relayImagine(req, res, json, kind, options) {
+  const controller = new AbortController();
+  res.on("close", () => controller.abort());
+  let body;
+  try {
+    const chunks = [];
+    let size = 0;
+    const limit = options.maxBodyBytes ?? 40 * 1024 * 1024;
+    for await (const chunk of req) {
+      size += chunk.length;
+      if (size > limit) return json(413, { error: "Request too large" });
+      chunks.push(chunk);
+    }
+    body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    return json(400, { error: "Invalid request" });
+  }
+  try {
+    const session = options.grokSession ?? readGrokBearerToken(options.grokHome);
+    const response = await forwardImagine({
+      kind,
+      body,
+      token: session.token,
+      fetchImpl: options.imagineFetch,
+      baseUrl: options.imagineBaseUrl,
+      signal: controller.signal,
+    });
+    if (!res.writableEnded && !res.destroyed) json(200, response);
+  } catch (error) {
+    if (res.writableEnded || res.destroyed) return;
+    if (error instanceof GrokAuthError) return json(401, { error: error.message });
+    const status = Number(error?.status);
+    const message = String(error?.message ?? "");
+    if (
+      status >= 400 &&
+      status < 600 &&
+      (message.startsWith("Image generation") ||
+        message.startsWith("Image edit") ||
+        message.startsWith("OpenAI file") ||
+        message.startsWith("Grok login"))
+    )
+      return json(status, { error: message });
+    return json(502, { error: "Image generation failed." });
+  }
+}
+
 export function publicBridgeError(error, context = {}) {
   if (error instanceof GrokAuthError) return error.message;
   const message = String(error?.message ?? "");
@@ -89,13 +136,20 @@ export function createBridgeServer(options = {}) {
     const route = new URL(req.url, "http://127.0.0.1").pathname;
     if (req.method === "GET" && route === "/v1/models")
       return json(200, { models: catalogModelInfos() });
-    if (req.method !== "POST" || route !== "/v1/responses")
+    const imagineKind =
+      route === "/v1/images/generations"
+        ? "generations"
+        : route === "/v1/images/edits"
+          ? "edits"
+          : null;
+    if (req.method !== "POST" || (!imagineKind && route !== "/v1/responses"))
       return json(404, { error: "Not found" });
     const auth = Buffer.from(req.headers.authorization ?? "");
     if (auth.length !== token.length || !timingSafeEqual(auth, token))
       return json(401, { error: "Unauthorized" });
     if (req.headers.origin)
       return json(403, { error: "Browser requests are not accepted" });
+    if (imagineKind) return relayImagine(req, res, json, imagineKind, options);
     let body;
     let requestBytes = 0;
     try {
