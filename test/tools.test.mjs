@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
@@ -733,7 +734,78 @@ test("rewrites Codex agent_message items into Grok assistant messages", () => {
       role: "assistant",
       content: [{ type: "input_text", text: "sdk shape" }],
     },
+    {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "pwd" }],
+    },
   ]);
+});
+
+test("forwards readable text from Codex input items Grok would drop", () => {
+  const fixtures = JSON.parse(
+    readFileSync(new URL("./fixtures/dropped-input-items.json", import.meta.url)),
+  );
+  const secrets = [
+    "secret-encrypted",
+    "secret-args",
+    "secret-env-token",
+    "secret-internal",
+    "secret-turn",
+    "Zm9vYmFyQmFzZTY0",
+  ];
+  for (const fixture of fixtures.forwarded) {
+    const { request } = toProxyRequest({ input: [fixture.item], tools: [] });
+    assert.deepEqual(
+      request.input,
+      [{ type: "message", role: "user", content: fixture.content }],
+      fixture.name,
+    );
+    const encoded = JSON.stringify(request.input);
+    for (const secret of secrets)
+      assert.equal(encoded.includes(secret), false, `${fixture.name} leaked ${secret}`);
+  }
+
+  const { request } = toProxyRequest({
+    input: [
+      ...fixtures.dropped.map((fixture) => fixture.item),
+      { role: "user", content: [{ type: "input_text", text: "hi" }] },
+    ],
+    tools: [],
+  });
+  assert.deepEqual(request.input, [
+    { role: "user", content: [{ type: "input_text", text: "hi" }] },
+  ]);
+  const droppedEncoded = JSON.stringify(request.input);
+  for (const secret of secrets)
+    assert.equal(droppedEncoded.includes(secret), false);
+});
+
+test("readable salvage leaves items Grok already accepts structured", () => {
+  const { request } = toProxyRequest({
+    input: [
+      { type: "shell_call", call_id: "s", action: { command: ["echo"] } },
+      {
+        type: "local_shell_call",
+        call_id: "l",
+        status: "completed",
+        action: { type: "exec", command: ["pwd"] },
+      },
+      { role: "user", content: "hi" },
+    ],
+    tools: [],
+  });
+  assert.deepEqual(request.input[0], {
+    type: "shell_call",
+    call_id: "s",
+    action: { command: ["echo"] },
+  });
+  assert.deepEqual(request.input[1], {
+    type: "message",
+    role: "user",
+    content: [{ type: "input_text", text: "pwd" }],
+  });
+  assert.deepEqual(request.input[2], { role: "user", content: "hi" });
 });
 
 test("omits tool choice fields when the request has no tools", () => {

@@ -348,7 +348,149 @@ function compactionInputTexts(node) {
   return [];
 }
 
-function toProxyInputNode(node, map, state) {
+function rememberText(texts, seen, value) {
+  const text = readableString(value);
+  if (!text || seen.has(text)) return;
+  seen.add(text);
+  texts.push(text);
+}
+
+// Content parts, stdout/stderr rows, and bare string lists. Encrypted parts
+// are skipped. This does not walk arbitrary keys, so ids, status, env, and
+// image bytes are not treated as text.
+function rememberTextValue(texts, seen, value) {
+  if (typeof value === "string") {
+    rememberText(texts, seen, value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const part of value) {
+      if (typeof part === "string") {
+        rememberText(texts, seen, part);
+        continue;
+      }
+      if (!part || typeof part !== "object" || part.type === "encrypted_content")
+        continue;
+      rememberText(texts, seen, part.text);
+      rememberText(texts, seen, part.stdout);
+      rememberText(texts, seen, part.stderr);
+    }
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  rememberText(texts, seen, value.text);
+  rememberText(texts, seen, value.stdout);
+  rememberText(texts, seen, value.stderr);
+  if (typeof value.content === "string" || Array.isArray(value.content))
+    rememberTextValue(texts, seen, value.content);
+}
+
+function commandLines(action) {
+  const lines = [];
+  for (const list of [action.command, action.commands]) {
+    if (Array.isArray(list)) {
+      const line = list.filter((part) => typeof part === "string").join(" ").trim();
+      if (line) lines.push(line);
+    } else if (typeof list === "string" && list.trim()) {
+      lines.push(list.trim());
+    }
+  }
+  return lines;
+}
+
+function rememberArguments(texts, seen, value) {
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+        value = parsed;
+      else {
+        rememberText(texts, seen, value);
+        return;
+      }
+    } catch {
+      rememberText(texts, seen, value);
+      return;
+    }
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  rememberText(texts, seen, value.query);
+  rememberTextValue(texts, seen, value.queries);
+}
+
+function stripOpaqueFields(value) {
+  if (Array.isArray(value)) return value.map(stripOpaqueFields);
+  if (!value || typeof value !== "object") return value;
+  const next = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (
+      key === "encrypted_content" ||
+      key === "encrypted_function_args" ||
+      key.startsWith("internal_")
+    )
+      continue;
+    next[key] = stripOpaqueFields(child);
+  }
+  return next;
+}
+
+function containsReadableText(value) {
+  if (typeof value === "string") return Boolean(value.trim());
+  if (Array.isArray(value)) return value.some(containsReadableText);
+  if (value && typeof value === "object")
+    return Object.values(value).some(containsReadableText);
+  return false;
+}
+
+function rememberTools(texts, seen, tools) {
+  if (!Array.isArray(tools) || !tools.length) return;
+  const stripped = stripOpaqueFields(tools);
+  if (!containsReadableText(stripped)) return;
+  rememberText(texts, seen, JSON.stringify(stripped));
+}
+
+// Text Grok can read off an item type it will not accept. The caller turns
+// these strings into a user message. Fields that 422 when forwarded
+// (encrypted blobs, internal metadata, image bytes) are not read.
+function droppedItemInputTexts(node) {
+  const texts = [];
+  const seen = new Set();
+  for (const key of [
+    "summary",
+    "content",
+    "text",
+    "message",
+    "input",
+    "output",
+    "query",
+    "revised_prompt",
+  ]) {
+    rememberTextValue(texts, seen, node[key]);
+  }
+  const action = node.action;
+  if (action && typeof action === "object" && !Array.isArray(action)) {
+    const lines = commandLines(action);
+    for (const line of lines) rememberText(texts, seen, line);
+    if (lines.length) rememberText(texts, seen, action.working_directory);
+    rememberText(texts, seen, action.query);
+    rememberTextValue(texts, seen, action.queries);
+    rememberText(texts, seen, action.url);
+    rememberText(texts, seen, action.pattern);
+  }
+  rememberArguments(texts, seen, node.arguments);
+  rememberTools(texts, seen, node.tools);
+  return texts;
+}
+
+function userInputTextMessage(texts) {
+  return whitelistInputNode({
+    type: "message",
+    role: "user",
+    content: texts.map((text) => ({ type: "input_text", text })),
+  });
+}
+
+function toProxyInputNode(node, map, state, salvage = false) {
   if (!node || typeof node !== "object") return node;
   if (Array.isArray(node)) {
     const items = [];
@@ -446,7 +588,14 @@ function toProxyInputNode(node, map, state) {
     }
   }
 
-  return whitelistInputNode(next);
+  const whitelisted = whitelistInputNode(next);
+  if (!salvage || isForwardedItem(whitelisted)) return whitelisted;
+  // Grok rejects these Codex item types. Keep the readable text as a user
+  // message, the same shape as a compaction summary. An item with nothing
+  // left but an encrypted blob, image bytes, or ids is dropped.
+  const texts = droppedItemInputTexts(next);
+  if (!texts.length) return DROP;
+  return userInputTextMessage(texts);
 }
 
 function isForwardedItem(item) {
@@ -461,14 +610,14 @@ function isForwardedItem(item) {
 
 function projectInput(input, map) {
   if (!Array.isArray(input)) {
-    const items = toProxyInputNode(input, map, { callIds: new Map() });
+    const items = toProxyInputNode(input, map, { callIds: new Map() }, true);
     return { items, pairs: [] };
   }
   const state = { callIds: new Map() };
   const pairs = [];
   for (const item of input) {
     const fingerprint = logicalFingerprint(item);
-    const next = toProxyInputNode(item, map, state);
+    const next = toProxyInputNode(item, map, state, true);
     if (!isForwardedItem(next)) continue;
     pairs.push({ fingerprint, item: next });
   }
