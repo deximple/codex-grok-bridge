@@ -341,6 +341,98 @@ test("keeps plain reasoning summaries but strips compaction and encrypted conten
   ]);
 });
 
+test("compaction summary strings survive as input text", () => {
+  for (const type of ["compaction", "compaction_summary", "context_compaction"]) {
+    const { request } = toProxyRequest({
+      input: [
+        {
+          type,
+          id: "cmp-1",
+          summary: "kept the plan and the open files",
+          encrypted_content: "opaque-openai-compaction",
+          encrypted_function_args: "opaque-args",
+          internal_chat_message_metadata_passthrough: { turn_id: "t1" },
+        },
+      ],
+      tools: [],
+    });
+    assert.deepEqual(request.input, [
+      {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "kept the plan and the open files" }],
+      },
+    ]);
+  }
+});
+
+test("drops a compaction item that only carries encrypted content", () => {
+  const { request } = toProxyRequest({
+    input: [
+      { type: "compaction", encrypted_content: "opaque-openai-compaction" },
+      {
+        type: "compaction_summary",
+        encrypted_content: "opaque-summary",
+        internal_chat_message_metadata_passthrough: { turn_id: "t1" },
+      },
+      {
+        type: "context_compaction",
+        id: "cmp-2",
+        encrypted_content: "opaque-context",
+        encrypted_function_args: "opaque-args",
+      },
+      { type: "compaction", summary: "   ", encrypted_content: "still-opaque" },
+      { role: "user", content: [{ type: "input_text", text: "hi" }] },
+    ],
+    tools: [],
+  });
+  assert.deepEqual(request.input, [
+    { role: "user", content: [{ type: "input_text", text: "hi" }] },
+  ]);
+});
+
+test("compaction forwarding leaves ordinary messages and tool items unchanged", () => {
+  const tools = [
+    {
+      type: "function",
+      name: "exec_command",
+      parameters: { type: "object", properties: {} },
+    },
+  ];
+  const ordinary = [
+    { role: "user", content: [{ type: "input_text", text: "continue" }] },
+    {
+      type: "function_call",
+      name: "exec_command",
+      arguments: "{\"cmd\":\"pwd\"}",
+      call_id: "call-1",
+    },
+    {
+      type: "function_call_output",
+      call_id: "call-1",
+      output: " /tmp\n",
+    },
+  ];
+  const baseline = toProxyRequest({ input: ordinary, tools });
+  const { request } = toProxyRequest({
+    input: [
+      {
+        type: "compaction",
+        summary: "prior context",
+        encrypted_content: "opaque",
+      },
+      ...ordinary,
+    ],
+    tools,
+  });
+  assert.deepEqual(request.input[0], {
+    type: "message",
+    role: "user",
+    content: [{ type: "input_text", text: "prior context" }],
+  });
+  assert.deepEqual(request.input.slice(1), baseline.request.input);
+});
+
 test("drops a reasoning item that carries no readable summary", () => {
   const { request } = toProxyRequest({
     input: [
