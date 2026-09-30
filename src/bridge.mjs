@@ -8,7 +8,8 @@ import {
   parseGrokResult,
   runGrok,
 } from "./cli-inference.mjs";
-import { relayProxySse } from "./proxy.mjs";
+import { emitProxySse, readRelayProxySse } from "./proxy.mjs";
+import { videoCallsFromParts, videoToolOutput } from "./videogen.mjs";
 import {
   applyCacheUsage,
   createPrefixMemory,
@@ -22,6 +23,43 @@ import { createSlots } from "./slots.mjs";
 import { catalogModelInfos, isGrokModel, MODEL_INFO } from "./models.mjs";
 
 export { MODEL_INFO };
+
+const VIDEO_FOLLOW_UPS = 2;
+
+async function relayWithVideo(options, output, map, usageBox, onClientByte) {
+  let body = options.body;
+  for (let step = 0; step <= VIDEO_FOLLOW_UPS; step += 1) {
+    const parts = await readRelayProxySse({ ...options, body }, output);
+    const calls =
+      process.env.GROK_BRIDGE_VIDEO_GEN === "off" ? [] : videoCallsFromParts(parts);
+    if (!calls.length || step === VIDEO_FOLLOW_UPS) {
+      await emitProxySse(parts, output, map, usageBox, onClientByte);
+      return;
+    }
+    // The videos API poll can sit for minutes. Keepalive is safe here: this
+    // upstream reply is finished, and nothing has been written to Codex yet.
+    onClientByte();
+    const additions = [];
+    for (const call of calls) {
+      const toolOutput = await videoToolOutput(call, options.video);
+      additions.push(
+        {
+          type: "function_call",
+          name: call.name,
+          call_id: call.call_id,
+          arguments: call.arguments,
+        },
+        {
+          type: "function_call_output",
+          name: call.name,
+          call_id: call.call_id,
+          output: toolOutput,
+        },
+      );
+    }
+    body = { ...body, input: [...body.input, ...additions] };
+  }
+}
 
 export function publicBridgeError(error, context = {}) {
   if (error instanceof GrokAuthError) return error.message;
@@ -165,7 +203,7 @@ export function createBridgeServer(options = {}) {
           },
         });
       } else {
-        const session = readGrokBearerToken(options.grokHome);
+        const session = options.grokSession ?? readGrokBearerToken(options.grokHome);
         // Grok takes input_image blocks natively; only unusable attachments
         // are swapped for an explanation, so one bad image cannot make the
         // upstream reject the whole conversation.
@@ -179,7 +217,7 @@ export function createBridgeServer(options = {}) {
         request.input = prefixes.reuse(convId, projected);
         const usageBox = {};
         try {
-          await relayProxySse(
+          await relayWithVideo(
             {
               token: session.token,
               userId: session.userId,
@@ -189,9 +227,6 @@ export function createBridgeServer(options = {}) {
               baseUrl: options.proxyBaseUrl,
               convId,
               sessionId: Array.isArray(threadId) ? threadId[0] : threadId,
-              onClientByte: () => {
-                responseStarted = true;
-              },
               onRetry: ({ attempt, kind }) =>
                 diagnostics.record({
                   event: "turn_retried",
@@ -199,10 +234,20 @@ export function createBridgeServer(options = {}) {
                   attempt,
                   elapsedMs: Date.now() - startedAt,
                 }),
+              video: {
+                token: session.token,
+                fetchImpl: options.videoFetch,
+                baseUrl: options.videoBaseUrl,
+                pause: options.videoPause,
+                signal: controller.signal,
+              },
             },
             res,
             map,
             usageBox,
+            () => {
+              responseStarted = true;
+            },
           );
         } finally {
           cacheUsage = usageBox.cacheUsage ?? null;

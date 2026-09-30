@@ -38,7 +38,7 @@ test("keeps Codex image generation tools and does not cap large catalogs", () =>
       },
     ],
   });
-  assert.equal(request.tools.length, 341);
+  assert.equal(request.tools.length, 342);
   assert.equal(
     request.tools.find((tool) => tool.type === "image_generation")?.quality,
     "high",
@@ -742,8 +742,12 @@ test("omits tool choice fields when the request has no tools", () => {
     tools: [],
   });
   // Grok's own image tool is always declared, so the model can generate an
-  // image without Codex offering a tool for it.
-  assert.deepEqual(request.tools, [{ type: "image_generation" }]);
+  // image without Codex offering a tool for it. The video function is the
+  // bridge's own tool and is not a Codex tool choice.
+  assert.deepEqual(
+    request.tools.map((tool) => tool.type === "function" ? tool.name : tool.type),
+    ["image_generation", "grok_bridge_generate_video"],
+  );
   assert.equal(request.tool_choice, undefined);
   assert.equal(request.parallel_tool_calls, undefined);
 });
@@ -884,14 +888,18 @@ test("image instructions tell the model not to follow Codex's OpenAI skill", () 
   assert.match(request.instructions, /do not read/i);
 
   const previous = process.env.GROK_BRIDGE_IMAGE_GEN;
+  const previousVideo = process.env.GROK_BRIDGE_VIDEO_GEN;
   try {
     process.env.GROK_BRIDGE_IMAGE_GEN = "off";
+    process.env.GROK_BRIDGE_VIDEO_GEN = "off";
     const off = toProxyRequest({ input: [], tools: [] }).request;
     assert.equal(off.instructions, TRANSPORT_PROVENANCE);
     assert.doesNotMatch(off.instructions, /OpenAI/);
   } finally {
     if (previous === undefined) delete process.env.GROK_BRIDGE_IMAGE_GEN;
     else process.env.GROK_BRIDGE_IMAGE_GEN = previous;
+    if (previousVideo === undefined) delete process.env.GROK_BRIDGE_VIDEO_GEN;
+    else process.env.GROK_BRIDGE_VIDEO_GEN = previousVideo;
   }
 });
 
@@ -907,15 +915,24 @@ test("Grok's image tool is declared once, and can be turned off", async () => {
     input: [],
     tools: [{ type: "image_generation", quality: "high" }],
   }).request;
-  assert.deepEqual(explicit.tools, [{ type: "image_generation", quality: "high" }]);
+  assert.equal(explicit.tools[0].type, "image_generation");
+  assert.equal(explicit.tools[0].quality, "high");
+  assert.equal(
+    explicit.tools.filter((tool) => tool.name === "grok_bridge_generate_video").length,
+    1,
+  );
 
   const previous = process.env.GROK_BRIDGE_IMAGE_GEN;
+  const previousVideo = process.env.GROK_BRIDGE_VIDEO_GEN;
   try {
     process.env.GROK_BRIDGE_IMAGE_GEN = "off";
+    process.env.GROK_BRIDGE_VIDEO_GEN = "off";
     assert.deepEqual(toProxyRequest({ input: [], tools: [] }).request.tools, []);
   } finally {
     if (previous === undefined) delete process.env.GROK_BRIDGE_IMAGE_GEN;
     else process.env.GROK_BRIDGE_IMAGE_GEN = previous;
+    if (previousVideo === undefined) delete process.env.GROK_BRIDGE_VIDEO_GEN;
+    else process.env.GROK_BRIDGE_VIDEO_GEN = previousVideo;
   }
 });
 
