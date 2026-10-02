@@ -618,13 +618,17 @@ export function voiceClientEvents(event, state = {}) {
 export const DELEGATION_SPEECH_WAIT_MS = 350;
 
 export function queueDelegationSpeech(state, event) {
-  if (event?.type !== "delegation.context.append" || event.channel === "commentary") return false;
+  if (event?.type !== "delegation.context.append") return false;
   const id = event.delegation_item_id;
   if (typeof id !== "string") return false;
-  if (!state.pendingCalls?.has(id) && !state.speechParts?.has(id)) return false;
   const text = textFromContent(event.content);
+  if (event.channel === "commentary" && text.startsWith("[STATUS]")) return false;
+  if (!state.pendingCalls?.has(id) && !state.speechParts?.has(id)) return false;
   if (!state.speechParts) state.speechParts = new Map();
-  if (text) state.speechParts.set(id, (state.speechParts.get(id) ?? "") + text);
+  const prior = state.speechParts.get(id) ?? { text: "", commentary: event.channel === "commentary" };
+  if (event.channel !== "commentary") prior.commentary = false;
+  if (text) prior.text += text;
+  state.speechParts.set(id, prior);
   return true;
 }
 
@@ -632,7 +636,25 @@ export function flushDelegationSpeech(state) {
   const parts = state.speechParts;
   if (!parts?.size) return [];
   const events = [];
-  for (const [id, text] of parts) {
+  for (const [id, record] of parts) {
+    const text = record.text ?? "";
+    if (record.commentary) {
+      if (state.pendingCalls?.has(id)) {
+        state.pendingCalls.delete(id);
+        events.push({
+          type: "conversation.item.create",
+          item: { type: "function_call_output", call_id: id, output: JSON.stringify(text) },
+        });
+      }
+      if (text) {
+        events.push({
+          type: "conversation.item.create",
+          item: { type: "message", role: "assistant", content: [{ type: "input_text", text }] },
+        });
+      }
+      events.push({ type: "response.create" });
+      continue;
+    }
     events.push(
       ...voiceClientEvents(
         {
@@ -738,8 +760,9 @@ export function startVoiceBridge({
   const holdsForIdleResponse = (event) => {
     const item = event?.item;
     return (
-      event?.type === "conversation.item.create" &&
-      (item?.type === "force_message" || item?.type === "function_call_output")
+      event?.type === "response.create" ||
+      (event?.type === "conversation.item.create" &&
+        (item?.type === "force_message" || item?.type === "function_call_output"))
     );
   };
   const playbackBusy = () => Boolean(state.playout?.length || state.pumping);

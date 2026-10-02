@@ -754,15 +754,30 @@ test("a streamed codex reply is spoken once", () => {
   assert.equal(spoken[1].item.type, "force_message");
   assert.equal(spoken[1].item.content[0].text, "AAAABBBB");
   assert.equal(state.pendingCalls.has("call-1"), false);
+  const quiet = { pendingCalls: new Set(["call-2"]) };
   assert.equal(
-    queueDelegationSpeech(state, {
+    queueDelegationSpeech(quiet, {
       type: "delegation.context.append",
       delegation_item_id: "call-2",
       channel: "commentary",
-      content: [{ type: "input_text", text: "quiet" }],
+      content: [{ type: "input_text", text: "[STATUS] reading" }],
     }),
     false,
   );
+  assert.equal(
+    queueDelegationSpeech(quiet, {
+      type: "delegation.context.append",
+      delegation_item_id: "call-2",
+      channel: "commentary",
+      content: [{ type: "input_text", text: "Renamed the helper." }],
+    }),
+    true,
+  );
+  const aside = flushDelegationSpeech(quiet);
+  assert.equal(aside[0].item.type, "function_call_output");
+  assert.equal(aside[1].item.type, "message");
+  assert.equal(aside[2].type, "response.create");
+  assert.equal(aside.some((event) => event.item?.type === "force_message"), false);
 });
 
 test("a short playout delay does not split the talkspurt", () => {
