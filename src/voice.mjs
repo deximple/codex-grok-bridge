@@ -376,10 +376,13 @@ export function appendFromRtp(send, payload, codec = { kind: "pcmu", payloadType
   });
 }
 
-function playoutGap(state, now) {
+// A late 20 ms timer is still one talkspurt. Only a real pause moves the clock,
+// or the helper treats the next packet as a new, late frame and can drop it.
+export function playoutGap(state, now) {
   if (state.lastSentAt == null) return 0;
   const frames = Math.floor((now - state.lastSentAt) / 20);
-  return Math.max(0, frames - 1);
+  if (frames < 4) return 0;
+  return frames - 1;
 }
 
 function writeAudio(track, state, payload, clockStep, forceMarker = false) {

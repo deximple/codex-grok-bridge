@@ -24,6 +24,7 @@ import {
   startVoiceBridge,
   voiceCallCount,
   mergeVoiceClientBurst,
+  playoutGap,
   voiceClientEvents,
   voiceSidebandEvent,
 } from "../src/voice.mjs";
@@ -689,6 +690,12 @@ test("a later voice turn keeps its own talkspurt marker", async () => {
   } finally {
     bridge.close();
   }
+});
+
+test("a short playout delay does not split the talkspurt", () => {
+  assert.equal(playoutGap({ lastSentAt: 1000 }, 1040), 0);
+  assert.equal(playoutGap({ lastSentAt: 1000 }, 1070), 0);
+  assert.ok(playoutGap({ lastSentAt: 1000 }, 1120) > 0);
 });
 
 test("a silent gap advances the voice playout clock", async () => {
