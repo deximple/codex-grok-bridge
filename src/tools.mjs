@@ -866,6 +866,16 @@ function rewriteResponseEvent(value, map, state) {
     if (cache) state.cacheUsage = cache;
   }
   if (
+    value.type === "response.function_call_arguments.delta" ||
+    value.type === "response.function_call_arguments.done"
+  ) {
+    const origin = originForResponseName(map, value.name);
+    if (origin) {
+      rememberProxyItem(value, origin, state);
+      value.name = origin.name;
+    }
+  }
+  if (
     typeof value.item === "object" &&
     value.item &&
     (value.type === "response.output_item.added" ||

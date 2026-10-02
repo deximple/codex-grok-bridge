@@ -1073,6 +1073,30 @@ test("rewrites streamed function names back to Codex namespaces", () => {
   assert.equal(payload.item.input, "*** Begin Patch");
 });
 
+test("restores the tool name on a streamed arguments event", () => {
+  const { tools, map } = flattenCodexTools([
+    {
+      type: "namespace",
+      name: "functions",
+      tools: [{ type: "custom", name: "apply_patch" }],
+    },
+  ]);
+  const block = rewriteSseBlock(
+    `event: response.function_call_arguments.done\ndata: ${JSON.stringify({
+      type: "response.function_call_arguments.done",
+      name: tools[0].name,
+      arguments: JSON.stringify({ input: "patch" }),
+      call_id: "c1",
+    })}`,
+    map,
+  );
+  const payload = JSON.parse(block.split("data: ")[1]);
+  assert.equal(payload.type, "response.function_call_arguments.done");
+  assert.equal(payload.name, "apply_patch");
+  assert.equal(payload.namespace, undefined);
+  assert.equal(payload.arguments, JSON.stringify({ input: "patch" }));
+});
+
 test("restores a custom tool call that used the Codex name", () => {
   const { map } = flattenCodexTools([
     {
