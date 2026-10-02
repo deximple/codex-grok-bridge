@@ -575,12 +575,19 @@ function toProxyInputNode(node, map, state, salvage = false) {
   if (next.type === "reasoning") {
     // Forward the summary and nothing else. Codex's own item id and null
     // content fields mean nothing to the upstream and only widen the surface
-    // for a schema rejection.
-    const summary = (Array.isArray(next.summary) ? next.summary : []).filter(
-      (part) => part && typeof part.text === "string" && part.text.trim(),
-    );
-    if (!summary.length) return DROP;
-    return whitelistInputNode({ type: "reasoning", summary });
+    // for a schema rejection. When the summary is empty, the plain text in
+    // content is the only readable reasoning left.
+    const readable = (parts) =>
+      (Array.isArray(parts) ? parts : []).filter(
+        (part) => part && typeof part.text === "string" && part.text.trim() && part.type !== "encrypted_content",
+      );
+    const summary = readable(next.summary);
+    const chosen = summary.length ? summary : readable(next.content);
+    if (!chosen.length) return DROP;
+    return whitelistInputNode({
+      type: "reasoning",
+      summary: chosen.map((part) => ({ type: "summary_text", text: part.text.trim() })),
+    });
   }
 
   if (next.type === "agent_message") {

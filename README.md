@@ -215,7 +215,9 @@ not read Codex’s `imagegen` skill and do not send the picture to OpenAI.
 
 ### Reasoning
 
-Plain-text summaries on Codex `reasoning` items are forwarded. Encrypted
+Plain-text summaries on Codex `reasoning` items are forwarded. When that
+summary is empty, plain text in the reasoning content is forwarded instead.
+Encrypted
 `encrypted_content` and Codex’s own item ids are stripped. This is so a
 multi-call turn can continue its own reasoning. The upstream has been observed
 to accept this shape. The same pass keeps only the fields Grok’s Responses
@@ -592,7 +594,8 @@ OpenAI로 보내지 말라는 뜻입니다. `GROK_BRIDGE_IMAGE_GEN=off`면 도�
 
 ### reasoning
 
-Codex `reasoning` 항목의 평문 요약은 상류로 전달합니다. 암호화된
+Codex `reasoning` 항목의 평문 요약은 상류로 전달합니다. 요약이 비어 있으면
+내용의 평문을 대신 전달합니다. 암호화된
 `encrypted_content`와 Codex 자체 아이템 id는 제거합니다. 여러 번 호출이 이어지는
 턴에서 모델이 자기 추론을 이어받게 하기 위한 것이며, 상류가 이 형태를 수락하는
 것을 확인했습니다. 같은 과정에서 아이템과 content part는 Grok Responses가

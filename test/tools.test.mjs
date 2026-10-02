@@ -501,6 +501,30 @@ test("compaction forwarding leaves ordinary messages and tool items unchanged", 
   assert.deepEqual(request.input.slice(1), baseline.request.input);
 });
 
+test("plain reasoning content is kept when the summary is empty", () => {
+  const { request } = toProxyRequest({
+    input: [
+      {
+        type: "reasoning",
+        id: "reason-2",
+        summary: [],
+        content: [
+          { type: "reasoning_text", text: "checked the failing test" },
+          { type: "encrypted_content", encrypted_content: "secret-encrypted" },
+        ],
+      },
+    ],
+    tools: [],
+  });
+  assert.deepEqual(request.input, [
+    {
+      type: "reasoning",
+      summary: [{ type: "summary_text", text: "checked the failing test" }],
+    },
+  ]);
+  assert.equal(JSON.stringify(request.input).includes("secret-encrypted"), false);
+});
+
 test("drops a reasoning item that carries no readable summary", () => {
   const { request } = toProxyRequest({
     input: [
