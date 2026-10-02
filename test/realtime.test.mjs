@@ -504,6 +504,30 @@ test("a sideband frame bundled with the upgrade reaches xAI", async () => {
   }
 });
 
+test("a sideband request waits until the voice socket is open", () => {
+  const sent = [];
+  const socket = {
+    readyState: 0,
+    send(data) {
+      sent.push(JSON.parse(String(data)));
+    },
+  };
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} } },
+    socket,
+  });
+  try {
+    bridge.sendClient({ type: "response.create" });
+    assert.equal(sent.length, 0);
+    socket.readyState = 1;
+    socket.onopen();
+    assert.equal(sent[0].type, "session.update");
+    assert.equal(sent.some((event) => event.type === "response.create"), true);
+  } finally {
+    bridge.close();
+  }
+});
+
 test("voice audio uses append and output_audio.delta", () => {
   const sent = [];
   const track = {

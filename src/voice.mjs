@@ -663,6 +663,13 @@ export function startVoiceBridge({
   return {
     onRtp,
     onUpstream,
+    sendClient(event) {
+      try {
+        send(event);
+      } catch {
+        // The xAI socket may already be closed.
+      }
+    },
     close() {
       try {
         opus?.delete?.();
@@ -715,11 +722,7 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
           return;
         }
         for (const outbound of voiceClientEvents(event, voiceState)) {
-          try {
-            socket?.send(JSON.stringify(outbound));
-          } catch {
-            // The xAI socket may already be closed.
-          }
+          bridge?.sendClient?.(outbound);
         }
       });
       for (const text of pendingEvents.splice(0)) sock.write(encodeServerFrame(0x1, text));
