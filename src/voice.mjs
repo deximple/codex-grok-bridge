@@ -79,6 +79,14 @@ function callBodyText(body) {
   return Buffer.isBuffer(body) ? body.toString("utf8") : String(body ?? "");
 }
 
+function partHeaderEnd(part) {
+  const crlf = part.indexOf("\r\n\r\n");
+  const lf = part.indexOf("\n\n");
+  if (crlf === -1) return lf === -1 ? null : { index: lf, length: 2 };
+  if (lf === -1 || crlf < lf) return { index: crlf, length: 4 };
+  return { index: lf, length: 2 };
+}
+
 function partFromCallBody(body, contentType, name) {
   const text = callBodyText(body);
   const type = String(contentType ?? "");
@@ -87,12 +95,13 @@ function partFromCallBody(body, contentType, name) {
   if (!boundaryMatch) return null;
   const boundary = boundaryMatch[1];
   for (const part of text.split(`--${boundary}`)) {
-    const headerEnd = part.indexOf("\r\n\r\n");
-    if (headerEnd === -1) continue;
-    const headers = part.slice(0, headerEnd).toLowerCase();
+    const header = partHeaderEnd(part);
+    if (!header) continue;
+    const headers = part.slice(0, header.index).toLowerCase();
     if (!headers.includes(`name="${name}"`) && !headers.includes(`name=${name}`)) continue;
-    let value = part.slice(headerEnd + 4);
+    let value = part.slice(header.index + header.length);
     if (value.endsWith("\r\n")) value = value.slice(0, -2);
+    else if (value.endsWith("\n")) value = value.slice(0, -1);
     return value;
   }
   return null;

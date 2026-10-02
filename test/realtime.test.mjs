@@ -38,6 +38,8 @@ import {
   ackFillerFromCallBody,
   developerTextFromCallBody,
   initialItemsFromCallBody,
+  instructionsFromCallBody,
+  offerFromCallBody,
 } from "../src/voice.mjs";
 
 const BRIDGE = "bridge-token";
@@ -1702,6 +1704,26 @@ test("developer voice history stays in the session instructions", () => {
   } finally {
     bridge.close();
   }
+});
+
+test("a line-feed multipart call body still yields the sdp and the instructions", () => {
+  const boundary = "lf-bound";
+  const sdp = "v=0\no=- 1 1 IN IP4 127.0.0.1\n";
+  const body = [
+    `--${boundary}`,
+    'Content-Disposition: form-data; name="sdp"',
+    "",
+    sdp,
+    `--${boundary}`,
+    'Content-Disposition: form-data; name="session"',
+    "",
+    '{"instructions":"Stay on the repo."}',
+    `--${boundary}--`,
+    "",
+  ].join("\n");
+  const type = `multipart/form-data; boundary=${boundary}`;
+  assert.equal(offerFromCallBody(body, type), sdp);
+  assert.equal(instructionsFromCallBody(body, type), "Stay on the repo.");
 });
 
 test("a Codex multipart call body is answered from its sdp part", async () => {
