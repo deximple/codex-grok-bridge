@@ -619,6 +619,48 @@ test("user speech stops queued voice playback", async () => {
   }
 });
 
+test("user speech truncates the assistant item to the audio already sent", () => {
+  const sent = [];
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: {
+      readyState: 1,
+      send(data) {
+        sent.push(JSON.parse(String(data)));
+      },
+    },
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  try {
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        item_id: "item-1",
+        content_index: 0,
+        delta: Buffer.alloc(960 * 4).toString("base64"),
+      }),
+    );
+    assert.equal(track.rtp.length, 1);
+    bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+    const truncated = sent.filter((event) => event.type === "conversation.item.truncate");
+    assert.equal(truncated.length, 1);
+    assert.equal(truncated[0].item_id, "item-1");
+    assert.equal(truncated[0].content_index, 0);
+    assert.equal(truncated[0].audio_end_ms, 20);
+    bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+    assert.equal(sent.filter((event) => event.type === "conversation.item.truncate").length, 1);
+  } finally {
+    bridge.close();
+  }
+});
+
 test("a tool reply waits until the user stops speaking", () => {
   const sent = [];
   const socket = {

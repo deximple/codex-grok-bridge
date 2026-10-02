@@ -414,6 +414,8 @@ function writeAudio(track, state, payload, clockStep, forceMarker = false) {
   state.sequence = sequence;
   state.timestamp = timestamp;
   state.lastSentAt = now;
+  const rate = state.kind === "opus" ? 48000 : 8000;
+  state.playedMs = (state.playedMs ?? 0) + Math.round((clockStep / rate) * 1000);
 }
 
 export function voiceAudioDelta(event) {
@@ -855,7 +857,18 @@ export function startVoiceBridge({
       sidebandState.conversationId = event.conversation.id;
     }
     if (event?.type === "session.updated") markSessionReady();
-    if (event?.type === "input_audio_buffer.speech_started") stopPlayback(state);
+    if (event?.type === "input_audio_buffer.speech_started") {
+      stopPlayback(state);
+      if (state.audioItemId && state.playedMs > 0 && !state.truncated) {
+        state.truncated = true;
+        send({
+          type: "conversation.item.truncate",
+          item_id: state.audioItemId,
+          content_index: state.audioContentIndex ?? 0,
+          audio_end_ms: state.playedMs,
+        });
+      }
+    }
     if (event?.type === "input_audio_buffer.speech_stopped") {
       state.userSpeaking = false;
       releaseHeld();
@@ -863,6 +876,12 @@ export function startVoiceBridge({
     const spoken = voiceAudioDelta(event);
     if (spoken) {
       if (!state.dropping) {
+        if (typeof event.item_id === "string" && event.item_id !== state.audioItemId) {
+          state.audioItemId = event.item_id;
+          state.audioContentIndex = Number.isInteger(event.content_index) ? event.content_index : 0;
+          state.playedMs = 0;
+          state.truncated = false;
+        }
         try {
           playbackFromDelta(track, state, spoken);
         } catch {
