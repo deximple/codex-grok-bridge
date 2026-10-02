@@ -344,11 +344,53 @@ function sessionUpdate() {
       instructions: "Say ready.",
       turn_detection: { type: "server_vad" },
       audio: {
-        input: { format: { type: "audio/pcm", rate: XAI_PCM_RATE } },
+        input: {
+          format: { type: "audio/pcm", rate: XAI_PCM_RATE },
+          transcription: { model: "grok-transcribe" },
+        },
         output: { format: { type: "audio/pcm", rate: XAI_PCM_RATE } },
       },
     },
   };
+}
+
+// Desktop v3 reads frameless sideband events. xAI voice uses different names.
+// Cumulative user captions are reduced to the new suffix. A rewrite that no
+// longer extends the previous caption is sent as the completed turn text.
+export function voiceSidebandEvent(event, state) {
+  const type = event?.type;
+  if (type === "response.output_audio_transcript.delta" && typeof event.delta === "string" && event.delta) {
+    return { type: "output_transcript.added", item: { text: event.delta } };
+  }
+  if (type === "response.output_audio_transcript.done" && typeof event.transcript === "string" && event.transcript) {
+    return { type: "turn.done", turn: { role: "assistant", transcript: event.transcript } };
+  }
+  if (type === "conversation.item.input_audio_transcription.updated" && typeof event.transcript === "string") {
+    const next = event.transcript;
+    const prev = state.inputTranscript ?? "";
+    state.inputTranscript = next;
+    if (!next || next === prev) return null;
+    if (next.startsWith(prev)) {
+      const suffix = next.slice(prev.length);
+      return suffix ? { type: "input_transcript.added", item: { text: suffix } } : null;
+    }
+    return { type: "turn.done", turn: { role: "user", transcript: next } };
+  }
+  if (
+    type === "conversation.item.input_audio_transcription.completed" &&
+    typeof event.transcript === "string" &&
+    event.transcript
+  ) {
+    state.inputTranscript = "";
+    return { type: "turn.done", turn: { role: "user", transcript: event.transcript } };
+  }
+  if ((type === "session.created" || type === "session.updated") && typeof event.session?.id === "string") {
+    const session = { id: event.session.id };
+    if (typeof event.session.instructions === "string") session.instructions = event.session.instructions;
+    return { type: "session.updated", session };
+  }
+  if (type === "error") return event;
+  return null;
 }
 
 export function startVoiceBridge({
@@ -368,6 +410,7 @@ export function startVoiceBridge({
     pending: Buffer.alloc(0),
   };
   const queued = [];
+  const sidebandState = { inputTranscript: "" };
   let opened = socket.readyState === 1;
   const send = (event) => {
     const text = JSON.stringify(event);
@@ -411,7 +454,8 @@ export function startVoiceBridge({
       }
       return;
     }
-    onEvent?.(typeof raw === "string" ? raw : JSON.stringify(event));
+    const sideband = voiceSidebandEvent(event, sidebandState);
+    if (sideband) onEvent?.(JSON.stringify(sideband));
   };
   if (typeof track.onReceiveRtp?.subscribe === "function") track.onReceiveRtp.subscribe(onRtp);
   socket.onopen = flush;

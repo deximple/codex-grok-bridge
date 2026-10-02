@@ -22,6 +22,7 @@ import {
   rememberLocalCall,
   startVoiceBridge,
   voiceCallCount,
+  voiceSidebandEvent,
 } from "../src/voice.mjs";
 
 const BRIDGE = "bridge-token";
@@ -414,6 +415,7 @@ test("a rejected xAI offer is answered by werift and bridged to the voice socket
         assert.equal(sent[0].type, "session.update");
         assert.equal(sent[0].session.voice, "eve");
         assert.equal(sent[0].session.audio.input.format.rate, 24000);
+        assert.equal(sent[0].session.audio.input.transcription.model, "grok-transcribe");
         assert.equal(sent[0].session.audio.output.format.type, "audio/pcm");
       },
     );
@@ -625,7 +627,9 @@ test("voice sideband relays control events and answers pings", async () => {
         const frames = [];
         live = await rawUpgrade(port, `/v1/live/${id}`, {}, false);
         live.socket.on("data", (chunk) => frames.push(chunk));
-        sockets[0].onmessage({ data: JSON.stringify({ type: "session.created" }) });
+        sockets[0].onmessage({
+          data: JSON.stringify({ type: "session.created", session: { id: "sess-1", instructions: "Say ready." } }),
+        });
         live.socket.write(maskedClientText(JSON.stringify({ type: "response.create" })));
         const cancel = JSON.stringify({ type: "response.cancel" });
         live.socket.write(maskedClientText(cancel.slice(0, 8), 0x1, false));
@@ -640,7 +644,8 @@ test("voice sideband relays control events and answers pings", async () => {
           };
           check();
         });
-        assert.equal(inbound.toString("utf8").includes("session.created"), true);
+        assert.equal(inbound.toString("utf8").includes('"type":"session.updated"'), true);
+        assert.equal(inbound.toString("utf8").includes("sess-1"), true);
         assert.equal(sockets[0].sent.some((line) => line.includes("response.create")), true);
         assert.equal(sockets[0].sent.filter((line) => line.includes("response.cancel")).length, 1);
         assert.equal(inbound.includes(Buffer.from([0x8a])), true);
@@ -748,6 +753,37 @@ test("a host-only answer opens the offered event channel", async () => {
   });
   assert.equal(out.includes("OPEN"), true);
   assert.equal(code, 0);
+});
+
+test("xAI voice events become the desktop v3 sideband events", () => {
+  const state = { inputTranscript: "" };
+  assert.deepEqual(voiceSidebandEvent({ type: "response.output_audio_transcript.delta", delta: "Hi" }, state), {
+    type: "output_transcript.added",
+    item: { text: "Hi" },
+  });
+  assert.deepEqual(
+    voiceSidebandEvent({ type: "response.output_audio_transcript.done", transcript: "Hi there" }, state),
+    { type: "turn.done", turn: { role: "assistant", transcript: "Hi there" } },
+  );
+  assert.deepEqual(
+    voiceSidebandEvent({ type: "conversation.item.input_audio_transcription.updated", transcript: "hel" }, state),
+    { type: "input_transcript.added", item: { text: "hel" } },
+  );
+  assert.deepEqual(
+    voiceSidebandEvent({ type: "conversation.item.input_audio_transcription.updated", transcript: "hello" }, state),
+    { type: "input_transcript.added", item: { text: "lo" } },
+  );
+  assert.deepEqual(
+    voiceSidebandEvent({ type: "conversation.item.input_audio_transcription.updated", transcript: "hallo" }, state),
+    { type: "turn.done", turn: { role: "user", transcript: "hallo" } },
+  );
+  assert.deepEqual(
+    voiceSidebandEvent({ type: "conversation.item.input_audio_transcription.completed", transcript: "hallo" }, state),
+    { type: "turn.done", turn: { role: "user", transcript: "hallo" } },
+  );
+  assert.equal(state.inputTranscript, "");
+  assert.equal(voiceSidebandEvent({ type: "conversation.created" }, state), null);
+  assert.deepEqual(voiceSidebandEvent({ type: "error", error: { message: "nope" } }, state).type, "error");
 });
 
 test("opus rtp is appended as pcm and playback is opus", () => {
