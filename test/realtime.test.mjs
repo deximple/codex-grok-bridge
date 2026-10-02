@@ -580,6 +580,74 @@ test("closing the v3 sideband hangs up the voice peer", async () => {
   }
 });
 
+function maskedClientText(text) {
+  const payload = Buffer.from(text);
+  const mask = Buffer.from([1, 2, 3, 4]);
+  const masked = Buffer.from(payload);
+  for (let i = 0; i < masked.length; i += 1) masked[i] ^= mask[i % 4];
+  return Buffer.concat([Buffer.from([0x81, 0x80 | payload.length]), mask, masked]);
+}
+
+test("voice sideband relays control events and answers pings", async () => {
+  const offerer = new RTCPeerConnection({
+    iceServers: [],
+    iceUseIpv4: true,
+    iceUseIpv6: false,
+    codecs: { audio: [useOPUS()] },
+  });
+  offerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+  await offerer.setLocalDescription(await offerer.createOffer());
+  const sockets = [];
+  let live;
+  try {
+    await withServer(
+      {
+        realtimeFetch: async () =>
+          new Response("no", { status: 403, headers: { "content-type": "text/plain" } }),
+        voiceWebSocket() {
+          const sent = [];
+          const socket = {
+            readyState: 1,
+            sent,
+            send(data) {
+              sent.push(String(data));
+            },
+            close() {},
+          };
+          sockets.push(socket);
+          return socket;
+        },
+      },
+      async (port) => {
+        const answered = await postRaw(port, "/v1/realtime/calls", offerer.localDescription.sdp);
+        const id = answered.headers.location.split("/").pop();
+        const frames = [];
+        live = await rawUpgrade(port, `/v1/live/${id}`, {}, false);
+        live.socket.on("data", (chunk) => frames.push(chunk));
+        sockets[0].onmessage({ data: JSON.stringify({ type: "session.created" }) });
+        live.socket.write(maskedClientText(JSON.stringify({ type: "response.create" })));
+        live.socket.write(Buffer.from([0x89, 0x80, 9, 9, 9, 9]));
+        const inbound = await new Promise((resolve) => {
+          const started = Date.now();
+          const check = () => {
+            const buf = Buffer.concat(frames);
+            if (buf.includes(Buffer.from([0x8a])) || Date.now() - started > 500) resolve(buf);
+            else setTimeout(check, 10);
+          };
+          check();
+        });
+        assert.equal(inbound.toString("utf8").includes("session.created"), true);
+        assert.equal(sockets[0].sent.some((line) => line.includes("response.create")), true);
+        assert.equal(inbound.includes(Buffer.from([0x8a])), true);
+      },
+    );
+  } finally {
+    live?.socket.destroy();
+    closeVoiceCalls();
+    await offerer.close();
+  }
+});
+
 test("opus rtp is appended as pcm and playback is opus", () => {
   const encoder = new OpusScript(48000, 2, OpusScript.Application.AUDIO);
   const encoded = encoder.encode(Buffer.alloc(960 * 4), 960);

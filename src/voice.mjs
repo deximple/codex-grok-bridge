@@ -97,6 +97,50 @@ export function isLocalVoiceSideband(url) {
   return callIdIn(url) != null;
 }
 
+export function encodeServerFrame(opcode, payload) {
+  const data = Buffer.isBuffer(payload) ? payload : Buffer.from(String(payload));
+  let header;
+  if (data.length < 126) header = Buffer.from([0x80 | opcode, data.length]);
+  else header = Buffer.from([0x80 | opcode, 126, data.length >> 8, data.length & 0xff]);
+  return Buffer.concat([header, data]);
+}
+
+function attachClientFrames(socket, onText) {
+  let buf = Buffer.alloc(0);
+  socket.on("data", (chunk) => {
+    buf = Buffer.concat([buf, chunk]);
+    while (buf.length >= 2) {
+      const opcode = buf[0] & 0x0f;
+      const masked = (buf[1] & 0x80) !== 0;
+      let length = buf[1] & 0x7f;
+      let offset = 2;
+      if (length === 126) {
+        if (buf.length < 4) return;
+        length = buf.readUInt16BE(2);
+        offset = 4;
+      } else if (length === 127) return;
+      const maskLen = masked ? 4 : 0;
+      if (buf.length < offset + maskLen + length) return;
+      let payload = buf.subarray(offset + maskLen, offset + maskLen + length);
+      if (masked) {
+        const mask = buf.subarray(offset, offset + 4);
+        payload = Buffer.from(payload);
+        for (let i = 0; i < payload.length; i += 1) payload[i] ^= mask[i % 4];
+      }
+      buf = buf.subarray(offset + maskLen + length);
+      if (opcode === 0x8) {
+        socket.end(encodeServerFrame(0x8, Buffer.alloc(0)));
+        return;
+      }
+      if (opcode === 0x9) {
+        socket.write(encodeServerFrame(0xa, payload));
+        continue;
+      }
+      if (opcode === 0x1) onText(payload.toString("utf8"));
+    }
+  });
+}
+
 export function acceptLocalSideband(socket, key, url) {
   const accept = createHash("sha1")
     .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
@@ -108,11 +152,13 @@ export function acceptLocalSideband(socket, key, url) {
       `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
   );
   const id = callIdIn(url);
-  const hangup = () => sessionsById.get(id)?.close();
-  socket.on("data", () => {});
+  const session = sessionsById.get(id);
+  const hangup = () => session?.close();
   socket.on("error", () => {});
   socket.on("close", hangup);
   socket.on("end", hangup);
+  if (session?.attachSideband) session.attachSideband(socket);
+  else socket.on("data", () => {});
   socket.resume();
 }
 
@@ -252,7 +298,12 @@ function sessionUpdate() {
   };
 }
 
-export function startVoiceBridge({ track, socket, codec = { kind: "pcmu", payloadType: 0 } }) {
+export function startVoiceBridge({
+  track,
+  socket,
+  codec = { kind: "pcmu", payloadType: 0 },
+  onEvent,
+}) {
   const opus = codec.kind === "opus" ? createOpus() : null;
   const state = {
     sequence: 0,
@@ -299,12 +350,15 @@ export function startVoiceBridge({ track, socket, codec = { kind: "pcmu", payloa
     } catch {
       return;
     }
-    if (event?.type !== "response.output_audio.delta" || typeof event.delta !== "string") return;
-    try {
-      playbackFromDelta(track, state, event.delta);
-    } catch {
-      // The peer may not be connected yet. Keep the socket.
+    if (event?.type === "response.output_audio.delta" && typeof event.delta === "string") {
+      try {
+        playbackFromDelta(track, state, event.delta);
+      } catch {
+        // The peer may not be connected yet. Keep the socket.
+      }
+      return;
     }
+    onEvent?.(typeof raw === "string" ? raw : JSON.stringify(event));
   };
   if (typeof track.onReceiveRtp?.subscribe === "function") track.onReceiveRtp.subscribe(onRtp);
   socket.onopen = flush;
@@ -349,7 +403,27 @@ export async function answerVoiceCall({ offer, token, webSocketFactory }) {
     }
     pc.close().catch(() => {});
   };
-  const session = { close, id: null };
+  const pendingEvents = [];
+  let sidebandSocket = null;
+  const session = {
+    close,
+    id: null,
+    attachSideband(sock) {
+      sidebandSocket = sock;
+      attachClientFrames(sock, (text) => {
+        try {
+          socket?.send(text);
+        } catch {
+          // The xAI socket may already be closed.
+        }
+      });
+      for (const text of pendingEvents.splice(0)) sock.write(encodeServerFrame(0x1, text));
+    },
+  };
+  const noteEvent = (text) => {
+    if (sidebandSocket && !sidebandSocket.destroyed) sidebandSocket.write(encodeServerFrame(0x1, text));
+    else pendingEvents.push(text);
+  };
   try {
     pc.addTrack(track);
     await pc.setRemoteDescription({ type: "offer", sdp: offer });
@@ -364,7 +438,12 @@ export async function answerVoiceCall({ offer, token, webSocketFactory }) {
     sessionsById.set(id, session);
     socket = (webSocketFactory ?? openVoiceSocket)(VOICE_SOCKET_URL, token);
     socket.onerror = () => {};
-    bridge = startVoiceBridge({ track, socket, codec: audioCodecFromSdp(sdp) });
+    bridge = startVoiceBridge({
+      track,
+      socket,
+      codec: audioCodecFromSdp(sdp),
+      onEvent: noteEvent,
+    });
     active.add(session);
     return { sdp, location: `/v1/realtime/calls/${id}`, close };
   } catch (error) {
