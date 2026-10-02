@@ -59,7 +59,8 @@ function monoToStereo(pcm) {
   return stereo;
 }
 
-export function rememberLocalCall(id = `local-${randomUUID()}`) {
+// Codex reads Location for rtc_* or a 36-character UUID and rejects anything else.
+export function rememberLocalCall(id = randomUUID()) {
   localCalls.add(id);
   return id;
 }

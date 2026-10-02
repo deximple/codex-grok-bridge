@@ -404,7 +404,10 @@ test("a rejected xAI offer is answered by werift and bridged to the voice socket
         assert.equal(sdp.startsWith("v=0"), true);
         assert.equal(sdp.includes("a=fingerprint:"), true);
         assert.equal(sdp.includes("Team is not authorized"), false);
-        assert.match(answered.headers.location, /^\/v1\/realtime\/calls\/local-/);
+        assert.match(
+          answered.headers.location,
+          /^\/v1\/realtime\/calls\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+        );
         const sent = sockets[0].sent.map((line) => JSON.parse(line));
         assert.equal(sent[0].type, "session.update");
         assert.equal(sent[0].session.voice, "eve");
