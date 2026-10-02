@@ -655,6 +655,42 @@ test("a live-sized voice delta is played as opus", async () => {
   bridge.close();
 });
 
+test("a playback frame is retried when the peer is not ready", async () => {
+  let fail = true;
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      if (fail) throw new Error("not connected");
+      this.rtp.push(packet);
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: { readyState: 1, send() {} },
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  try {
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        delta: Buffer.alloc(960).toString("base64"),
+      }),
+    );
+    assert.equal(track.rtp.length, 0);
+    fail = false;
+    const deadline = Date.now() + 500;
+    while (track.rtp.length < 1 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(track.rtp.length >= 1, true);
+    assert.equal(track.rtp[0].header.marker, true);
+    assert.equal(track.rtp[0].header.sequenceNumber, 1);
+  } finally {
+    bridge.close();
+  }
+});
+
 test("a dropped voice socket tells the desktop", () => {
   const seen = [];
   const socket = { readyState: 1, send() {} };

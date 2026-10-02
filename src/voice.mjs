@@ -378,22 +378,23 @@ export function appendFromRtp(send, payload, codec = { kind: "pcmu", payloadType
 
 function writeAudio(track, state, payload, clockStep) {
   if (payload.length === 0) return;
-  const marker = !state.talking;
-  state.talking = true;
-  state.sequence = (state.sequence + 1) & 0xffff;
-  state.timestamp = (state.timestamp + clockStep) >>> 0;
+  const sequence = (state.sequence + 1) & 0xffff;
+  const timestamp = (state.timestamp + clockStep) >>> 0;
   track.writeRtp(
     new RtpPacket(
       new RtpHeader({
-        marker,
+        marker: !state.talking,
         payloadType: state.payloadType,
-        sequenceNumber: state.sequence,
-        timestamp: state.timestamp,
+        sequenceNumber: sequence,
+        timestamp,
         ssrc: state.ssrc,
       }),
       payload,
     ),
   );
+  state.talking = true;
+  state.sequence = sequence;
+  state.timestamp = timestamp;
 }
 
 export function playbackFromDelta(track, state, delta) {
@@ -420,18 +421,7 @@ function enqueueAudio(state, payload, clockStep) {
   state.playout.push({ payload, clockStep });
 }
 
-function kickAudio(track, state) {
-  if (state.pumping) return;
-  const frame = state.playout?.shift();
-  if (!frame) {
-    if (state.endTalk) state.talking = false;
-    return;
-  }
-  writeAudio(track, state, frame.payload, frame.clockStep);
-  if (!state.playout.length) {
-    if (state.endTalk) state.talking = false;
-    return;
-  }
+function scheduleAudio(track, state) {
   state.pumping = true;
   const timer = setTimeout(() => {
     state.pumping = false;
@@ -440,6 +430,27 @@ function kickAudio(track, state) {
   }, 20);
   timer.unref?.();
   state.playoutTimer = timer;
+}
+
+function kickAudio(track, state) {
+  if (state.pumping) return;
+  const frame = state.playout?.[0];
+  if (!frame) {
+    if (state.endTalk) state.talking = false;
+    return;
+  }
+  try {
+    writeAudio(track, state, frame.payload, frame.clockStep);
+  } catch {
+    scheduleAudio(track, state);
+    return;
+  }
+  state.playout.shift();
+  if (!state.playout.length) {
+    if (state.endTalk) state.talking = false;
+    return;
+  }
+  scheduleAudio(track, state);
 }
 
 function flushPlayback(track, state) {
