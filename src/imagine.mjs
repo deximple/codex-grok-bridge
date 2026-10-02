@@ -44,12 +44,19 @@ function aspectFromSize(size) {
   return SIZE_ASPECT[size.trim()] ?? "";
 }
 
+function imageCount(value) {
+  const n = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
+  if (!Number.isInteger(n) || n < 1) return 1;
+  return Math.min(n, 10);
+}
+
 function applyImageOptions(payload, input) {
   const aspect = aspectFromSize(input?.size);
   if (aspect) payload.aspect_ratio = aspect;
   if (input?.quality === "high") payload.resolution = "2k";
   else if (input?.quality === "low") payload.resolution = "1k";
   else delete payload.resolution;
+  payload.n = imageCount(input?.n);
   return payload;
 }
 

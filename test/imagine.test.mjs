@@ -69,6 +69,9 @@ test("generation rewrites Codex's image body onto the Imagine API", () => {
   assert.equal(imagineGenerationBody({ prompt: "sharp", quality: "high" }).resolution, "2k");
   assert.equal(imagineGenerationBody({ prompt: "draft", quality: "low" }).resolution, "1k");
   assert.equal(Object.hasOwn(imagineGenerationBody({ prompt: "auto", quality: "auto" }), "resolution"), false);
+  assert.equal(imagineGenerationBody({ prompt: "four", n: 4 }).n, 4);
+  assert.equal(imagineGenerationBody({ prompt: "many", n: 99 }).n, 10);
+  assert.equal(imagineGenerationBody({ prompt: "none", n: 0 }).n, 1);
 });
 
 test("edits map image_url references and refuse OpenAI file ids", () => {
