@@ -214,6 +214,31 @@ test("a 401 from the videos API is a tool error and the turn continues", async (
   assertNoBearer(text);
 });
 
+test("a finished video withheld by moderation is explained", async () => {
+  const output = await videoToolOutput(
+    {
+      name: GROK_VIDEO_TOOL_NAME,
+      call_id: "c",
+      arguments: JSON.stringify({ prompt: "waves" }),
+    },
+    {
+      token: TOKEN,
+      pause: async () => {},
+      fetchImpl: async (_url, init) => {
+        if (init.method === "POST") {
+          return new Response(JSON.stringify({ request_id: "req_mod" }), { status: 200 });
+        }
+        return new Response(
+          JSON.stringify({ status: "done", video: { respect_moderation: false } }),
+          { status: 200 },
+        );
+      },
+    },
+  );
+  assert.equal(output, "Video generation finished, but moderation withheld the URL.");
+  assertNoBearer(output);
+});
+
 test("video tool output does not echo the bearer", async () => {
   const output = await videoToolOutput(
     {

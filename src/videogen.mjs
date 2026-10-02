@@ -126,9 +126,16 @@ export async function generateVideo(options) {
     const status = poll.body?.status;
     if (status === "done") {
       const url = poll.body?.video?.url;
-      if (typeof url !== "string" || !url)
-        throw new Error("Video generation finished without a URL.");
-      return url;
+      if (typeof url === "string" && url) return url;
+      const withheld =
+        poll.body?.respect_moderation === false ||
+        poll.body?.video?.respect_moderation === false;
+      if (withheld) {
+        const error = new Error("Video generation was withheld by moderation.");
+        error.moderation = true;
+        throw error;
+      }
+      throw new Error("Video generation finished without a URL.");
     }
     if (status === "failed" || status === "expired")
       throw new Error(`Video generation ${status}.`);
@@ -158,6 +165,8 @@ export async function videoToolOutput(call, options) {
     const status = Number(error?.status) || 0;
     if (status === 401 || status === 403)
       return `Video generation failed (${status}).`;
+    if (error?.moderation)
+      return "Video generation finished, but moderation withheld the URL.";
     return "Video generation failed.";
   }
 }
