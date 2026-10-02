@@ -580,12 +580,12 @@ test("closing the v3 sideband hangs up the voice peer", async () => {
   }
 });
 
-function maskedClientText(text) {
+function maskedClientText(text, opcode = 0x1, fin = true) {
   const payload = Buffer.from(text);
   const mask = Buffer.from([1, 2, 3, 4]);
   const masked = Buffer.from(payload);
   for (let i = 0; i < masked.length; i += 1) masked[i] ^= mask[i % 4];
-  return Buffer.concat([Buffer.from([0x81, 0x80 | payload.length]), mask, masked]);
+  return Buffer.concat([Buffer.from([(fin ? 0x80 : 0) | opcode, 0x80 | payload.length]), mask, masked]);
 }
 
 test("voice sideband relays control events and answers pings", async () => {
@@ -626,6 +626,9 @@ test("voice sideband relays control events and answers pings", async () => {
         live.socket.on("data", (chunk) => frames.push(chunk));
         sockets[0].onmessage({ data: JSON.stringify({ type: "session.created" }) });
         live.socket.write(maskedClientText(JSON.stringify({ type: "response.create" })));
+        const cancel = JSON.stringify({ type: "response.cancel" });
+        live.socket.write(maskedClientText(cancel.slice(0, 8), 0x1, false));
+        live.socket.write(maskedClientText(cancel.slice(8), 0x0, true));
         live.socket.write(Buffer.from([0x89, 0x80, 9, 9, 9, 9]));
         const inbound = await new Promise((resolve) => {
           const started = Date.now();
@@ -638,6 +641,7 @@ test("voice sideband relays control events and answers pings", async () => {
         });
         assert.equal(inbound.toString("utf8").includes("session.created"), true);
         assert.equal(sockets[0].sent.some((line) => line.includes("response.create")), true);
+        assert.equal(sockets[0].sent.filter((line) => line.includes("response.cancel")).length, 1);
         assert.equal(inbound.includes(Buffer.from([0x8a])), true);
       },
     );

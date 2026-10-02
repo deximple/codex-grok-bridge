@@ -107,9 +107,12 @@ export function encodeServerFrame(opcode, payload) {
 
 function attachClientFrames(socket, onText) {
   let buf = Buffer.alloc(0);
+  let parts = [];
+  let partOpcode = null;
   socket.on("data", (chunk) => {
     buf = Buffer.concat([buf, chunk]);
     while (buf.length >= 2) {
+      const fin = (buf[0] & 0x80) !== 0;
       const opcode = buf[0] & 0x0f;
       const masked = (buf[1] & 0x80) !== 0;
       let length = buf[1] & 0x7f;
@@ -118,7 +121,10 @@ function attachClientFrames(socket, onText) {
         if (buf.length < 4) return;
         length = buf.readUInt16BE(2);
         offset = 4;
-      } else if (length === 127) return;
+      } else if (length === 127) {
+        socket.end(encodeServerFrame(0x8, Buffer.alloc(0)));
+        return;
+      }
       const maskLen = masked ? 4 : 0;
       if (buf.length < offset + maskLen + length) return;
       let payload = buf.subarray(offset + maskLen, offset + maskLen + length);
@@ -136,7 +142,17 @@ function attachClientFrames(socket, onText) {
         socket.write(encodeServerFrame(0xa, payload));
         continue;
       }
-      if (opcode === 0x1) onText(payload.toString("utf8"));
+      if (opcode === 0x1 || opcode === 0x0) {
+        if (opcode === 0x1) {
+          parts = [payload];
+          partOpcode = opcode;
+        } else if (partOpcode != null) parts.push(payload);
+        if (fin && partOpcode === 0x1) onText(Buffer.concat(parts).toString("utf8"));
+        if (fin) {
+          parts = [];
+          partOpcode = null;
+        }
+      }
     }
   });
 }
