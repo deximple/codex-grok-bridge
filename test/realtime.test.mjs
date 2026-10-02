@@ -1923,6 +1923,14 @@ test("xAI voice events become the desktop v3 sideband events", () => {
     voiceSidebandEvent({ type: "response.output_audio_transcript.done", transcript: "Hi there" }, state),
     { type: "turn.done", turn: { role: "assistant", transcript: "Hi there" } },
   );
+  const unfinished = {};
+  voiceSidebandEvent({ type: "response.output_audio_transcript.delta", delta: "Hi" }, unfinished);
+  voiceSidebandEvent({ type: "response.output_audio_transcript.delta", delta: " there" }, unfinished);
+  assert.deepEqual(voiceSidebandEvent({ type: "response.done" }, unfinished), {
+    type: "turn.done",
+    turn: { role: "assistant", transcript: "Hi there" },
+  });
+  assert.equal(voiceSidebandEvent({ type: "response.done" }, unfinished), null);
   assert.deepEqual(
     voiceSidebandEvent({ type: "conversation.item.input_audio_transcription.updated", transcript: "hel" }, state),
     { type: "input_transcript.added", item: { text: "hel" } },

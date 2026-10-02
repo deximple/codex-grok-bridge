@@ -716,6 +716,7 @@ export function voiceSidebandEvent(event, state) {
   const type = event?.type;
   if (type === "response.created") {
     state.outputText = "";
+    state.audioText = "";
     state.audioTranscript = false;
     state.assistantTurnClosed = false;
     return null;
@@ -740,16 +741,20 @@ export function voiceSidebandEvent(event, state) {
   if (type === "response.output_audio_transcript.delta" && typeof event.delta === "string" && event.delta) {
     state.audioTranscript = true;
     state.outputText = "";
+    state.audioText = `${state.audioText ?? ""}${event.delta}`;
     return { type: "output_transcript.added", item: { text: event.delta } };
   }
   if (type === "response.output_audio_transcript.done" && typeof event.transcript === "string" && event.transcript) {
     state.outputText = "";
+    state.audioText = "";
     state.assistantTurnClosed = true;
     return { type: "turn.done", turn: { role: "assistant", transcript: event.transcript } };
   }
-  if (type === "response.done" && state.outputText && !state.assistantTurnClosed && !state.audioTranscript) {
-    const full = state.outputText;
+  if (type === "response.done" && !state.assistantTurnClosed) {
+    const full = state.audioTranscript ? (state.audioText ?? "") : (state.outputText ?? "");
     state.outputText = "";
+    state.audioText = "";
+    if (!full) return null;
     state.assistantTurnClosed = true;
     return { type: "turn.done", turn: { role: "assistant", transcript: full } };
   }
