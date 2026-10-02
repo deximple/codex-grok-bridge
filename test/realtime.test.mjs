@@ -2600,6 +2600,15 @@ test("xAI voice events become the desktop v3 sideband events", () => {
     type: "output_transcript.added",
     item: { text: "Hel" },
   });
+  const textField = {};
+  assert.deepEqual(voiceSidebandEvent({ type: "response.output_text.delta", text: "Yo" }, textField), {
+    type: "output_transcript.added",
+    item: { text: "Yo" },
+  });
+  assert.deepEqual(
+    voiceSidebandEvent({ type: "response.output_text.delta", delta: "A", text: "B" }, {}),
+    { type: "output_transcript.added", item: { text: "A" } },
+  );
   assert.deepEqual(voiceSidebandEvent({ type: "response.text.delta", delta: "lo" }, textState), {
     type: "output_transcript.added",
     item: { text: "lo" },

@@ -757,7 +757,9 @@ export function flushDelegationSpeech(state) {
 // longer extends the previous caption is sent as the completed turn text.
 function assistantTextDelta(event) {
   if (event?.type !== "response.output_text.delta" && event?.type !== "response.text.delta") return "";
-  return typeof event.delta === "string" ? event.delta : "";
+  if (typeof event.delta === "string" && event.delta) return event.delta;
+  if (typeof event.text === "string" && event.text) return event.text;
+  return "";
 }
 
 export function voiceSidebandEvent(event, state) {
