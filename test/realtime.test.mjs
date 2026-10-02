@@ -34,6 +34,7 @@ import {
   voiceClientEvents,
   voiceSidebandEvent,
   sidebandFrames,
+  announceSession,
 } from "../src/voice.mjs";
 
 const BRIDGE = "bridge-token";
@@ -1989,6 +1990,10 @@ test("xAI voice events become the desktop v3 sideband events", () => {
   assert.equal(JSON.parse(first[1]).type, "output_transcript.added");
   const next = sidebandFrames(sideband, JSON.stringify({ type: "turn.done", turn: { role: "assistant", transcript: "Hi" } }));
   assert.equal(next.length, 1);
+  const fresh = { sessionAnnounced: false, sessionId: "call-1" };
+  const opened = announceSession(fresh, []);
+  assert.equal(JSON.parse(opened[0]).session.id, "call-1");
+  assert.equal(announceSession(fresh, []).length, 0);
 });
 
 test("microphone packets come from the remote track", () => {

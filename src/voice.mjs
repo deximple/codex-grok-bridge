@@ -811,6 +811,13 @@ export function voiceSidebandEvent(event, state) {
   return null;
 }
 
+// The desktop waits for session.updated before it will read any other sideband event.
+export function announceSession(state, pending) {
+  if (state.sessionAnnounced || !state.sessionId) return pending;
+  state.sessionAnnounced = true;
+  return [JSON.stringify({ type: "session.updated", session: { id: state.sessionId } }), ...pending];
+}
+
 // The desktop rejects a frameless call whose first event is not session.updated.
 export function sidebandFrames(state, text) {
   const frames = [];
@@ -1126,7 +1133,9 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
         }
         for (const outbound of voiceClientEvents(event, voiceState)) bridge?.sendClient?.(outbound);
       });
-      for (const text of pendingEvents.splice(0)) sock.write(encodeServerFrame(0x1, text));
+      for (const text of announceSession(noteState, pendingEvents.splice(0))) {
+        sock.write(encodeServerFrame(0x1, text));
+      }
     },
   };
   const noteState = { sessionAnnounced: false, sessionId: null };
