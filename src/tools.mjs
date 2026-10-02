@@ -845,14 +845,27 @@ function rewriteResponseItem(node, map, state) {
 // and no place to put them, so the bridge writes the file and hands back an
 // ordinary assistant message naming it.
 function absorbGeneratedImage(item, state) {
+  const key = typeof item.id === "string" ? item.id : "";
+  if (key && state.savedImages?.has(key)) return state.savedImages.get(key);
   const saved = saveGeneratedImage(item, state.imageOptions);
-  return {
+  const described = describeGeneratedImage(
+    typeof item.prompt === "string" && item.prompt.trim()
+      ? item
+      : { ...item, prompt: item.revised_prompt },
+    saved,
+  );
+  const message = {
     type: "message",
-    id: typeof item.id === "string" ? item.id : undefined,
+    id: key || undefined,
     role: "assistant",
     status: "completed",
-    content: [{ type: "output_text", text: describeGeneratedImage(item, saved) }],
+    content: [{ type: "output_text", text: described }],
   };
+  if (key) {
+    if (!state.savedImages) state.savedImages = new Map();
+    state.savedImages.set(key, message);
+  }
+  return message;
 }
 
 const USAGE_EVENTS = new Set(["response.completed", "response.incomplete"]);
@@ -869,7 +882,12 @@ function rewriteResponseEvent(value, map, state) {
     if (cache) state.cacheUsage = cache;
   }
   if (Array.isArray(value.response?.output)) {
-    for (const item of value.response.output) rewriteResponseItem(item, map, state);
+    for (let i = 0; i < value.response.output.length; i += 1) {
+      const item = value.response.output[i];
+      if (isImageGenerationItem(item))
+        value.response.output[i] = absorbGeneratedImage(item, state);
+      else rewriteResponseItem(item, map, state);
+    }
   }
   if (
     value.type === "response.function_call_arguments.delta" ||
@@ -939,6 +957,7 @@ export function createSseRewriter(map, options = {}) {
   const state = {
     callIds: new Map(),
     itemIds: new Map(),
+    savedImages: new Map(),
     imageOptions: options.imageOptions,
     cacheUsage: null,
   };

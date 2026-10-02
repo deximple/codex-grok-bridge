@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
@@ -1071,6 +1072,47 @@ test("rewrites streamed function names back to Codex namespaces", () => {
   assert.equal(payload.item.namespace, "functions");
   assert.equal(payload.item.name, "apply_patch");
   assert.equal(payload.item.input, "*** Begin Patch");
+});
+
+test("a generated image is saved once for the done event and the completed output", () => {
+  const dir = mkdtempSync(`${tmpdir()}/grok-image-`);
+  const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13]);
+  const item = {
+    type: "image_generation_call",
+    id: "ig_once",
+    status: "completed",
+    revised_prompt: "blue square",
+    result: png.toString("base64"),
+  };
+  const state = {
+    callIds: new Map(),
+    itemIds: new Map(),
+    savedImages: new Map(),
+    imageOptions: { dir, now: 1 },
+  };
+  const done = rewriteSseBlock(
+    `event: response.output_item.done\ndata: ${JSON.stringify({
+      type: "response.output_item.done",
+      item,
+    })}`,
+    new Map(),
+    state,
+  );
+  const completed = rewriteSseBlock(
+    `event: response.completed\ndata: ${JSON.stringify({
+      type: "response.completed",
+      response: { output: [item] },
+    })}`,
+    new Map(),
+    state,
+  );
+  const doneText = JSON.parse(done.split("data: ")[1]).item.content[0].text;
+  const completedItem = JSON.parse(completed.split("data: ")[1]).response.output[0];
+  assert.equal(completedItem.type, "message");
+  assert.equal(completedItem.content[0].text, doneText);
+  assert.match(doneText, /blue square/);
+  assert.equal(readdirSync(dir).length, 1);
+  assert.equal(JSON.stringify(completedItem).includes(item.result), false);
 });
 
 test("restores a custom tool result that only has the call id", () => {

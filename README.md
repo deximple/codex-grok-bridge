@@ -261,7 +261,8 @@ bytes do not reject the turn.
 
 ### Image generation
 
-The bridge declares `{ type: "image_generation" }` on the upstream request.
+A generated image is saved once. The completed response carries that same
+file note instead of the raw image bytes. The bridge declares `{ type: "image_generation" }` on the upstream request.
 Codex does not offer an image-generation tool to this provider (263 tools, none
 of them generate — `view_image` only), so without the declaration Codex’s
 `imagegen` skill falls back to OpenAI (`image_gen` or `OPENAI_API_KEY` +
@@ -642,7 +643,8 @@ PNG / JPEG / WebP. **이미지당 10 MiB, 요청 전체 20 MiB**, 서로 다른 
 
 ### 이미지 생성
 
-브리지가 상류 요청에 `{ type: "image_generation" }`을 직접 선언합니다. Codex는
+생성된 이미지는 한 번만 저장하고, 완료된 응답에는 그 파일 설명을 실어 원본
+바이트를 남기지 않습니다. 브리지가 상류 요청에 `{ type: "image_generation" }`을 직접 선언합니다. Codex는
 이 프로바이더에 이미지 생성 도구를 주지 않습니다(263개 중 없음, `view_image`
 뿐). 선언이 없으면 Codex `imagegen` 스킬이 OpenAI 경로(`image_gen` 또는
 `OPENAI_API_KEY` + `gpt-image-*`)로 가서, 추론은 Grok인데 그림만 다른 벤더가
