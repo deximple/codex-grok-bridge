@@ -466,6 +466,38 @@ function textFromContent(content) {
     .join("");
 }
 
+function contextChannel(event) {
+  return event?.channel ?? null;
+}
+
+// Desktop splits one append into 500-byte frames. Join a back-to-back burst
+// before the tool result and the spoken line are built.
+export function mergeVoiceClientBurst(events) {
+  const merged = [];
+  for (const event of events) {
+    const prev = merged.at(-1);
+    const type = event?.type;
+    const sameDelegation =
+      prev?.type === "delegation.context.append" &&
+      type === "delegation.context.append" &&
+      prev.delegation_item_id === event.delegation_item_id &&
+      contextChannel(prev) === contextChannel(event);
+    const sameSession =
+      prev?.type === "session.context.append" &&
+      type === "session.context.append" &&
+      contextChannel(prev) === contextChannel(event);
+    if (sameDelegation || sameSession) {
+      merged[merged.length - 1] = {
+        ...prev,
+        content: [{ type: "input_text", text: textFromContent(prev.content) + textFromContent(event.content) }],
+      };
+      continue;
+    }
+    merged.push(structuredClone(event));
+  }
+  return merged;
+}
+
 // v3 puts instructions in the call's session part and later sends frameless
 // appends. xAI accepts session.update, conversation.item.create, and force_message.
 function codexRequest(argumentsText) {
@@ -692,9 +724,11 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
   let socket;
   let bridge;
   let closed = false;
+  let appendTimer = null;
   const close = () => {
     if (closed) return;
     closed = true;
+    if (appendTimer) clearTimeout(appendTimer);
     voiceState.closing = true;
     active.delete(session);
     if (session.id) sessionsById.delete(session.id);
@@ -708,6 +742,14 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
   };
   const pendingEvents = [];
   const voiceState = { inputTranscript: "", pendingCalls: new Set() };
+  const appendBurst = [];
+  const flushAppends = () => {
+    appendTimer = null;
+    const burst = appendBurst.splice(0);
+    for (const event of mergeVoiceClientBurst(burst)) {
+      for (const outbound of voiceClientEvents(event, voiceState)) bridge?.sendClient?.(outbound);
+    }
+  };
   let sidebandSocket = null;
   const session = {
     close,
@@ -721,9 +763,20 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
         } catch {
           return;
         }
-        for (const outbound of voiceClientEvents(event, voiceState)) {
-          bridge?.sendClient?.(outbound);
+        const type = event?.type;
+        if (type === "session.context.append" || type === "delegation.context.append") {
+          appendBurst.push(event);
+          if (!appendTimer) {
+            appendTimer = setTimeout(flushAppends, 30);
+            appendTimer.unref();
+          }
+          return;
         }
+        if (appendTimer) {
+          clearTimeout(appendTimer);
+          flushAppends();
+        }
+        for (const outbound of voiceClientEvents(event, voiceState)) bridge?.sendClient?.(outbound);
       });
       for (const text of pendingEvents.splice(0)) sock.write(encodeServerFrame(0x1, text));
     },

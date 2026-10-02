@@ -23,6 +23,7 @@ import {
   remoteAudioTracks,
   startVoiceBridge,
   voiceCallCount,
+  mergeVoiceClientBurst,
   voiceClientEvents,
   voiceSidebandEvent,
 } from "../src/voice.mjs";
@@ -1204,6 +1205,58 @@ test("desktop v3 sideband context becomes an xAI voice item", () => {
   assert.equal(spoken[0].item.call_id, "call-1");
   assert.equal(spoken[1].item.type, "force_message");
   assert.equal(state.pendingCalls.has("call-1"), false);
+});
+
+test("split context appends are joined before the tool result is spoken", () => {
+  const frames = [
+    {
+      type: "delegation.context.append",
+      delegation_item_id: "call-1",
+      content: [{ type: "input_text", text: "AAAA" }],
+    },
+    {
+      type: "delegation.context.append",
+      delegation_item_id: "call-1",
+      content: [{ type: "input_text", text: "BBBB" }],
+    },
+  ];
+  const merged = mergeVoiceClientBurst(frames);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].content[0].text, "AAAABBBB");
+  assert.equal(frames[0].content[0].text, "AAAA");
+  const state = { pendingCalls: new Set(["call-1"]) };
+  const spoken = voiceClientEvents(merged[0], state);
+  assert.equal(spoken[0].item.type, "function_call_output");
+  assert.equal(spoken[0].item.output, JSON.stringify("AAAABBBB"));
+  assert.equal(spoken[1].item.type, "force_message");
+  assert.equal(spoken[1].item.content[0].text, "AAAABBBB");
+  const commentary = mergeVoiceClientBurst([
+    {
+      type: "delegation.context.append",
+      delegation_item_id: "call-2",
+      channel: "commentary",
+      content: [{ type: "input_text", text: "think" }],
+    },
+    {
+      type: "delegation.context.append",
+      delegation_item_id: "call-2",
+      channel: "commentary",
+      content: [{ type: "input_text", text: "ing" }],
+    },
+  ]);
+  const quiet = voiceClientEvents(commentary[0], { pendingCalls: new Set() });
+  assert.equal(quiet.length, 1);
+  assert.equal(quiet[0].item.type, "message");
+  assert.equal(quiet[0].item.content[0].text, "thinking");
+  const split = mergeVoiceClientBurst([
+    frames[0],
+    { type: "response.create" },
+    frames[1],
+  ]);
+  assert.equal(split.length, 3);
+  assert.equal(split[0].content[0].text, "AAAA");
+  assert.equal(split[1].type, "response.create");
+  assert.equal(split[2].content[0].text, "BBBB");
 });
 
 test("xAI voice events become the desktop v3 sideband events", () => {
