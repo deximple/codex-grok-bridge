@@ -102,6 +102,8 @@ export function acceptLocalSideband(socket, key) {
       "Connection: Upgrade\r\n" +
       `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
   );
+  socket.on("data", () => {});
+  socket.on("error", () => {});
   socket.resume();
 }
 

@@ -296,7 +296,7 @@ class ScriptedSocket extends Duplex {
   }
 }
 
-function rawUpgrade(port, requestPath, headers = {}) {
+function rawUpgrade(port, requestPath, headers = {}, waitForTrail = requestPath.startsWith("/v1/live/")) {
   return new Promise((resolve, reject) => {
       const socket = net.connect(port, "127.0.0.1", () => {
       const headerMap = {
@@ -329,8 +329,8 @@ function rawUpgrade(port, requestPath, headers = {}) {
       chunks.push(chunk);
       const head = Buffer.concat(chunks);
       const headersDone = head.includes("\r\n\r\n");
-      const sidebandByte = requestPath.startsWith("/v1/live/") && head.includes("\r\n\r\nU");
-      if (!settled && headersDone && (!requestPath.startsWith("/v1/live/") || sidebandByte)) {
+      const sidebandByte = waitForTrail && head.includes("\r\n\r\nU");
+      if (!settled && headersDone && (!waitForTrail || sidebandByte)) {
         settled = true;
         clearTimeout(timer);
         resolve({ socket, head });
@@ -594,11 +594,29 @@ test("a locally answered sideband stays on the bridge", async () => {
       },
     },
     async (port) => {
-      const local = await rawUpgrade(port, `/v1/realtime?call_id=${id}`);
-      assert.equal(local.closed, undefined);
-      assert.match(local.head.toString("latin1"), /^HTTP\/1\.1 101 /);
-      assert.match(local.head.toString("latin1"), /Sec-WebSocket-Accept:/);
-      local.socket.destroy();
+      let local;
+      let live;
+      try {
+        local = await rawUpgrade(port, `/v1/realtime?call_id=${id}`);
+        assert.equal(local.closed, undefined);
+        assert.match(local.head.toString("latin1"), /^HTTP\/1\.1 101 /);
+        assert.match(local.head.toString("latin1"), /Sec-WebSocket-Accept:/);
+        live = await rawUpgrade(port, `/v1/live/${id}`, {}, false);
+        assert.equal(live.closed, undefined);
+        assert.match(live.head.toString("latin1"), /^HTTP\/1\.1 101 /);
+        const closed = new Promise((resolve) => live.socket.once("close", () => resolve(true)));
+        live.socket.write(Buffer.from("client-frame"));
+        assert.equal(
+          await Promise.race([
+            closed,
+            new Promise((resolve) => setTimeout(() => resolve(false), 50)),
+          ]),
+          false,
+        );
+      } finally {
+        local?.socket.destroy();
+        live?.socket.destroy();
+      }
     },
   );
   assert.equal(dials, 0);
