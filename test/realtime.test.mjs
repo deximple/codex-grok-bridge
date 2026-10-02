@@ -405,3 +405,32 @@ test("sideband upgrade does not dial on auth, origin, or other paths", async () 
   );
   assert.equal(dials, 0);
 });
+
+class SilentSocket extends Duplex {
+  constructor() {
+    super();
+  }
+  _write(_chunk, _enc, cb) {
+    cb();
+  }
+  _read() {}
+}
+
+test("a sideband handshake that never answers closes the client", async () => {
+  let dials = 0;
+  await withServer(
+    {
+      sidebandHandshakeMs: 30,
+      sidebandConnect() {
+        dials += 1;
+        return new SilentSocket();
+      },
+    },
+    async (port) => {
+      const hung = await rawUpgrade(port, "/v1/realtime?call_id=slow");
+      assert.equal(hung.closed, true);
+      assert.equal(hung.head.includes("101"), false);
+    },
+  );
+  assert.equal(dials, 1);
+});

@@ -168,6 +168,18 @@ async function pipeSidebandUpgrade(req, socket, head, options) {
   if (!upstream) return fail(socket);
   socket.on("error", () => upstream.destroy());
   upstream.on("error", () => socket.destroy());
+  let settled = false;
+  const timer = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    fail(socket, upstream);
+  }, options.sidebandHandshakeMs ?? 10_000);
+  const finishHandshake = () => {
+    if (settled) return false;
+    settled = true;
+    clearTimeout(timer);
+    return true;
+  };
   try {
     socket.pause();
     upstream.write(
@@ -175,6 +187,7 @@ async function pipeSidebandUpgrade(req, socket, head, options) {
     );
     if (head?.length) upstream.write(head);
     const response = await readHead(upstream);
+    if (!finishHandshake()) return;
     if (!switching(response.head)) return fail(socket, upstream);
     socket.write(response.head);
     if (response.rest.length) socket.write(response.rest);
@@ -184,6 +197,10 @@ async function pipeSidebandUpgrade(req, socket, head, options) {
     socket.on("close", () => upstream.destroy());
     upstream.on("close", () => socket.destroy());
   } catch {
+    if (!settled) {
+      settled = true;
+      clearTimeout(timer);
+    }
     fail(socket, upstream);
   }
 }
