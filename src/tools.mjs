@@ -879,6 +879,24 @@ function originForResponseName(map, name) {
   return found;
 }
 
+// Grok ciphertext is not an OpenAI reasoning blob. If Codex stores it, a later
+// switch to an OpenAI model fails with "could not be decrypted or parsed".
+function stripEncryptedReasoning(node) {
+  if (!node || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    for (let i = node.length - 1; i >= 0; i -= 1) {
+      const part = node[i];
+      if (part && typeof part === "object" && part.type === "encrypted_content")
+        node.splice(i, 1);
+      else stripEncryptedReasoning(part);
+    }
+    return;
+  }
+  delete node.encrypted_content;
+  delete node.encrypted_function_args;
+  for (const value of Object.values(node)) stripEncryptedReasoning(value);
+}
+
 function rewriteResponseItem(node, map, state) {
   if (!node || typeof node !== "object") return;
   const origin =
@@ -930,6 +948,7 @@ const USAGE_EVENTS = new Set(["response.completed", "response.incomplete"]);
 
 function rewriteResponseEvent(value, map, state) {
   if (!value || typeof value !== "object") return value;
+  stripEncryptedReasoning(value);
   if (
     USAGE_EVENTS.has(value.type) &&
     value.response &&
