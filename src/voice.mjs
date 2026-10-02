@@ -922,8 +922,8 @@ export function startVoiceBridge({
   };
 }
 
-function openVoiceSocket(_url, token) {
-  return new WebSocket(VOICE_SOCKET_URL, {
+export function openVoiceSocket(url, token) {
+  return new WebSocket(url || VOICE_SOCKET_URL, {
     headers: { authorization: `Bearer ${token}` },
   });
 }

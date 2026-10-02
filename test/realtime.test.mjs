@@ -21,6 +21,7 @@ import {
   playbackFromDelta,
   voiceAudioDelta,
   voiceSocketUrl,
+  openVoiceSocket,
   rememberLocalCall,
   remoteAudioTracks,
   startVoiceBridge,
@@ -918,6 +919,26 @@ test("a dropped voice socket resumes the same conversation once", () => {
     assert.equal(events.at(-1).error.message, "Voice connection closed.");
   } finally {
     bridge.close();
+  }
+});
+
+test("a resumed voice socket dials the same conversation", () => {
+  const urls = [];
+  const Original = globalThis.WebSocket;
+  globalThis.WebSocket = class {
+    constructor(url) {
+      urls.push(String(url));
+      this.readyState = 0;
+    }
+    close() {}
+  };
+  try {
+    const socket = openVoiceSocket(voiceSocketUrl("conv-1"), "token");
+    assert.match(urls[0], /conversation_id=conv-1/);
+    assert.equal(urls[0].includes("model=grok-voice-latest"), true);
+    socket.close();
+  } finally {
+    globalThis.WebSocket = Original;
   }
 });
 
