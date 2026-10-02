@@ -83,6 +83,10 @@ test("edits map image_url references and refuse OpenAI file ids", () => {
   assert.equal(many.aspect_ratio, "auto");
   assert.equal(Object.hasOwn(many, "image"), false);
   assert.throws(() => imagineEditBody({ prompt: "x", images: [{ file_id: "file_123" }] }), /file ids/);
+  assert.throws(
+    () => imagineEditBody({ prompt: "x", images: [{ image_url: "/tmp/cat.png" }] }),
+    /http\(s\) URL/,
+  );
 });
 
 test("a missing created timestamp is filled and empty images are refused", () => {

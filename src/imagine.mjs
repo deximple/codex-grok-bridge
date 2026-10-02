@@ -42,7 +42,13 @@ export function imagineEditBody(input) {
   for (const image of images) {
     if (!image || typeof image !== "object") continue;
     if (typeof image.image_url === "string" && image.image_url.trim()) {
-      urls.push(image.image_url.trim());
+      const url = image.image_url.trim();
+      if (!/^https?:\/\//i.test(url) && !/^data:/i.test(url)) {
+        const error = new Error("Image edit requires an http(s) URL or a data URL.");
+        error.status = 400;
+        throw error;
+      }
+      urls.push(url);
       continue;
     }
     if (typeof image.file_id === "string" && image.file_id.trim()) {
