@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import tls from "node:tls";
 import { GrokAuthError, readGrokBearerToken } from "./auth.mjs";
+import { acceptLocalSideband, isLocalVoiceSideband } from "./voice.mjs";
 
 // Codex posts the WebRTC SDP offer to the provider base
 // (`POST /v1/realtime/calls`, and v3 `POST /v1/live`). The body is raw bytes
@@ -143,6 +144,11 @@ async function pipeSidebandUpgrade(req, socket, head, options) {
   if (!isSidebandUpgradePath(url) || req.headers.origin) return fail(socket);
   if (!bearerMatches(req.headers.authorization, options.token)) return fail(socket);
   const key = headerText(req.headers["sec-websocket-key"]);
+  if (isLocalVoiceSideband(url)) {
+    if (!key) return fail(socket);
+    acceptLocalSideband(socket, key);
+    return;
+  }
   const version =
     req.headers["sec-websocket-version"] == null
       ? "13"

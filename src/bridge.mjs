@@ -12,6 +12,7 @@ import { emitProxySse, readRelayProxySse } from "./proxy.mjs";
 import { videoCallsFromParts, videoToolOutput } from "./videogen.mjs";
 import { forwardImagine } from "./imagine.mjs";
 import { attachSidebandUpgrade, forwardRealtime } from "./realtime.mjs";
+import { answerVoiceCall } from "./voice.mjs";
 import {
   applyCacheUsage,
   createPrefixMemory,
@@ -143,6 +144,33 @@ async function relayRealtime(req, res, json, upstreamPath, options) {
       signal: controller.signal,
     });
     if (res.writableEnded || res.destroyed) return;
+    if (forwarded.status >= 200 && forwarded.status < 300) {
+      const headers = {};
+      if (forwarded.contentType) headers["content-type"] = forwarded.contentType;
+      if (forwarded.location) headers.location = forwarded.location;
+      res.writeHead(forwarded.status, headers);
+      res.end(forwarded.body);
+      return;
+    }
+    try {
+      const answered = await answerVoiceCall({
+        offer: Buffer.concat(chunks).toString("utf8"),
+        token: session.token,
+        webSocketFactory: options.voiceWebSocket,
+      });
+      if (res.writableEnded || res.destroyed) {
+        answered.close();
+        return;
+      }
+      res.writeHead(201, {
+        "content-type": "application/sdp",
+        location: answered.location,
+      });
+      res.end(answered.sdp);
+      return;
+    } catch {
+      // An offer werift cannot answer stays the upstream response.
+    }
     const headers = {};
     if (forwarded.contentType) headers["content-type"] = forwarded.contentType;
     if (forwarded.location) headers.location = forwarded.location;

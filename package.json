@@ -51,5 +51,8 @@
     "prepublishOnly": "npm test",
     "test": "node --test",
     "test:coverage": "node --test --experimental-test-coverage --test-coverage-include='src/*.mjs' --test-coverage-lines=80 --test-coverage-functions=80 --test-coverage-branches=80"
+  },
+  "dependencies": {
+    "werift": "0.24.4"
   }
 }

@@ -1,0 +1,211 @@
+import { createHash, randomUUID } from "node:crypto";
+import {
+  MediaStreamTrack,
+  RTCPeerConnection,
+  RTCRtpCodecParameters,
+  RtpHeader,
+  RtpPacket,
+} from "werift";
+
+export const VOICE_SOCKET_URL = "wss://api.x.ai/v1/realtime?model=grok-voice-latest";
+
+const localCalls = new Set();
+const active = new Set();
+
+const pcmu = new RTCRtpCodecParameters({
+  mimeType: "audio/PCMU",
+  clockRate: 8000,
+  channels: 1,
+  payloadType: 0,
+});
+
+function peerConfig() {
+  return {
+    iceServers: [],
+    iceUseIpv4: true,
+    iceUseIpv6: false,
+    iceUseTcp: false,
+    codecs: { audio: [pcmu] },
+  };
+}
+
+export function rememberLocalCall(id = `local-${randomUUID()}`) {
+  localCalls.add(id);
+  return id;
+}
+
+export function isLocalVoiceSideband(url) {
+  const text = String(url ?? "");
+  for (const id of localCalls) {
+    if (text.includes(id)) return true;
+  }
+  return false;
+}
+
+export function acceptLocalSideband(socket, key) {
+  const accept = createHash("sha1")
+    .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+    .digest("base64");
+  socket.write(
+    "HTTP/1.1 101 Switching Protocols\r\n" +
+      "Upgrade: websocket\r\n" +
+      "Connection: Upgrade\r\n" +
+      `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+  );
+  socket.resume();
+}
+
+const MULAW_BIAS = 0x84;
+const MULAW_CLIP = 32635;
+
+export function mulawToPcm16(mulaw) {
+  const input = Buffer.from(mulaw);
+  const out = Buffer.alloc(input.length * 2);
+  for (let i = 0; i < input.length; i += 1) {
+    const sample = ~input[i] & 0xff;
+    const sign = sample & 0x80;
+    const exponent = (sample >> 4) & 0x07;
+    const mantissa = sample & 0x0f;
+    let pcm = ((mantissa << 3) + MULAW_BIAS) << exponent;
+    pcm -= MULAW_BIAS;
+    out.writeInt16LE(sign ? -pcm : pcm, i * 2);
+  }
+  return out;
+}
+
+export function pcm16ToMulaw(pcm) {
+  const input = Buffer.from(pcm);
+  const samples = Math.floor(input.length / 2);
+  const out = Buffer.alloc(samples);
+  for (let i = 0; i < samples; i += 1) {
+    let sample = input.readInt16LE(i * 2);
+    const sign = sample < 0 ? 0x80 : 0;
+    if (sample < 0) sample = -sample;
+    if (sample > MULAW_CLIP) sample = MULAW_CLIP;
+    sample += MULAW_BIAS;
+    let exponent = 7;
+    for (let mask = 0x4000; (sample & mask) === 0 && exponent > 0; mask >>= 1) exponent -= 1;
+    const mantissa = (sample >> (exponent + 3)) & 0x0f;
+    out[i] = ~(sign | (exponent << 4) | mantissa) & 0xff;
+  }
+  return out;
+}
+
+export function appendFromRtp(send, payload) {
+  send({
+    type: "input_audio_buffer.append",
+    audio: mulawToPcm16(payload).toString("base64"),
+  });
+}
+
+export function playbackFromDelta(track, state, delta) {
+  const mulaw = pcm16ToMulaw(Buffer.from(String(delta ?? ""), "base64"));
+  if (mulaw.length === 0) return;
+  state.sequence = (state.sequence + 1) & 0xffff;
+  state.timestamp = (state.timestamp + mulaw.length) >>> 0;
+  track.writeRtp(
+    new RtpPacket(
+      new RtpHeader({
+        payloadType: 0,
+        sequenceNumber: state.sequence,
+        timestamp: state.timestamp,
+        ssrc: state.ssrc,
+      }),
+      mulaw,
+    ),
+  );
+}
+
+function sessionUpdate() {
+  return {
+    type: "session.update",
+    session: {
+      voice: "eve",
+      instructions: "Say ready.",
+      turn_detection: { type: "server_vad" },
+    },
+  };
+}
+
+export function startVoiceBridge({ track, socket }) {
+  const state = { sequence: 0, timestamp: 0, ssrc: 1 };
+  const queued = [];
+  let opened = socket.readyState === 1;
+  const send = (event) => {
+    const text = JSON.stringify(event);
+    if (!opened) {
+      queued.push(text);
+      return;
+    }
+    socket.send(text);
+  };
+  const flush = () => {
+    opened = true;
+    for (const text of queued.splice(0)) socket.send(text);
+  };
+  const onRtp = (rtp) => appendFromRtp(send, rtp?.payload ?? rtp);
+  const onUpstream = (raw) => {
+    let event;
+    try {
+      event = JSON.parse(typeof raw === "string" ? raw : Buffer.from(raw?.data ?? raw).toString("utf8"));
+    } catch {
+      return;
+    }
+    if (event?.type !== "response.output_audio.delta" || typeof event.delta !== "string") return;
+    try {
+      playbackFromDelta(track, state, event.delta);
+    } catch {
+      // The peer may not be connected yet. Keep the socket.
+    }
+  };
+  if (typeof track.onReceiveRtp?.subscribe === "function") track.onReceiveRtp.subscribe(onRtp);
+  socket.onopen = flush;
+  socket.onmessage = (event) => onUpstream(event?.data ?? event);
+  send(sessionUpdate());
+  if (opened) flush();
+  return { onRtp, onUpstream };
+}
+
+function openVoiceSocket(_url, token) {
+  return new WebSocket(VOICE_SOCKET_URL, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+}
+
+export async function answerVoiceCall({ offer, token, webSocketFactory }) {
+  const pc = new RTCPeerConnection(peerConfig());
+  const track = new MediaStreamTrack({ kind: "audio" });
+  let socket;
+  const close = () => {
+    active.delete(session);
+    try {
+      socket?.close();
+    } catch {
+      // Already closed.
+    }
+    pc.close().catch(() => {});
+  };
+  const session = { close };
+  try {
+    pc.addTrack(track);
+    await pc.setRemoteDescription({ type: "offer", sdp: offer });
+    await pc.setLocalDescription(await pc.createAnswer());
+    const sdp = pc.localDescription?.sdp ?? "";
+    if (!sdp.startsWith("v=0") || !sdp.includes("a=fingerprint:")) {
+      throw new Error("incomplete answer");
+    }
+    const id = rememberLocalCall();
+    socket = (webSocketFactory ?? openVoiceSocket)(VOICE_SOCKET_URL, token);
+    socket.onerror = () => {};
+    startVoiceBridge({ track, socket });
+    active.add(session);
+    return { sdp, location: `/v1/realtime/calls/${id}`, close };
+  } catch (error) {
+    close();
+    throw error;
+  }
+}
+
+export function closeVoiceCalls() {
+  for (const session of [...active]) session.close();
+}

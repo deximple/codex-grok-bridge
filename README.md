@@ -172,10 +172,10 @@ Codex keeps the conversation and sends the whole turn each time. Grok can
 treat the unchanged beginning as a cache. If the connection drops before
 Codex has been sent any bytes, the bridge tries again. Codex does not send
 that same request again. Voice call setup (`POST /v1/realtime/calls` and
-`POST /v1/live`) is forwarded raw to xAI. The voice sideband is pointed at
-this bridge and piped raw to `api.x.ai`. xAI may still reject that OpenAI
-sideband path, so the call may not join. Codex cloud tasks are not in this
-package.
+`POST /v1/live`) is forwarded raw when xAI accepts it. When xAI rejects that
+offer, the bridge answers with its own WebRTC peer and bridges the audio to
+the xAI voice socket. The sideband for that answered call stays on the bridge.
+Codex cloud tasks are not in this package.
 
 If the Responses path misbehaves, `GROK_BRIDGE_INFERENCE=cli` falls back to the
 older CLI envelope. That path pastes the whole JSON into a prompt each turn, so
@@ -293,7 +293,7 @@ starting a new thread, before the first turn is saved.
 
 ### Not in this release
 
-The voice sideband is piped to xAI, but xAI may reject the OpenAI sideband path, so a voice session is not guaranteed. Codex cloud tasks are not in this package.
+A voice session still depends on the xAI voice socket accepting the login, and on the desktop completing ICE with the bridge. Codex cloud tasks are not in this package.
 
 Upstream sometimes resets the connection mid-response (three measured cases:
 25 s / 27 s / 253 s, 726 KB–22 MB). The bridge holds the reply and, if that
@@ -549,10 +549,10 @@ Codex 창에도 보일 수 있습니다.
 Codex가 대화를 갖고 있고, 턴마다 그 턴 전체를 보냅니다. 앞부분이 그대로면
 Grok는 그 부분을 캐시로 볼 수 있습니다. Codex에 바이트를 보내기 전에 연결이
 끊기면 브리지가 다시 시도합니다. Codex는 그 요청을 또 보내지 않습니다. 음성
-통화 설정(`POST /v1/realtime/calls`, `POST /v1/live`)은 xAI로 원문 그대로
-넘깁니다. 음성 sideband는 이 브리지를 가리키고 `api.x.ai`로 원문 그대로
-넘깁니다. xAI가 OpenAI sideband 경로를 거절하면 통화에 붙지 않을 수 있습니다.
-Codex 클라우드 작업은 이 패키지에 없습니다.
+통화 설정(`POST /v1/realtime/calls`, `POST /v1/live`)은 xAI가 수락하면 원문
+그대로 넘깁니다. xAI가 그 offer를 거절하면 브리지가 자체 WebRTC 피어로 답하고,
+오디오를 xAI 음성 소켓으로 잇습니다. 그렇게 답한 통화의 sideband는 브리지에
+남습니다. Codex 클라우드 작업은 이 패키지에 없습니다.
 
 Responses 경로가 이상하면 `GROK_BRIDGE_INFERENCE=cli`로 이전 CLI 봉투 경로를
 씁니다. 매 턴 전체 JSON을 프롬프트로 넣으므로 더 느리고 비싸며, 토큰 단위
@@ -662,7 +662,7 @@ OpenAI 경로가 맞습니다.
 
 ### 이번 릴리스에 없는 것
 
-음성 sideband는 xAI로 넘기지만, xAI가 OpenAI sideband 경로를 거절하면 음성 세션이 보장되지 않습니다. Codex 클라우드 작업은 이 패키지에 없습니다.
+음성 세션은 xAI 음성 소켓이 로그인을 수락하는지, 그리고 데스크톱이 브리지와 ICE를 끝내는지를 따릅니다. Codex 클라우드 작업은 이 패키지에 없습니다.
 
 상류가 응답 중간에 연결을 리셋하는 경우가 있습니다(실측 3건: 25초 / 27초 /
 253초, 726 KB–22 MB). 브리지는 응답을 들고 있다가, Codex에 그 응답을 보내기

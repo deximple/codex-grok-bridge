@@ -9,7 +9,17 @@ import path from "node:path";
 import test from "node:test";
 
 import { createBridgeServer } from "../src/bridge.mjs";
+import { MediaStreamTrack, RTCPeerConnection, RTCRtpCodecParameters } from "werift";
 import { DEFAULT_REALTIME_API_BASE, forwardRealtime } from "../src/realtime.mjs";
+import {
+  appendFromRtp,
+  closeVoiceCalls,
+  mulawToPcm16,
+  pcm16ToMulaw,
+  playbackFromDelta,
+  rememberLocalCall,
+  startVoiceBridge,
+} from "../src/voice.mjs";
 
 const BRIDGE = "bridge-token";
 const GROK = "grok-login-token";
@@ -341,6 +351,127 @@ function rawUpgrade(port, requestPath, headers = {}) {
     });
   });
 }
+
+test("a rejected xAI offer is answered by werift and bridged to the voice socket", async () => {
+  const pcmu = new RTCRtpCodecParameters({
+    mimeType: "audio/PCMU",
+    clockRate: 8000,
+    channels: 1,
+    payloadType: 0,
+  });
+  const offerer = new RTCPeerConnection({
+    iceServers: [],
+    iceUseIpv4: true,
+    iceUseIpv6: false,
+    codecs: { audio: [pcmu] },
+  });
+  offerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+  const offer = await offerer.createOffer();
+  await offerer.setLocalDescription(offer);
+  const sockets = [];
+  const fetchImpl = async () =>
+    new Response(Buffer.from('{"error":"Team is not authorized"}'), {
+      status: 403,
+      headers: { "content-type": "application/json" },
+    });
+  try {
+    await withServer(
+      {
+        realtimeFetch: fetchImpl,
+        voiceWebSocket(_url, token) {
+          assert.equal(token, GROK);
+          const sent = [];
+          const socket = {
+            readyState: 1,
+            sent,
+            send(data) {
+              sent.push(String(data));
+            },
+            close() {
+              this.readyState = 3;
+            },
+          };
+          sockets.push(socket);
+          return socket;
+        },
+      },
+      async (port) => {
+        const answered = await postRaw(port, "/v1/realtime/calls", offerer.localDescription.sdp);
+        assert.equal(answered.status, 201);
+        assert.equal(answered.headers["content-type"], "application/sdp");
+        const sdp = answered.body.toString("utf8");
+        assert.equal(sdp.startsWith("v=0"), true);
+        assert.equal(sdp.includes("a=fingerprint:"), true);
+        assert.equal(sdp.includes("Team is not authorized"), false);
+        assert.match(answered.headers.location, /^\/v1\/realtime\/calls\/local-/);
+        const sent = sockets[0].sent.map((line) => JSON.parse(line));
+        assert.equal(sent[0].type, "session.update");
+        assert.equal(sent[0].session.voice, "eve");
+      },
+    );
+  } finally {
+    closeVoiceCalls();
+    await offerer.close();
+  }
+});
+
+test("voice audio uses append and output_audio.delta", () => {
+  const sent = [];
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const socket = {
+    readyState: 1,
+    send(data) {
+      sent.push(JSON.parse(String(data)));
+    },
+  };
+  const bridge = startVoiceBridge({ track, socket });
+  const mulaw = Buffer.from([0xff, 0x7f]);
+  bridge.onRtp({ payload: mulaw });
+  assert.equal(sent.at(-1).type, "input_audio_buffer.append");
+  assert.equal(Buffer.from(sent.at(-1).audio, "base64").equals(mulawToPcm16(mulaw)), true);
+  const pcm = Buffer.alloc(4);
+  pcm.writeInt16LE(0, 0);
+  pcm.writeInt16LE(16000, 2);
+  bridge.onUpstream(
+    JSON.stringify({ type: "response.output_audio.delta", delta: pcm.toString("base64") }),
+  );
+  assert.equal(track.rtp.length, 1);
+  assert.equal(Buffer.from(track.rtp[0].payload).equals(pcm16ToMulaw(pcm)), true);
+  bridge.onUpstream(JSON.stringify({ type: "ping" }));
+  assert.equal(track.rtp.length, 1);
+  const state = { sequence: 0, timestamp: 0, ssrc: 1 };
+  playbackFromDelta(track, state, "");
+  assert.equal(track.rtp.length, 1);
+  appendFromRtp((event) => sent.push(event), Buffer.from([0x00]));
+  assert.equal(sent.at(-1).type, "input_audio_buffer.append");
+});
+
+test("a locally answered sideband stays on the bridge", async () => {
+  const id = rememberLocalCall("local-sideband-test");
+  let dials = 0;
+  await withServer(
+    {
+      sidebandConnect() {
+        dials += 1;
+        return new ScriptedSocket(Buffer.from("HTTP/1.1 101 Switching Protocols\r\n\r\n"));
+      },
+    },
+    async (port) => {
+      const local = await rawUpgrade(port, `/v1/realtime?call_id=${id}`);
+      assert.equal(local.closed, undefined);
+      assert.match(local.head.toString("latin1"), /^HTTP\/1\.1 101 /);
+      assert.match(local.head.toString("latin1"), /Sec-WebSocket-Accept:/);
+      local.socket.destroy();
+    },
+  );
+  assert.equal(dials, 0);
+});
 
 test("sideband upgrade is piped to api.x.ai with the grok bearer", async () => {
   const upstreams = [];
