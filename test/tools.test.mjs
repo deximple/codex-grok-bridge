@@ -441,6 +441,26 @@ test("keeps plain reasoning summaries but strips compaction and encrypted conten
   ]);
 });
 
+test("a Grok reasoning blob is not stored for a later OpenAI model", () => {
+  const secret = "grok-ciphertext-rs_c4ffe4f8";
+  const block = rewriteSseBlock(
+    `event: response.output_item.done\ndata: ${JSON.stringify({
+      type: "response.output_item.done",
+      item: {
+        type: "reasoning",
+        id: "rs_c4ffe4f8-5aae-976f-be27-2b8928ea921e",
+        encrypted_content: secret,
+        summary: [{ type: "summary_text", text: "plain summary" }],
+      },
+    })}`,
+    new Map(),
+  );
+  const payload = JSON.parse(block.split("data: ")[1]);
+  assert.equal(JSON.stringify(payload).includes(secret), false);
+  assert.equal(payload.item.encrypted_content, undefined);
+  assert.equal(payload.item.summary[0].text, "plain summary");
+});
+
 test("compaction summary strings survive as input text", () => {
   for (const type of ["compaction", "compaction_summary", "context_compaction"]) {
     const { request } = toProxyRequest({

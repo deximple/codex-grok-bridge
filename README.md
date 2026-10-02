@@ -233,7 +233,7 @@ multi-call turn can continue its own reasoning. The upstream has been observed
 to accept this shape. The same pass keeps only the fields Grok’s Responses
 input accepts on each item and content part — `status`, unknown Codex keys,
 and every `internal_*` field are dropped so a new client field cannot 422 the
-upstream.
+upstream. The same ciphertext is removed from the stream back to Codex, so a later switch to an OpenAI model does not try to decrypt a Grok reasoning blob. A thread that already stored those items still has them.
 
 ### Concurrency
 
@@ -636,7 +636,7 @@ Codex `reasoning` 항목의 평문 요약은 상류로 전달합니다. 요약�
 턴에서 모델이 자기 추론을 이어받게 하기 위한 것이며, 상류가 이 형태를 수락하는
 것을 확인했습니다. 같은 과정에서 아이템과 content part는 Grok Responses가
 받는 필드만 남깁니다. `status`, 알 수 없는 Codex 키, `internal_*` 필드는
-버려서 새 클라이언트 필드가 상류 422를 내지 않게 합니다.
+버려서 새 클라이언트 필드가 상류 422를 내지 않게 합니다. 응답으로 돌아가는 암호문도 빼서, 나중에 OpenAI 모델로 바꿔도 Grok 추론 blob을 복호화하려 하지 않습니다. 이미 저장된 스레드는 그 항목이 남아 있습니다.
 
 ### 동시성
 
