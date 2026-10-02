@@ -11,7 +11,7 @@ import {
 import { emitProxySse, readRelayProxySse } from "./proxy.mjs";
 import { videoCallsFromParts, videoToolOutput } from "./videogen.mjs";
 import { forwardImagine } from "./imagine.mjs";
-import { forwardRealtime } from "./realtime.mjs";
+import { attachSidebandUpgrade, forwardRealtime } from "./realtime.mjs";
 import {
   applyCacheUsage,
   createPrefixMemory,
@@ -175,7 +175,7 @@ export function createBridgeServer(options = {}) {
     queueLimit: options.maxQueuedInference,
   });
   const prefixes = createPrefixMemory();
-  return http.createServer(async (req, res) => {
+  const server = http.createServer(async (req, res) => {
     const json = (status, data) => {
       res.writeHead(status, { "content-type": "application/json" });
       res.end(JSON.stringify(data));
@@ -401,4 +401,6 @@ export function createBridgeServer(options = {}) {
       res.end();
     }
   });
+  attachSidebandUpgrade(server, options);
+  return server;
 }
