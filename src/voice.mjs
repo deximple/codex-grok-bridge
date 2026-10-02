@@ -32,6 +32,16 @@ function peerConfig() {
 // waits until the offered oai-events channel opens. A public srflx address
 // is not the local bridge. Trailing "generation" and "ufrag" tokens are not
 // part of the candidate the helper parses, so they are removed.
+// webrtc-rs opens SCTP only when it is the DTLS client, and only after the
+// handshake. An actpass offer lets this answer be the server, so the desktop
+// sends the INIT. A werift offerer still sends it: that stack initiates SCTP
+// when it is ICE-controlling, which the offerer is.
+function answerSdpForOffer(offer, answerSdp) {
+  const text = String(answerSdp ?? "");
+  if (!String(offer ?? "").includes("a=setup:actpass")) return text;
+  return text.replaceAll("a=setup:active", "a=setup:passive");
+}
+
 function hostAnswerSdp(sdp) {
   const lines = String(sdp ?? "").split("\r\n");
   const hosts = [];
@@ -709,7 +719,8 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
   try {
     pc.addTrack(track);
     await pc.setRemoteDescription({ type: "offer", sdp: offer });
-    await pc.setLocalDescription(await pc.createAnswer());
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription({ type: "answer", sdp: answerSdpForOffer(offer, answer?.sdp) });
     let sdp = pc.localDescription?.sdp ?? "";
     if (!sdp.startsWith("v=0") || !sdp.includes("a=fingerprint:")) {
       throw new Error("incomplete answer");

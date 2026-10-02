@@ -774,6 +774,8 @@ test("an offer with a data channel keeps that channel in the answer", async () =
         assert.equal(sdp.includes("m=audio"), true);
         assert.equal(sdp.includes("m=application"), true);
         assert.equal(sdp.includes("a=sctp-port:"), true);
+        assert.equal(sdp.includes("a=setup:passive"), true);
+        assert.equal(sdp.includes("a=setup:active"), false);
         assert.equal(sdp.includes(" 127.0.0.1 "), true);
         assert.equal(sdp.includes(" typ srflx"), false);
         assert.equal(sdp.includes(" generation "), false);
