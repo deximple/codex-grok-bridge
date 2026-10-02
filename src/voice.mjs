@@ -11,6 +11,13 @@ import {
 
 export const VOICE_SOCKET_URL = "wss://api.x.ai/v1/realtime?model=grok-voice-latest";
 
+export function voiceSocketUrl(conversationId) {
+  if (!conversationId) return VOICE_SOCKET_URL;
+  const url = new URL(VOICE_SOCKET_URL);
+  url.searchParams.set("conversation_id", conversationId);
+  return url.toString();
+}
+
 const localCalls = new Set();
 const active = new Set();
 const sessionsById = new Map();
@@ -512,6 +519,7 @@ function sessionUpdate(instructions) {
       voice: "eve",
       instructions: text,
       turn_detection: { type: "server_vad" },
+      resumption: { enabled: true },
       tools: [CODEX_TOOL],
       audio: {
         input: {
@@ -740,6 +748,7 @@ export function startVoiceBridge({
   initialItems = [],
   voiceState,
   receiveTracks = [],
+  openSocket,
 }) {
   const opus = codec.kind === "opus" ? createOpus() : null;
   const state = {
@@ -754,15 +763,17 @@ export function startVoiceBridge({
   const queued = [];
   const held = [];
   const sidebandState = voiceState ?? { inputTranscript: "", pendingCalls: new Set() };
+  let current = socket;
   let opened = socket.readyState === 1;
   let responseActive = false;
+  let resumed = false;
   const send = (event) => {
     const text = JSON.stringify(event);
     if (!opened) {
       queued.push(text);
       return;
     }
-    socket.send(text);
+    current.send(text);
   };
   const holdsForIdleResponse = (event) => {
     const item = event?.item;
@@ -780,7 +791,7 @@ export function startVoiceBridge({
   state.onDrained = releaseHeld;
   const flush = () => {
     opened = true;
-    for (const text of queued.splice(0)) socket.send(text);
+    for (const text of queued.splice(0)) current.send(text);
   };
   const onRtp = (rtp) => {
     const payload = rtp?.payload ?? rtp;
@@ -803,6 +814,9 @@ export function startVoiceBridge({
       event = JSON.parse(typeof raw === "string" ? raw : Buffer.from(raw?.data ?? raw).toString("utf8"));
     } catch {
       return;
+    }
+    if (event?.type === "conversation.created" && typeof event.conversation?.id === "string") {
+      sidebandState.conversationId = event.conversation.id;
     }
     const spoken = voiceAudioDelta(event);
     if (spoken) {
@@ -832,12 +846,29 @@ export function startVoiceBridge({
   };
   // The local track reports packets we send. The microphone is the remote track.
   for (const remote of receiveTracks) remote.onReceiveRtp?.subscribe?.(onRtp);
-  socket.onopen = flush;
-  socket.onmessage = (event) => onUpstream(event?.data ?? event);
-  socket.onclose = () => {
-    if (sidebandState.closing) return;
+  const onSocketClose = () => {
+    if (sidebandState.closing || state.stopped) return;
+    if (!resumed && sidebandState.conversationId && openSocket) {
+      resumed = true;
+      try {
+        current = openSocket(sidebandState.conversationId);
+        opened = current.readyState === 1;
+        bindSocket(current);
+        send(sessionUpdate(instructions));
+        return;
+      } catch {
+        // The resume dial failed. Tell the desktop below.
+      }
+    }
     onEvent?.(JSON.stringify({ type: "error", error: { message: "Voice connection closed." } }));
   };
+  const bindSocket = (next) => {
+    next.onopen = flush;
+    next.onmessage = (event) => onUpstream(event?.data ?? event);
+    next.onclose = onSocketClose;
+    next.onerror = () => {};
+  };
+  bindSocket(socket);
   send(sessionUpdate(instructions));
   for (const item of initialItems) send(item);
   if (opened) flush();
@@ -978,7 +1009,8 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
     const id = rememberLocalCall();
     session.id = id;
     sessionsById.set(id, session);
-    socket = (webSocketFactory ?? openVoiceSocket)(VOICE_SOCKET_URL, token);
+    const dial = webSocketFactory ?? openVoiceSocket;
+    socket = dial(VOICE_SOCKET_URL, token);
     socket.onerror = () => {};
     bridge = startVoiceBridge({
       track,
@@ -989,6 +1021,10 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
       initialItems,
       voiceState,
       receiveTracks,
+      openSocket(conversationId) {
+        socket = dial(voiceSocketUrl(conversationId), token);
+        return socket;
+      },
     });
     active.add(session);
     return { sdp, location: `/v1/realtime/calls/${id}`, close };

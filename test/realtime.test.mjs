@@ -20,6 +20,7 @@ import {
   pcm16ToMulaw,
   playbackFromDelta,
   voiceAudioDelta,
+  voiceSocketUrl,
   rememberLocalCall,
   remoteAudioTracks,
   startVoiceBridge,
@@ -421,6 +422,7 @@ test("a rejected xAI offer is answered by werift and bridged to the voice socket
         const sent = sockets[0].sent.map((line) => JSON.parse(line));
         assert.equal(sent[0].type, "session.update");
         assert.equal(sent[0].session.voice, "eve");
+        assert.equal(sent[0].session.resumption.enabled, true);
         assert.equal(sent[0].session.tools[0].name, "codex");
         assert.equal(sent[0].session.audio.input.format.rate, 24000);
         assert.equal(sent[0].session.audio.input.transcription.model, "grok-transcribe");
@@ -882,6 +884,36 @@ test("a playback frame is retried when the peer is not ready", async () => {
     assert.equal(track.rtp.length >= 1, true);
     assert.equal(track.rtp[0].header.marker, true);
     assert.equal(track.rtp[0].header.sequenceNumber, 1);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("a dropped voice socket resumes the same conversation once", () => {
+  const first = { readyState: 1, sent: [], send(data) { this.sent.push(JSON.parse(String(data))); }, close() {} };
+  let second;
+  const events = [];
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} } },
+    socket: first,
+    onEvent(text) {
+      events.push(JSON.parse(text));
+    },
+    openSocket(conversationId) {
+      assert.equal(conversationId, "conv-1");
+      second = { readyState: 1, sent: [], send(data) { this.sent.push(JSON.parse(String(data))); }, close() {} };
+      return second;
+    },
+  });
+  try {
+    assert.equal(voiceSocketUrl("conv-1").includes("conversation_id=conv-1"), true);
+    first.onmessage(JSON.stringify({ type: "conversation.created", conversation: { id: "conv-1" } }));
+    first.onclose();
+    assert.equal(events.length, 0);
+    assert.equal(second.sent[0].type, "session.update");
+    assert.equal(second.sent[0].session.resumption.enabled, true);
+    second.onclose();
+    assert.equal(events.at(-1).error.message, "Voice connection closed.");
   } finally {
     bridge.close();
   }
