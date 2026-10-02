@@ -438,6 +438,7 @@ function enqueueAudio(state, payload, clockStep) {
 }
 
 function scheduleAudio(track, state) {
+  if (state.stopped) return;
   state.pumping = true;
   const timer = setTimeout(() => {
     state.pumping = false;
@@ -449,7 +450,7 @@ function scheduleAudio(track, state) {
 }
 
 function kickAudio(track, state) {
-  if (state.pumping) return;
+  if (state.stopped || state.pumping) return;
   const frame = state.playout?.[0];
   if (!frame) {
     if (state.endTalk) state.talking = false;
@@ -782,6 +783,7 @@ export function startVoiceBridge({
       }
     },
     close() {
+      state.stopped = true;
       if (state.playoutTimer) clearTimeout(state.playoutTimer);
       try {
         opus?.delete?.();

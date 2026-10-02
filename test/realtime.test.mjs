@@ -726,6 +726,34 @@ test("a silent gap advances the voice playout clock", async () => {
   }
 });
 
+test("closing the voice bridge stops playback retries", async () => {
+  let writes = 0;
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    writeRtp() {
+      writes += 1;
+      throw new Error("not connected");
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: { readyState: 1, send() {} },
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  bridge.onUpstream(
+    JSON.stringify({
+      type: "response.output_audio.delta",
+      delta: Buffer.alloc(960).toString("base64"),
+    }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  const atClose = writes;
+  assert.ok(atClose >= 1);
+  bridge.close();
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(writes, atClose);
+});
+
 test("a playback frame is retried when the peer is not ready", async () => {
   let fail = true;
   const track = {
