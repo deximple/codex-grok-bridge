@@ -85,17 +85,44 @@ export function offerFromCallBody(body, contentType) {
   return partFromCallBody(body, contentType, "sdp") ?? callBodyText(body);
 }
 
-export function instructionsFromCallBody(body, contentType) {
+function sessionObject(body, contentType) {
   const raw = partFromCallBody(body, contentType, "session");
-  if (!raw) return "";
+  if (!raw) return null;
   try {
     const session = JSON.parse(raw);
-    const value =
-      typeof session?.instructions === "string" ? session.instructions : session?.session?.instructions;
-    return typeof value === "string" ? value.trim() : "";
+    return session?.session && typeof session.session === "object" ? session.session : session;
   } catch {
-    return "";
+    return null;
   }
+}
+
+export function instructionsFromCallBody(body, contentType) {
+  const session = sessionObject(body, contentType);
+  return typeof session?.instructions === "string" ? session.instructions.trim() : "";
+}
+
+export function initialItemsFromCallBody(body, contentType) {
+  const items = sessionObject(body, contentType)?.initial_items;
+  if (!Array.isArray(items)) return [];
+  const seeded = [];
+  for (const item of items) {
+    if (item?.type !== "message" || !Array.isArray(item.content)) continue;
+    const text = item.content
+      .map((part) => (typeof part?.text === "string" ? part.text : ""))
+      .join("")
+      .trim();
+    if (!text) continue;
+    const assistant = item.role === "assistant";
+    seeded.push({
+      type: "conversation.item.create",
+      item: {
+        type: "message",
+        role: assistant ? "assistant" : "user",
+        content: [{ type: assistant ? "output_text" : "input_text", text }],
+      },
+    });
+  }
+  return seeded;
 }
 
 export function audioCodecFromSdp(sdp) {
@@ -438,21 +465,22 @@ export function voiceClientEvents(event, state = {}) {
         },
       ];
     }
-    const events = [
-      {
-        type: "conversation.item.create",
-        item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text }] },
-      },
-    ];
+    const spoken = {
+      type: "conversation.item.create",
+      item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text }] },
+    };
     const callId = event.delegation_item_id;
     if (typeof callId === "string" && state.pendingCalls?.has(callId)) {
       state.pendingCalls.delete(callId);
-      events.push({
-        type: "conversation.item.create",
-        item: { type: "function_call_output", call_id: callId, output: JSON.stringify(text) },
-      });
+      return [
+        {
+          type: "conversation.item.create",
+          item: { type: "function_call_output", call_id: callId, output: JSON.stringify(text) },
+        },
+        spoken,
+      ];
     }
-    return events;
+    return [spoken];
   }
   return [];
 }
@@ -517,6 +545,7 @@ export function startVoiceBridge({
   codec = { kind: "pcmu", payloadType: 0 },
   onEvent,
   instructions,
+  initialItems = [],
   voiceState,
 }) {
   const opus = codec.kind === "opus" ? createOpus() : null;
@@ -581,6 +610,7 @@ export function startVoiceBridge({
   socket.onopen = flush;
   socket.onmessage = (event) => onUpstream(event?.data ?? event);
   send(sessionUpdate(instructions));
+  for (const item of initialItems) send(item);
   if (opened) flush();
   return {
     onRtp,
@@ -601,7 +631,7 @@ function openVoiceSocket(_url, token) {
   });
 }
 
-export async function answerVoiceCall({ offer, token, webSocketFactory, instructions }) {
+export async function answerVoiceCall({ offer, token, webSocketFactory, instructions, initialItems }) {
   const pc = new RTCPeerConnection(peerConfig());
   const track = new MediaStreamTrack({ kind: "audio" });
   let socket;
@@ -670,6 +700,7 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
       codec: audioCodecFromSdp(sdp),
       onEvent: noteEvent,
       instructions,
+      initialItems,
       voiceState,
     });
     active.add(session);

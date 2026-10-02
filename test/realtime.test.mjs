@@ -516,7 +516,7 @@ test("a Codex multipart call body is answered from its sdp part", async () => {
     'Content-Disposition: form-data; name="session"',
     "Content-Type: application/json",
     "",
-    '{"instructions":"Use the repo instructions."}',
+    '{"instructions":"Use the repo instructions.","initial_items":[{"type":"message","role":"user","content":[{"type":"input_text","text":"Earlier turn."}]}]}',
     `--${boundary}--`,
     "",
   ].join("\r\n");
@@ -553,6 +553,8 @@ test("a Codex multipart call body is answered from its sdp part", async () => {
         const sent = sockets[0].sent.map((line) => JSON.parse(line));
         assert.equal(sent[0].session.instructions, "Use the repo instructions.");
         assert.equal(sent[0].session.voice, "eve");
+        assert.equal(sent[1].item.role, "user");
+        assert.equal(sent[1].item.content[0].text, "Earlier turn.");
       },
     );
   } finally {
@@ -835,9 +837,9 @@ test("desktop v3 sideband context becomes an xAI voice item", () => {
     delegation_item_id: "call-1",
     content: [{ type: "input_text", text: "Renamed it." }],
   }, state);
-  assert.equal(spoken[0].item.type, "force_message");
-  assert.equal(spoken[1].item.type, "function_call_output");
-  assert.equal(spoken[1].item.call_id, "call-1");
+  assert.equal(spoken[0].item.type, "function_call_output");
+  assert.equal(spoken[0].item.call_id, "call-1");
+  assert.equal(spoken[1].item.type, "force_message");
   assert.equal(state.pendingCalls.has("call-1"), false);
 });
 

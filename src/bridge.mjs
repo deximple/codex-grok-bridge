@@ -12,7 +12,12 @@ import { emitProxySse, readRelayProxySse } from "./proxy.mjs";
 import { videoCallsFromParts, videoToolOutput } from "./videogen.mjs";
 import { forwardImagine } from "./imagine.mjs";
 import { attachSidebandUpgrade, forwardRealtime } from "./realtime.mjs";
-import { answerVoiceCall, instructionsFromCallBody, offerFromCallBody } from "./voice.mjs";
+import {
+  answerVoiceCall,
+  initialItemsFromCallBody,
+  instructionsFromCallBody,
+  offerFromCallBody,
+} from "./voice.mjs";
 import {
   applyCacheUsage,
   createPrefixMemory,
@@ -157,6 +162,7 @@ async function relayRealtime(req, res, json, upstreamPath, options) {
       const answered = await answerVoiceCall({
         offer: offerFromCallBody(body, req.headers["content-type"]),
         instructions: instructionsFromCallBody(body, req.headers["content-type"]),
+        initialItems: initialItemsFromCallBody(body, req.headers["content-type"]),
         token: session.token,
         webSocketFactory: options.voiceWebSocket,
       });
