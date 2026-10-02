@@ -865,6 +865,9 @@ function rewriteResponseEvent(value, map, state) {
     const cache = readCacheUsage(value.response.usage);
     if (cache) state.cacheUsage = cache;
   }
+  if (Array.isArray(value.response?.output)) {
+    for (const item of value.response.output) rewriteResponseItem(item, map, state);
+  }
   if (
     value.type === "response.function_call_arguments.delta" ||
     value.type === "response.function_call_arguments.done"
