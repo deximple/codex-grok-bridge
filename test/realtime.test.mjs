@@ -925,7 +925,7 @@ test("a dropped voice socket tells the desktop", () => {
   const seen = [];
   const socket = { readyState: 1, send() {} };
   const state = { closing: false };
-  startVoiceBridge({
+  const bridge = startVoiceBridge({
     track: { onReceiveRtp: { subscribe() {} } },
     socket,
     onEvent(text) {
@@ -938,6 +938,7 @@ test("a dropped voice socket tells the desktop", () => {
   state.closing = true;
   socket.onclose();
   assert.equal(seen.length, 1);
+  bridge.close();
 });
 
 test("an opus-only offer is answered instead of returned as the xAI rejection", async () => {

@@ -782,11 +782,19 @@ export function startVoiceBridge({
     }
     current.send(text);
   };
+  let readyTimer = null;
+  const armReadyTimer = () => {
+    if (readyTimer) clearTimeout(readyTimer);
+    readyTimer = setTimeout(() => markSessionReady(), 2000);
+    readyTimer.unref();
+  };
   const markSessionReady = () => {
     if (sessionReady) return;
     sessionReady = true;
+    if (readyTimer) clearTimeout(readyTimer);
     for (const event of pendingAudio.splice(0)) send(event);
   };
+  armReadyTimer();
   const holdsForIdleResponse = (event) => {
     const item = event?.item;
     return (
@@ -867,6 +875,7 @@ export function startVoiceBridge({
         current = openSocket(sidebandState.conversationId);
         opened = current.readyState === 1;
         sessionReady = false;
+        armReadyTimer();
         bindSocket(current);
         send(sessionUpdate(instructions));
         return;
@@ -902,6 +911,7 @@ export function startVoiceBridge({
     },
     close() {
       state.stopped = true;
+      if (readyTimer) clearTimeout(readyTimer);
       if (state.playoutTimer) clearTimeout(state.playoutTimer);
       try {
         opus?.delete?.();
