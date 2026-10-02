@@ -143,11 +143,32 @@ export function pcm16ToMulaw(pcm) {
   return out;
 }
 
+const XAI_PCM_RATE = 24000;
+
+function resampleInt16(pcm, factor, direction) {
+  const samples = Math.floor(Buffer.from(pcm).length / 2);
+  const input = Buffer.from(pcm);
+  if (direction === "down") {
+    const outSamples = Math.floor(samples / factor);
+    const out = Buffer.alloc(outSamples * 2);
+    for (let i = 0; i < outSamples; i += 1) out.writeInt16LE(input.readInt16LE(i * factor * 2), i * 2);
+    return out;
+  }
+  const out = Buffer.alloc(samples * factor * 2);
+  for (let i = 0; i < samples; i += 1) {
+    const sample = input.readInt16LE(i * 2);
+    for (let step = 0; step < factor; step += 1) out.writeInt16LE(sample, (i * factor + step) * 2);
+  }
+  return out;
+}
+
+function pcmForXai(payload, codec, decoder) {
+  if (codec.kind === "opus" && decoder) return resampleInt16(opusPayloadToMono(decoder, payload), 2, "down");
+  return resampleInt16(mulawToPcm16(payload), 3, "up");
+}
+
 export function appendFromRtp(send, payload, codec = { kind: "pcmu", payloadType: 0 }, decoder) {
-  const pcm =
-    codec.kind === "opus" && decoder
-      ? opusPayloadToMono(decoder, payload)
-      : mulawToPcm16(payload);
+  const pcm = pcmForXai(payload, codec, decoder);
   if (pcm.length === 0) return;
   send({
     type: "input_audio_buffer.append",
@@ -175,7 +196,8 @@ function writeAudio(track, state, payload, clockStep) {
 export function playbackFromDelta(track, state, delta) {
   const pcm = Buffer.from(String(delta ?? ""), "base64");
   if (state.kind === "opus" && state.opus) {
-    state.pending = Buffer.concat([state.pending ?? Buffer.alloc(0), pcm]);
+    const wide = resampleInt16(pcm, 2, "up");
+    state.pending = Buffer.concat([state.pending ?? Buffer.alloc(0), wide]);
     const frameBytes = OPUS_FRAME * 2;
     while (state.pending.length >= frameBytes) {
       const frame = state.pending.subarray(0, frameBytes);
@@ -185,7 +207,7 @@ export function playbackFromDelta(track, state, delta) {
     }
     return;
   }
-  const mulaw = pcm16ToMulaw(pcm);
+  const mulaw = pcm16ToMulaw(resampleInt16(pcm, 3, "down"));
   writeAudio(track, state, mulaw, mulaw.length);
 }
 
@@ -196,6 +218,10 @@ function sessionUpdate() {
       voice: "eve",
       instructions: "Say ready.",
       turn_detection: { type: "server_vad" },
+      audio: {
+        input: { format: { type: "audio/pcm", rate: XAI_PCM_RATE } },
+        output: { format: { type: "audio/pcm", rate: XAI_PCM_RATE } },
+      },
     },
   };
 }

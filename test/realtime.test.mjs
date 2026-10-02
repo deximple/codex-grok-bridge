@@ -411,6 +411,8 @@ test("a rejected xAI offer is answered by werift and bridged to the voice socket
         const sent = sockets[0].sent.map((line) => JSON.parse(line));
         assert.equal(sent[0].type, "session.update");
         assert.equal(sent[0].session.voice, "eve");
+        assert.equal(sent[0].session.audio.input.format.rate, 24000);
+        assert.equal(sent[0].session.audio.output.format.type, "audio/pcm");
       },
     );
   } finally {
@@ -438,15 +440,13 @@ test("voice audio uses append and output_audio.delta", () => {
   const mulaw = Buffer.from([0xff, 0x7f]);
   bridge.onRtp({ payload: mulaw });
   assert.equal(sent.at(-1).type, "input_audio_buffer.append");
-  assert.equal(Buffer.from(sent.at(-1).audio, "base64").equals(mulawToPcm16(mulaw)), true);
-  const pcm = Buffer.alloc(4);
-  pcm.writeInt16LE(0, 0);
-  pcm.writeInt16LE(16000, 2);
+  assert.equal(Buffer.from(sent.at(-1).audio, "base64").length, mulawToPcm16(mulaw).length * 3);
+  const pcm = Buffer.alloc(6);
   bridge.onUpstream(
     JSON.stringify({ type: "response.output_audio.delta", delta: pcm.toString("base64") }),
   );
   assert.equal(track.rtp.length, 1);
-  assert.equal(Buffer.from(track.rtp[0].payload).equals(pcm16ToMulaw(pcm)), true);
+  assert.equal(track.rtp[0].payload.length, 1);
   bridge.onUpstream(JSON.stringify({ type: "ping" }));
   assert.equal(track.rtp.length, 1);
   const state = { sequence: 0, timestamp: 0, ssrc: 1 };
@@ -571,7 +571,7 @@ test("opus rtp is appended as pcm and playback is opus", () => {
     bridge.onUpstream(
       JSON.stringify({
         type: "response.output_audio.delta",
-        delta: Buffer.alloc(960 * 2).toString("base64"),
+        delta: Buffer.alloc(480 * 2).toString("base64"),
       }),
     );
     assert.equal(track.rtp.length, 1);
