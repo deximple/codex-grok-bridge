@@ -500,6 +500,34 @@ function droppedItemInputTexts(node) {
   return texts;
 }
 
+function functionOutputText(output) {
+  if (typeof output === "string") return output;
+  const parts = [];
+  const push = (value) => {
+    if (typeof value === "string" && value.trim()) parts.push(value.trim());
+  };
+  const visit = (value) => {
+    if (typeof value === "string") {
+      push(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const part of value) visit(part);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    push(value.text);
+    push(value.stdout);
+    push(value.stderr);
+    const image = value.image_url;
+    if (typeof image === "string") push(image);
+    else if (image && typeof image === "object") push(image.url);
+    if (Array.isArray(value.content)) visit(value.content);
+  };
+  visit(output);
+  return parts.join("\n");
+}
+
 function userInputTextMessage(texts) {
   return whitelistInputNode({
     type: "message",
@@ -605,6 +633,10 @@ function toProxyInputNode(node, map, state, salvage = false) {
       delete next.namespace;
     }
   }
+
+  // Codex sends a string or a list of content parts. Grok accepts the string.
+  if (next.type === "function_call_output" && typeof next.output !== "string")
+    next.output = functionOutputText(next.output);
 
   const whitelisted = whitelistInputNode(next);
   if (!salvage || isForwardedItem(whitelisted)) return whitelisted;

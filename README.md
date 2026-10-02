@@ -234,9 +234,10 @@ that overlap the parent turn.
 ### Tools
 
 Ordinary function tools, namespaced function tools, and freeform custom tools
-are translated. File edits, MCP, and similar work inside whatever Codex
-exposed, at whatever approval policy the user set. Not every tool has been
-live-tested individually.
+are translated. A function result that arrives as a list of content parts is
+forwarded as text, and an image URL in that list is included. File edits, MCP,
+and similar work inside whatever Codex exposed, at whatever approval policy the
+user set. Not every tool has been live-tested individually.
 
 ### Image attachments (vision)
 
@@ -607,7 +608,8 @@ Codex `reasoning` 항목의 평문 요약은 상류로 전달합니다. 암호�
 
 ### 도구
 
-일반 함수 도구, namespace 함수 도구, freeform 커스텀 도구를 변환합니다. 파일
+일반 함수 도구, namespace 함수 도구, freeform 커스텀 도구를 변환합니다. 내용
+목록으로 온 함수 결과는 텍스트로 넘기며, 그 목록의 이미지 주소도 넣습니다. 파일
 변경·MCP 등은 Codex가 노출한 도구와 사용자가 정한 승인 정책 안에서 동작합니다.
 개별 기능을 모두 실검증한 것은 아닙니다.
 

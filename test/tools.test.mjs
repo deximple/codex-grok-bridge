@@ -848,6 +848,27 @@ test("forwards readable text from Codex input items Grok would drop", () => {
     assert.equal(droppedEncoded.includes(secret), false);
 });
 
+test("a function result made of content parts is forwarded as text", () => {
+  const { request } = toProxyRequest({
+    input: [
+      {
+        type: "function_call_output",
+        call_id: "c1",
+        output: [
+          { type: "input_text", text: "BRIDGE_OK" },
+          { type: "encrypted_content", encrypted_content: "secret-encrypted" },
+          { type: "input_image", image_url: "https://example.test/a.png" },
+        ],
+      },
+    ],
+    tools: [],
+  });
+  assert.equal(request.input[0].type, "function_call_output");
+  assert.equal(request.input[0].call_id, "c1");
+  assert.equal(request.input[0].output, "BRIDGE_OK\nhttps://example.test/a.png");
+  assert.equal(JSON.stringify(request.input).includes("secret-encrypted"), false);
+});
+
 test("readable salvage leaves items Grok already accepts structured", () => {
   const { request } = toProxyRequest({
     input: [
