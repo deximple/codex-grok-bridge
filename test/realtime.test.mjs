@@ -2472,6 +2472,9 @@ test("user speech after a finished voice reply does not mute the next audio", ()
     assert.equal(played > 0, true);
     bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
     bridge.onUpstream(JSON.stringify({ type: "response.output_audio.delta", delta: pcm }));
+    assert.equal(track.rtp.length, played);
+    bridge.onUpstream(JSON.stringify({ type: "response.created" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio.delta", delta: pcm }));
     assert.equal(track.rtp.length > played, true);
   } finally {
     bridge.close();

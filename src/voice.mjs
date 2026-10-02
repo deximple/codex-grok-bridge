@@ -1093,6 +1093,7 @@ export function startVoiceBridge({
           responseActive = true;
           awaitingCreated = true;
         }
+        state.dropping = true;
       }
     }
     const sideband = voiceSidebandEvent(event, sidebandState);
