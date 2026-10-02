@@ -950,6 +950,100 @@ test("a host-only answer opens the offered event channel", async () => {
   assert.equal(code, 0);
 });
 
+test("a connected offerer microphone reaches xAI", async () => {
+  const child = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+        import OpusScript from "opusscript";
+        import { MediaStreamTrack, RTCPeerConnection, RtpHeader, RtpPacket, useOPUS } from "werift";
+        import { answerVoiceCall } from "./src/voice.mjs";
+        const offerer = new RTCPeerConnection({
+          iceServers: [],
+          iceUseIpv4: true,
+          iceUseIpv6: false,
+          iceUseTcp: false,
+          codecs: { audio: [useOPUS({ payloadType: 111 })] },
+        });
+        const mic = new MediaStreamTrack({ kind: "audio" });
+        offerer.addTrack(mic);
+        const channel = offerer.createDataChannel("oai-events");
+        await offerer.setLocalDescription(await offerer.createOffer());
+        const sent = [];
+        const answered = await answerVoiceCall({
+          offer: offerer.localDescription.sdp,
+          token: "t",
+          webSocketFactory: () => ({ readyState: 1, send(data) { sent.push(String(data)); }, close() {} }),
+        });
+        await offerer.setRemoteDescription({ type: "answer", sdp: answered.sdp });
+        const opened = await new Promise((resolve) => {
+          const timer = setTimeout(() => resolve(false), 5000);
+          const done = (state) => {
+            if (state !== "open") return;
+            clearTimeout(timer);
+            resolve(true);
+          };
+          channel.stateChanged.subscribe(done);
+          done(channel.readyState);
+        });
+        if (!opened) {
+          console.log("CLOSED");
+          process.exit(1);
+        }
+        const encoder = new OpusScript(48000, 1, OpusScript.Application.VOIP);
+        const encoded = Buffer.from(encoder.encode(Buffer.alloc(960 * 2), 960));
+        mic.writeRtp(new RtpPacket(new RtpHeader({
+          marker: true,
+          payloadType: 111,
+          sequenceNumber: 1,
+          timestamp: 960,
+          ssrc: 1,
+        }), encoded));
+        const appended = await new Promise((resolve) => {
+          const timer = setTimeout(() => resolve(false), 2000);
+          const check = () => {
+            if (sent.some((line) => line.includes("input_audio_buffer.append"))) {
+              clearTimeout(timer);
+              resolve(true);
+              return;
+            }
+            setTimeout(check, 20);
+          };
+          check();
+        });
+        encoder.delete?.();
+        console.log(appended ? "APPEND" : "NO");
+        process.exit(appended ? 0 : 1);
+      `,
+    ],
+    { cwd: process.cwd() },
+  );
+  let out = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    out += chunk;
+  });
+  let err = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => {
+    err += chunk;
+  });
+  const code = await new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve(-1);
+    }, 12000);
+    child.on("exit", (status) => {
+      clearTimeout(timer);
+      resolve(status);
+    });
+  });
+  assert.equal(out.includes("APPEND"), true, err.slice(0, 500));
+  assert.equal(code, 0);
+});
+
 test("desktop v3 sideband context becomes an xAI voice item", () => {
   assert.deepEqual(voiceClientEvents({ type: "response.cancel" }), [{ type: "response.cancel" }]);
   assert.deepEqual(voiceClientEvents({ type: "session.close" }), []);
