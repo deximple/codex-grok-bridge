@@ -67,6 +67,12 @@ function videoDuration(value) {
 }
 
 function videoArgumentError(args) {
+  if (typeof args.image_url === "string" && args.image_url.trim()) {
+    const image = args.image_url.trim();
+    if (!/^https?:\/\//i.test(image) && !/^data:/i.test(image)) {
+      return "Video generation failed: image_url must be an http(s) URL or a data URL.";
+    }
+  }
   if (args.duration != null && args.duration !== "") {
     const duration = videoDuration(args.duration);
     if (duration == null || duration < 1 || duration > 15) {

@@ -31,11 +31,17 @@ test("a video tool call rejects a duration or aspect ratio the API will not acce
     { arguments: JSON.stringify({ prompt: "a cat", aspect_ratio: "2:1" }) },
     { token: TOKEN, fetchImpl },
   );
+  const image = await videoToolOutput(
+    { arguments: JSON.stringify({ prompt: "a cat", image_url: "/tmp/cat.png" }) },
+    { token: TOKEN, fetchImpl },
+  );
   assert.equal(called, false);
   assert.match(duration, /1 to 15/);
   assert.match(ratio, /16:9/);
+  assert.match(image, /http\(s\) URL/);
   assertNoBearer(duration);
   assertNoBearer(ratio);
+  assertNoBearer(image);
 });
 
 test("the video function is declared once and does not take a Codex tool name", () => {
