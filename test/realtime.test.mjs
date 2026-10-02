@@ -812,13 +812,11 @@ test("a voice response.create that races an active response is deferred", () => 
     });
     assert.equal(sent.some((event) => event.item?.type === "force_message"), false);
     bridge.onUpstream(JSON.stringify({ type: "response.done" }));
-    const creates = [];
-    sent.forEach((event, index) => {
-      if (event.type === "response.create") creates.push(index);
-    });
     const forceAt = sent.findIndex((event) => event.item?.type === "force_message");
-    assert.equal(creates.length, 2);
-    assert.equal(forceAt < creates[1], true);
+    assert.equal(forceAt > sent.findIndex((event) => event.type === "response.create"), true);
+    assert.equal(sent.filter((event) => event.type === "response.create").length, 1);
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    assert.equal(sent.filter((event) => event.type === "response.create").length, 1);
   } finally {
     bridge.close();
   }
@@ -1042,6 +1040,38 @@ test("a later voice turn keeps its own talkspurt marker", async () => {
   }
 });
 
+test("a second spoken voice tool reply waits for the first turn", () => {
+  const sent = [];
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket: {
+      readyState: 1,
+      send(data) {
+        sent.push(JSON.parse(String(data)));
+      },
+    },
+  });
+  try {
+    const force = (text) => ({
+      type: "conversation.item.create",
+      item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text }] },
+    });
+    bridge.sendClient(force("One."));
+    bridge.sendClient(force("Two."));
+    assert.deepEqual(
+      sent.filter((event) => event.item?.type === "force_message").map((event) => event.item.content[0].text),
+      ["One."],
+    );
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    assert.deepEqual(
+      sent.filter((event) => event.item?.type === "force_message").map((event) => event.item.content[0].text),
+      ["One.", "Two."],
+    );
+  } finally {
+    bridge.close();
+  }
+});
+
 test("a streamed codex reply is spoken once", () => {
   const state = { pendingCalls: new Set(["call-1"]) };
   const frame = (text) => ({
@@ -1082,6 +1112,48 @@ test("a streamed codex reply is spoken once", () => {
   assert.equal(aside[1].item.type, "message");
   assert.equal(aside[2].type, "response.create");
   assert.equal(aside.some((event) => event.item?.type === "force_message"), false);
+  const batch = { pendingCalls: new Set(["call-a", "call-b"]) };
+  const append = (id, text, channel) =>
+    queueDelegationSpeech(batch, {
+      type: "delegation.context.append",
+      delegation_item_id: id,
+      ...(channel ? { channel } : {}),
+      content: [{ type: "input_text", text }],
+    });
+  assert.equal(append("call-a", "one", "commentary"), true);
+  assert.equal(append("call-b", "two", "commentary"), true);
+  const together = flushDelegationSpeech(batch);
+  assert.equal(together.filter((event) => event.type === "response.create").length, 1);
+  assert.equal(together.at(-1).type, "response.create");
+  assert.equal(
+    together.filter((event) => event.item?.type === "function_call_output").length,
+    2,
+  );
+  const spokenBatch = { pendingCalls: new Set(["call-c", "call-d"]) };
+  assert.equal(
+    queueDelegationSpeech(spokenBatch, {
+      type: "delegation.context.append",
+      delegation_item_id: "call-c",
+      content: [{ type: "input_text", text: "Left." }],
+    }),
+    true,
+  );
+  assert.equal(
+    queueDelegationSpeech(spokenBatch, {
+      type: "delegation.context.append",
+      delegation_item_id: "call-d",
+      content: [{ type: "input_text", text: "Right." }],
+    }),
+    true,
+  );
+  const lines = flushDelegationSpeech(spokenBatch);
+  const firstForce = lines.findIndex((event) => event.item?.type === "force_message");
+  assert.equal(lines.some((event) => event.type === "response.create"), false);
+  assert.equal(firstForce > 1, true);
+  assert.equal(
+    lines.slice(0, firstForce).every((event) => event.item?.type === "function_call_output"),
+    true,
+  );
 });
 
 test("a short playout delay does not split the talkspurt", () => {

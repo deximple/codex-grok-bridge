@@ -692,9 +692,12 @@ export function flushDelegationSpeech(state) {
   const parts = state.speechParts;
   if (!parts?.size) return [];
   const events = [];
+  const spoken = [];
+  let commentary = false;
   for (const [id, record] of parts) {
     const text = record.text ?? "";
     if (record.commentary) {
+      commentary = true;
       if (state.pendingCalls?.has(id)) {
         state.pendingCalls.delete(id);
         events.push({
@@ -708,21 +711,24 @@ export function flushDelegationSpeech(state) {
           item: { type: "message", role: "assistant", content: [{ type: "input_text", text }] },
         });
       }
-      events.push({ type: "response.create" });
       continue;
     }
-    events.push(
-      ...voiceClientEvents(
-        {
-          type: "delegation.context.append",
-          delegation_item_id: id,
-          content: [{ type: "input_text", text }],
-        },
-        state,
-      ),
-    );
+    for (const event of voiceClientEvents(
+      {
+        type: "delegation.context.append",
+        delegation_item_id: id,
+        content: [{ type: "input_text", text }],
+      },
+      state,
+    )) {
+      if (event?.item?.type === "force_message") spoken.push(event);
+      else events.push(event);
+    }
   }
   parts.clear();
+  events.push(...spoken);
+  // force_message is itself the turn. A commentary batch continues once, after every result.
+  if (commentary && spoken.length === 0) events.push({ type: "response.create" });
   return events;
 }
 
@@ -933,9 +939,22 @@ export function startVoiceBridge({
     );
   };
   const playbackBusy = () => Boolean(state.playout?.length || state.pumping);
+  const startsResponse = (event) =>
+    event?.type === "response.create" ||
+    (event?.type === "conversation.item.create" && event.item?.type === "force_message");
   const releaseHeld = () => {
     if (responseActive || playbackBusy() || state.userSpeaking) return;
-    for (const event of held.splice(0)) send(event);
+    while (held.length) {
+      const event = held[0];
+      if (startsResponse(event) && responseActive) return;
+      held.shift();
+      send(event);
+      if (startsResponse(event)) {
+        responseActive = true;
+        if (event?.item?.type === "force_message") pendingCreate = false;
+        return;
+      }
+    }
   };
   const interruptAssistant = (userSpeaking) => {
     sidebandState.interrupted = true;
@@ -1029,9 +1048,10 @@ export function startVoiceBridge({
         responseActive = false;
         state.dropping = false;
         releaseHeld();
-        if (pendingCreate) {
+        if (pendingCreate && !responseActive) {
           pendingCreate = false;
           send({ type: "response.create" });
+          responseActive = true;
         }
       }
     }
@@ -1105,6 +1125,10 @@ export function startVoiceBridge({
           return;
         }
         send(event);
+        if (startsResponse(event)) {
+          responseActive = true;
+          if (event?.item?.type === "force_message") pendingCreate = false;
+        }
       } catch {
         // The xAI socket may already be closed.
       }
