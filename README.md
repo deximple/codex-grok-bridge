@@ -292,7 +292,7 @@ starting a new thread, before the first turn is saved.
 
 ### Not in this release
 
-Voice call setup (`POST /v1/realtime/calls` and `POST /v1/live`) is forwarded raw to xAI. Codex’s voice sideband stays hardcoded at `https://api.openai.com/v1`. Codex cloud tasks are not in this package.
+Codex’s voice sideband stays at `https://api.openai.com/v1`, so this does not join the call. Codex cloud tasks are not in this package.
 
 Upstream sometimes resets the connection mid-response (three measured cases:
 25 s / 27 s / 253 s, 726 KB–22 MB). The bridge holds the reply and, if that
@@ -660,7 +660,7 @@ OpenAI 경로가 맞습니다.
 
 ### 이번 릴리스에 없는 것
 
-음성 통화 설정(`POST /v1/realtime/calls`, `POST /v1/live`)은 xAI로 원문 그대로 넘깁니다. Codex 음성 sideband는 `https://api.openai.com/v1`에 고정되어 있습니다. Codex 클라우드 작업은 이 패키지에 없습니다.
+Codex 음성 sideband는 `https://api.openai.com/v1`에 고정되어 있어 이 경로가 통화에 붙지는 않습니다. Codex 클라우드 작업은 이 패키지에 없습니다.
 
 상류가 응답 중간에 연결을 리셋하는 경우가 있습니다(실측 3건: 25초 / 27초 /
 253초, 726 KB–22 MB). 브리지는 응답을 들고 있다가, Codex에 그 응답을 보내기
