@@ -238,7 +238,8 @@ that overlap the parent turn.
 Ordinary function tools, namespaced function tools, and freeform custom tools
 are translated. A function result that arrives as a list of content parts is
 forwarded as text, and an image URL in that list is included. Command output
-in stdout, stderr, or an aggregated log stays in the history. File edits, MCP,
+in stdout, stderr, or an aggregated log stays in the history. A non-zero exit
+code stays with that output. File edits, MCP,
 and similar work inside whatever Codex exposed, at whatever approval policy the
 user set. Not every tool has been live-tested individually.
 
@@ -615,7 +616,8 @@ Codex `reasoning` 항목의 평문 요약은 상류로 전달합니다. 요약�
 
 일반 함수 도구, namespace 함수 도구, freeform 커스텀 도구를 변환합니다. 내용
 목록으로 온 함수 결과는 텍스트로 넘기며, 그 목록의 이미지 주소도 넣습니다. stdout,
-stderr, 합쳐진 명령 출력도 이력에 남습니다. 파일
+stderr, 합쳐진 명령 출력도 이력에 남습니다. 0이 아닌 종료 코드도 그 출력과
+함께 남습니다. 파일
 변경·MCP 등은 Codex가 노출한 도구와 사용자가 정한 승인 정책 안에서 동작합니다.
 개별 기능을 모두 실검증한 것은 아닙니다.
 

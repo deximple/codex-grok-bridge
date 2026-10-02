@@ -891,6 +891,18 @@ test("command output fields stay in the history", () => {
     tools: [],
   });
   assert.deepEqual(split.request.input[0].content.map((part) => part.text), ["out", "err"]);
+  const failed = toProxyRequest({
+    input: [
+      {
+        type: "local_shell_call_output",
+        call_id: "lso-4",
+        stdout: "nope",
+        exit_code: 2,
+      },
+    ],
+    tools: [],
+  });
+  assert.deepEqual(failed.request.input[0].content.map((part) => part.text), ["nope", "exit 2"]);
 });
 
 test("an audio attachment does not stay in the request", () => {

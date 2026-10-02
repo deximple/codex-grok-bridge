@@ -511,6 +511,21 @@ function droppedItemInputTexts(node) {
     rememberText(texts, seen, node.stdout);
     rememberText(texts, seen, node.stderr);
   }
+  const rememberExit = (value) => {
+    if (Number.isInteger(value) && value !== 0) rememberText(texts, seen, `exit ${value}`);
+  };
+  rememberExit(node.exit_code);
+  const output = node.output;
+  if (Array.isArray(output)) {
+    for (const row of output) {
+      if (!row || typeof row !== "object") continue;
+      rememberExit(row.exit_code);
+      rememberExit(row.outcome?.exit_code);
+    }
+  } else if (output && typeof output === "object") {
+    rememberExit(output.exit_code);
+    rememberExit(output.outcome?.exit_code);
+  }
   return texts;
 }
 
