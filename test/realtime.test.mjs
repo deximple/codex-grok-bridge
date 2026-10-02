@@ -1380,6 +1380,75 @@ test("a resumed voice socket sends the new session update first", () => {
   }
 });
 
+test("a resumed voice socket drops audio that was still queued", async () => {
+  const first = {
+    readyState: 1,
+    sent: [],
+    send(data) {
+      this.sent.push(JSON.parse(String(data)));
+    },
+    close() {},
+  };
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  let second;
+  const bridge = startVoiceBridge({
+    track,
+    socket: first,
+    codec: { kind: "opus", payloadType: 111 },
+    openSocket() {
+      second = {
+        readyState: 1,
+        sent: [],
+        send(data) {
+          this.sent.push(JSON.parse(String(data)));
+        },
+        close() {},
+      };
+      return second;
+    },
+  });
+  try {
+    first.onmessage(JSON.stringify({ type: "conversation.created", conversation: { id: "conv-1" } }));
+    first.onmessage(JSON.stringify({ type: "session.updated", session: { id: "sess-1" } }));
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        item_id: "item-1",
+        content_index: 0,
+        delta: Buffer.alloc(960 * 4).toString("base64"),
+      }),
+    );
+    const sentBefore = track.rtp.length;
+    assert.equal(sentBefore >= 1, true);
+    first.onclose();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    assert.equal(track.rtp.length, sentBefore);
+    assert.equal(second.sent.some((event) => event.type === "conversation.item.truncate"), false);
+    second.onmessage(JSON.stringify({ type: "session.updated", session: { id: "sess-2" } }));
+    const truncated = second.sent.filter((event) => event.type === "conversation.item.truncate");
+    assert.equal(truncated.length, 1);
+    assert.equal(truncated[0].item_id, "item-1");
+    assert.equal(truncated[0].content_index, 0);
+    assert.equal(truncated[0].audio_end_ms, 20);
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        item_id: "item-2",
+        delta: Buffer.alloc(960).toString("base64"),
+      }),
+    );
+    assert.equal(track.rtp.length > sentBefore, true);
+  } finally {
+    bridge.close();
+  }
+});
+
 test("a dropped voice socket tells the desktop", () => {
   const seen = [];
   const socket = { readyState: 1, send() {} };

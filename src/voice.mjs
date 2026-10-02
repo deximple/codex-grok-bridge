@@ -506,6 +506,20 @@ export function stopPlayback(state, options = {}) {
   }
 }
 
+// The socket is gone, so frames still queued here will never belong to the next
+// response. Leave dropping and userSpeaking alone; the caller decides those.
+function discardUnsentAudio(state) {
+  state.playout = [];
+  state.pending = Buffer.alloc(0);
+  state.pumping = false;
+  state.endTalk = true;
+  state.talking = false;
+  if (state.playoutTimer) {
+    clearTimeout(state.playoutTimer);
+    state.playoutTimer = null;
+  }
+}
+
 function flushPlayback(track, state) {
   if (state.dropping) return;
   if (state.kind !== "opus" || !state.opus || !state.pending?.length) return;
@@ -1028,10 +1042,21 @@ export function startVoiceBridge({
         pendingCreate = false;
         state.dropping = false;
         state.userSpeaking = false;
+        const resumeTruncate =
+          Boolean(state.playout?.length || state.pending?.length) && state.audioItemId && !state.truncated
+            ? {
+                type: "conversation.item.truncate",
+                item_id: state.audioItemId,
+                content_index: state.audioContentIndex ?? 0,
+                audio_end_ms: state.playedMs ?? 0,
+              }
+            : null;
+        discardUnsentAudio(state);
         state.truncated = false;
         state.playedMs = 0;
         state.audioItemId = undefined;
         queued.length = 0;
+        if (resumeTruncate) pendingHeld.unshift(resumeTruncate);
         current = openSocket(sidebandState.conversationId);
         opened = current.readyState === 1;
         sessionReady = false;
