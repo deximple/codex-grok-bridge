@@ -2451,6 +2451,29 @@ test("split context appends are joined before the tool result is spoken", () => 
   assert.equal(split[2].content[0].text, "BBBB");
 });
 
+test("user speech after a finished voice caption keeps the next words", () => {
+  const seen = [];
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket: { readyState: 1, send() {} },
+    onEvent(text) {
+      seen.push(JSON.parse(text));
+    },
+  });
+  try {
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio_transcript.delta", delta: "Hi" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio_transcript.done", transcript: "Hi there" }));
+    bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio_transcript.delta", delta: "Next" }));
+    assert.deepEqual(
+      seen.filter((event) => event.type === "output_transcript.added").map((event) => event.item.text),
+      ["Hi", "Next"],
+    );
+  } finally {
+    bridge.close();
+  }
+});
+
 test("an interrupted voice reply keeps only the transcript already sent", () => {
   const state = {};
   assert.deepEqual(voiceSidebandEvent({ type: "response.output_audio_transcript.delta", delta: "Hi" }, state), {
