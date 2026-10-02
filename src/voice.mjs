@@ -996,11 +996,11 @@ export function startVoiceBridge({
       if (event.type === "response.done") {
         responseActive = false;
         state.dropping = false;
+        releaseHeld();
         if (pendingCreate) {
           pendingCreate = false;
           send({ type: "response.create" });
         }
-        releaseHeld();
       }
     }
     const sideband = voiceSidebandEvent(event, sidebandState);

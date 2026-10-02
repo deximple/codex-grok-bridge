@@ -811,8 +811,13 @@ test("a voice response.create that races an active response is deferred", () => 
     });
     assert.equal(sent.some((event) => event.item?.type === "force_message"), false);
     bridge.onUpstream(JSON.stringify({ type: "response.done" }));
-    assert.equal(sent.filter((event) => event.type === "response.create").length, 2);
-    assert.equal(sent.at(-1).item.type, "force_message");
+    const creates = [];
+    sent.forEach((event, index) => {
+      if (event.type === "response.create") creates.push(index);
+    });
+    const forceAt = sent.findIndex((event) => event.item?.type === "force_message");
+    assert.equal(creates.length, 2);
+    assert.equal(forceAt < creates[1], true);
   } finally {
     bridge.close();
   }
