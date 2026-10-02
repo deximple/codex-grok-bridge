@@ -793,6 +793,7 @@ export function startVoiceBridge({
     sessionReady = true;
     if (readyTimer) clearTimeout(readyTimer);
     for (const event of pendingAudio.splice(0)) send(event);
+    releaseHeld();
   };
   armReadyTimer();
   const holdsForIdleResponse = (event) => {
@@ -872,12 +873,15 @@ export function startVoiceBridge({
     if (!resumed && sidebandState.conversationId && openSocket) {
       resumed = true;
       try {
+        const pendingHeld = held.splice(0);
+        responseActive = false;
         current = openSocket(sidebandState.conversationId);
         opened = current.readyState === 1;
         sessionReady = false;
         armReadyTimer();
         bindSocket(current);
         send(sessionUpdate(instructions));
+        held.push(...pendingHeld);
         return;
       } catch {
         // The resume dial failed. Tell the desktop below.

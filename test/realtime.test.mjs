@@ -942,6 +942,50 @@ test("a resumed voice socket dials the same conversation", () => {
   }
 });
 
+test("a dropped voice socket sends a held tool reply after the new session is ready", () => {
+  const first = {
+    readyState: 1,
+    sent: [],
+    send(data) {
+      this.sent.push(JSON.parse(String(data)));
+    },
+    close() {},
+  };
+  let second;
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket: first,
+    openSocket() {
+      second = {
+        readyState: 1,
+        sent: [],
+        send(data) {
+          this.sent.push(JSON.parse(String(data)));
+        },
+        close() {},
+      };
+      return second;
+    },
+  });
+  try {
+    first.onmessage(JSON.stringify({ type: "conversation.created", conversation: { id: "conv-1" } }));
+    first.onmessage(JSON.stringify({ type: "session.updated", session: { id: "sess-1" } }));
+    bridge.onUpstream(JSON.stringify({ type: "response.created" }));
+    bridge.sendClient({
+      type: "conversation.item.create",
+      item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text: "Later." }] },
+    });
+    assert.equal(first.sent.some((event) => event.item?.type === "force_message"), false);
+    first.onclose();
+    assert.equal(second.sent[0].type, "session.update");
+    assert.equal(second.sent.some((event) => event.item?.type === "force_message"), false);
+    second.onmessage(JSON.stringify({ type: "session.updated", session: { id: "sess-2" } }));
+    assert.equal(second.sent.at(-1).item.type, "force_message");
+  } finally {
+    bridge.close();
+  }
+});
+
 test("a dropped voice socket tells the desktop", () => {
   const seen = [];
   const socket = { readyState: 1, send() {} };
