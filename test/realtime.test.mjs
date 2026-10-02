@@ -480,6 +480,11 @@ test("a short voice reply is played when the turn ends", () => {
   bridge.onUpstream(JSON.stringify({ type: "response.output_audio.done" }));
   assert.equal(track.rtp.length, 1);
   assert.equal(track.rtp[0].header.payloadType, 111);
+  assert.equal(track.rtp[0].header.marker, true);
+  bridge.onUpstream(JSON.stringify({ type: "response.output_audio.delta", delta: Buffer.alloc(200).toString("base64") }));
+  bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+  assert.equal(track.rtp.length, 2);
+  assert.equal(track.rtp[1].header.marker, true);
 });
 
 test("a dropped voice socket tells the desktop", () => {

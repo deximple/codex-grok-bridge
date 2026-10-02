@@ -357,11 +357,14 @@ export function appendFromRtp(send, payload, codec = { kind: "pcmu", payloadType
 
 function writeAudio(track, state, payload, clockStep) {
   if (payload.length === 0) return;
+  const marker = !state.talking;
+  state.talking = true;
   state.sequence = (state.sequence + 1) & 0xffff;
   state.timestamp = (state.timestamp + clockStep) >>> 0;
   track.writeRtp(
     new RtpPacket(
       new RtpHeader({
+        marker,
         payloadType: state.payloadType,
         sequenceNumber: state.sequence,
         timestamp: state.timestamp,
@@ -619,6 +622,7 @@ export function startVoiceBridge({
       } catch {
         // A short tail is dropped. The call stays up.
       }
+      state.talking = false;
     }
     const sideband = voiceSidebandEvent(event, sidebandState);
     if (sideband) onEvent?.(JSON.stringify(sideband));
