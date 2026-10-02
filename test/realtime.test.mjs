@@ -1040,6 +1040,46 @@ test("a later voice turn keeps its own talkspurt marker", async () => {
   }
 });
 
+test("a rejected spoken voice turn does not hold the next reply", () => {
+  const sent = [];
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket: {
+      readyState: 1,
+      send(data) {
+        sent.push(JSON.parse(String(data)));
+      },
+    },
+  });
+  try {
+    const force = (text) => ({
+      type: "conversation.item.create",
+      item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text }] },
+    });
+    bridge.sendClient(force("One."));
+    bridge.sendClient(force("Two."));
+    bridge.onUpstream(JSON.stringify({ type: "error", error: { message: "nope" } }));
+    assert.deepEqual(
+      sent.filter((event) => event.item?.type === "force_message").map((event) => event.item.content[0].text),
+      ["One.", "Two."],
+    );
+    bridge.sendClient(force("Three."));
+    bridge.onUpstream(JSON.stringify({ type: "response.created" }));
+    bridge.onUpstream(JSON.stringify({ type: "error", error: { message: "later" } }));
+    assert.deepEqual(
+      sent.filter((event) => event.item?.type === "force_message").map((event) => event.item.content[0].text),
+      ["One.", "Two."],
+    );
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    assert.deepEqual(
+      sent.filter((event) => event.item?.type === "force_message").map((event) => event.item.content[0].text),
+      ["One.", "Two.", "Three."],
+    );
+  } finally {
+    bridge.close();
+  }
+});
+
 test("a second spoken voice tool reply waits for the first turn", () => {
   const sent = [];
   const bridge = startVoiceBridge({

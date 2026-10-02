@@ -900,6 +900,7 @@ export function startVoiceBridge({
   let opened = socket.readyState === 1;
   let responseActive = false;
   let pendingCreate = false;
+  let awaitingCreated = false;
   let resumed = false;
   let sessionReady = false;
   const pendingAudio = [];
@@ -951,6 +952,7 @@ export function startVoiceBridge({
       send(event);
       if (startsResponse(event)) {
         responseActive = true;
+        awaitingCreated = true;
         if (event?.item?.type === "force_message") pendingCreate = false;
         return;
       }
@@ -1005,6 +1007,11 @@ export function startVoiceBridge({
     ) {
       responseActive = true;
       pendingCreate = true;
+      awaitingCreated = false;
+    } else if (event?.type === "error" && awaitingCreated) {
+      responseActive = false;
+      awaitingCreated = false;
+      releaseHeld();
     }
     if (event?.type === "conversation.created" && typeof event.conversation?.id === "string") {
       sidebandState.conversationId = event.conversation.id;
@@ -1034,6 +1041,7 @@ export function startVoiceBridge({
     }
     if (event?.type === "response.created") {
       responseActive = true;
+      awaitingCreated = false;
       state.dropping = false;
     }
     if (event?.type === "response.output_audio.done" || event?.type === "response.done") {
@@ -1046,12 +1054,14 @@ export function startVoiceBridge({
       if (!state.playout?.length) state.talking = false;
       if (event.type === "response.done") {
         responseActive = false;
+        awaitingCreated = false;
         state.dropping = false;
         releaseHeld();
         if (pendingCreate && !responseActive) {
           pendingCreate = false;
           send({ type: "response.create" });
           responseActive = true;
+          awaitingCreated = true;
         }
       }
     }
@@ -1068,6 +1078,7 @@ export function startVoiceBridge({
         const pendingHeld = held.splice(0);
         responseActive = false;
         pendingCreate = false;
+        awaitingCreated = false;
         state.dropping = false;
         state.userSpeaking = false;
         const resumeTruncate =
@@ -1127,6 +1138,7 @@ export function startVoiceBridge({
         send(event);
         if (startsResponse(event)) {
           responseActive = true;
+          awaitingCreated = true;
           if (event?.item?.type === "force_message") pendingCreate = false;
         }
       } catch {
