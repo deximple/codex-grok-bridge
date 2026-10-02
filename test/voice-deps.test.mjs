@@ -4,7 +4,7 @@ import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
@@ -30,9 +30,9 @@ function run(command, args, options = {}) {
 test("bridge and realtime import when opusscript and werift cannot be resolved", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "codex-grok-voice-missing-"));
   await cp(path.join(root, "src"), path.join(dir, "src"), { recursive: true });
-  const runtime = path.join(dir, "src/runtime.mjs");
-  const realtime = path.join(dir, "src/realtime.mjs");
-  const voice = path.join(dir, "src/voice.mjs");
+  const runtime = pathToFileURL(path.join(dir, "src/runtime.mjs")).href;
+  const realtime = pathToFileURL(path.join(dir, "src/realtime.mjs")).href;
+  const voice = pathToFileURL(path.join(dir, "src/voice.mjs")).href;
   const script = `
     import { startRuntime } from ${JSON.stringify(runtime)};
     import { forwardRealtime } from ${JSON.stringify(realtime)};
