@@ -85,6 +85,14 @@ function pickKeys(node, keys) {
 
 function whitelistContentPart(part) {
   if (!part || typeof part !== "object" || Array.isArray(part)) return part;
+  // Chat audio is not a Responses content part Grok accepts. Leaving the bytes
+  // in history makes the upstream reject the turn, and every later turn with it.
+  if (part.type === "input_audio") {
+    return {
+      type: "input_text",
+      text: "[An audio attachment was not sent to the model. Say so if the user asks about it.]",
+    };
+  }
   const keys = CONTENT_PART_FIELDS[part.type];
   if (!keys) return part;
   const next = pickKeys(part, keys);

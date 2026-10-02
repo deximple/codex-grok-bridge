@@ -251,7 +251,8 @@ One unusable attachment no longer kills the conversation. The bridge walks the
 whole history; a single over-limit image used to make every later turn fail
 with 400. Now that attachment is replaced with an explanation and the rest
 goes through. Usable images stay `input_image` (Grok reads them). Remote URLs
-are not fetched.
+are not fetched. An audio attachment is replaced with an explanation so its
+bytes do not reject the turn.
 
 ### Image generation
 
@@ -626,7 +627,8 @@ PNG / JPEG / WebP. **이미지당 10 MiB, 요청 전체 20 MiB**, 서로 다른 
 때문에, 예전에는 한도를 넘는 이미지가 히스토리에 한 번 들어가면 이후 모든 턴이
 영구히 400이었습니다. 지금은 그 첨부만 이유를 밝힌 텍스트로 바꾸고 나머지는
 그대로 보냅니다. 쓸 수 있는 이미지는 `input_image` 그대로 넘어가며 Grok가 직접
-읽습니다. 원격 URL은 가져오지 않습니다.
+읽습니다. 원격 URL은 가져오지 않습니다. 오디오 첨부는 설명으로 바꿔서, 그
+바이트가 턴을 거절하지 않게 합니다.
 
 ### 이미지 생성
 

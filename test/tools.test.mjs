@@ -872,6 +872,26 @@ test("forwards readable text from Codex input items Grok would drop", () => {
     assert.equal(droppedEncoded.includes(secret), false);
 });
 
+test("an audio attachment does not stay in the request", () => {
+  const { request } = toProxyRequest({
+    input: [
+      {
+        role: "user",
+        content: [
+          { type: "input_text", text: "hear this" },
+          { type: "input_audio", audio_url: "data:audio/wav;base64,UklGRg==" },
+        ],
+      },
+    ],
+    tools: [],
+  });
+  const encoded = JSON.stringify(request.input);
+  assert.equal(encoded.includes("UklGRg"), false);
+  assert.equal(encoded.includes("audio_url"), false);
+  assert.match(encoded, /audio attachment was not sent/);
+  assert.match(encoded, /hear this/);
+});
+
 test("a function result made of content parts is forwarded as text", () => {
   const { request } = toProxyRequest({
     input: [
