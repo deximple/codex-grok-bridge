@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
@@ -274,6 +275,37 @@ test("flattens namespaced Codex tools into function tools", () => {
   );
 });
 
+test("a previous web search keeps the pages it found", () => {
+  const { request } = toProxyRequest({
+    input: [
+      {
+        type: "web_search_call",
+        id: "ws_1",
+        status: "completed",
+        action: {
+          type: "search",
+          query: "weather seattle",
+          sources: [
+            { type: "url", url: "https://example.com/weather", title: "Forecast" },
+            { type: "url", url: "https://example.com/weather" },
+            "https://example.com/also",
+          ],
+        },
+      },
+    ],
+    tools: [],
+  });
+  assert.deepEqual(
+    request.input[0].content.map((part) => part.text),
+    [
+      "weather seattle",
+      "https://example.com/weather",
+      "Forecast",
+      "https://example.com/also",
+    ],
+  );
+});
+
 test("forwards one Codex web_search server tool and passes web_search_call through", () => {
   const fixture = JSON.parse(
     readFileSync(new URL("./fixtures/web-search.json", import.meta.url)),
@@ -499,6 +531,30 @@ test("compaction forwarding leaves ordinary messages and tool items unchanged", 
     content: [{ type: "input_text", text: "prior context" }],
   });
   assert.deepEqual(request.input.slice(1), baseline.request.input);
+});
+
+test("plain reasoning content is kept when the summary is empty", () => {
+  const { request } = toProxyRequest({
+    input: [
+      {
+        type: "reasoning",
+        id: "reason-2",
+        summary: [],
+        content: [
+          { type: "reasoning_text", text: "checked the failing test" },
+          { type: "encrypted_content", encrypted_content: "secret-encrypted" },
+        ],
+      },
+    ],
+    tools: [],
+  });
+  assert.deepEqual(request.input, [
+    {
+      type: "reasoning",
+      summary: [{ type: "summary_text", text: "checked the failing test" }],
+    },
+  ]);
+  assert.equal(JSON.stringify(request.input).includes("secret-encrypted"), false);
 });
 
 test("drops a reasoning item that carries no readable summary", () => {
@@ -848,6 +904,107 @@ test("forwards readable text from Codex input items Grok would drop", () => {
     assert.equal(droppedEncoded.includes(secret), false);
 });
 
+test("command output fields stay in the history", () => {
+  const { request } = toProxyRequest({
+    input: [
+      {
+        type: "local_shell_call_output",
+        call_id: "lso-2",
+        stdout: "BRIDGE_OK\n",
+        stderr: "warn",
+        aggregated_output: "BRIDGE_OK\nwarn",
+      },
+    ],
+    tools: [],
+  });
+  assert.deepEqual(request.input[0].content.map((part) => part.text), ["BRIDGE_OK\nwarn"]);
+  const split = toProxyRequest({
+    input: [{ type: "local_shell_call_output", call_id: "lso-3", stdout: "out", stderr: "err" }],
+    tools: [],
+  });
+  assert.deepEqual(split.request.input[0].content.map((part) => part.text), ["out", "err"]);
+  const failed = toProxyRequest({
+    input: [
+      {
+        type: "local_shell_call_output",
+        call_id: "lso-4",
+        stdout: "nope",
+        exit_code: 2,
+      },
+    ],
+    tools: [],
+  });
+  assert.deepEqual(failed.request.input[0].content.map((part) => part.text), ["nope", "exit 2"]);
+});
+
+test("an audio attachment does not stay in the request", () => {
+  const { request } = toProxyRequest({
+    input: [
+      {
+        role: "user",
+        content: [
+          { type: "input_text", text: "hear this" },
+          { type: "input_audio", audio_url: "data:audio/wav;base64,UklGRg==" },
+        ],
+      },
+    ],
+    tools: [],
+  });
+  const encoded = JSON.stringify(request.input);
+  assert.equal(encoded.includes("UklGRg"), false);
+  assert.equal(encoded.includes("audio_url"), false);
+  assert.match(encoded, /audio attachment was not sent/);
+  assert.match(encoded, /hear this/);
+});
+
+test("a function result made of content parts is forwarded as text", () => {
+  const { request } = toProxyRequest({
+    input: [
+      {
+        type: "function_call_output",
+        call_id: "c1",
+        output: [
+          { type: "input_text", text: "BRIDGE_OK" },
+          { type: "encrypted_content", encrypted_content: "secret-encrypted" },
+          { type: "input_image", image_url: "https://example.test/a.png" },
+        ],
+      },
+    ],
+    tools: [],
+  });
+  assert.equal(request.input[0].type, "function_call_output");
+  assert.equal(request.input[0].call_id, "c1");
+  assert.equal(request.input[0].output, "BRIDGE_OK\nhttps://example.test/a.png");
+  assert.equal(JSON.stringify(request.input).includes("secret-encrypted"), false);
+  assert.equal(request.input.length, 1);
+});
+
+test("an inline image in a function result is attached after the tool output", () => {
+  const png = "data:image/png;base64,iVBORw0KGgo=";
+  const { request } = toProxyRequest({
+    input: [
+      {
+        type: "function_call_output",
+        call_id: "c1",
+        output: [
+          { type: "input_text", text: "see" },
+          { type: "input_image", image_url: { url: png, detail: "high" } },
+        ],
+      },
+    ],
+    tools: [],
+  });
+  assert.equal(request.input[0].type, "function_call_output");
+  assert.equal(request.input[0].call_id, "c1");
+  assert.equal(request.input[0].output, "see\n[An image from this tool result follows.]");
+  assert.equal(request.input[0].output.includes("iVBORw0KGgo"), false);
+  assert.deepEqual(request.input[1], {
+    type: "message",
+    role: "user",
+    content: [{ type: "input_image", image_url: png, detail: "high" }],
+  });
+});
+
 test("readable salvage leaves items Grok already accepts structured", () => {
   const { request } = toProxyRequest({
     input: [
@@ -973,6 +1130,180 @@ test("rewrites streamed function names back to Codex namespaces", () => {
   assert.equal(payload.item.namespace, "functions");
   assert.equal(payload.item.name, "apply_patch");
   assert.equal(payload.item.input, "*** Begin Patch");
+});
+
+test("a generated image is saved once for the done event and the completed output", () => {
+  const dir = mkdtempSync(`${tmpdir()}/grok-image-`);
+  const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13]);
+  const item = {
+    type: "image_generation_call",
+    id: "ig_once",
+    status: "completed",
+    revised_prompt: "blue square",
+    result: png.toString("base64"),
+  };
+  const state = {
+    callIds: new Map(),
+    itemIds: new Map(),
+    savedImages: new Map(),
+    imageOptions: { dir, now: 1 },
+  };
+  const done = rewriteSseBlock(
+    `event: response.output_item.done\ndata: ${JSON.stringify({
+      type: "response.output_item.done",
+      item,
+    })}`,
+    new Map(),
+    state,
+  );
+  const completed = rewriteSseBlock(
+    `event: response.completed\ndata: ${JSON.stringify({
+      type: "response.completed",
+      response: { output: [item] },
+    })}`,
+    new Map(),
+    state,
+  );
+  const doneText = JSON.parse(done.split("data: ")[1]).item.content[0].text;
+  const completedItem = JSON.parse(completed.split("data: ")[1]).response.output[0];
+  assert.equal(completedItem.type, "message");
+  assert.equal(completedItem.content[0].text, doneText);
+  assert.match(doneText, /blue square/);
+  assert.equal(readdirSync(dir).length, 1);
+  assert.equal(JSON.stringify(completedItem).includes(item.result), false);
+});
+
+test("restores a custom tool result that only has the call id", () => {
+  const { tools, map } = flattenCodexTools([
+    {
+      type: "namespace",
+      name: "functions",
+      tools: [{ type: "custom", name: "apply_patch" }],
+    },
+  ]);
+  const state = { callIds: new Map(), itemIds: new Map() };
+  rewriteSseBlock(
+    `event: response.output_item.done\ndata: ${JSON.stringify({
+      type: "response.output_item.done",
+      item: {
+        type: "function_call",
+        name: tools[0].name,
+        arguments: JSON.stringify({ input: "patch" }),
+        call_id: "c1",
+      },
+    })}`,
+    map,
+    state,
+  );
+  const block = rewriteSseBlock(
+    `event: response.output_item.done\ndata: ${JSON.stringify({
+      type: "response.output_item.done",
+      item: { type: "function_call_output", call_id: "c1", output: "applied" },
+    })}`,
+    map,
+    state,
+  );
+  const payload = JSON.parse(block.split("data: ")[1]);
+  assert.equal(payload.item.type, "custom_tool_call_output");
+  assert.equal(payload.item.name, "apply_patch");
+  assert.equal(payload.item.namespace, "functions");
+  assert.equal(payload.item.output, "applied");
+});
+
+test("restores tool names inside a completed response", () => {
+  const { tools, map } = flattenCodexTools([
+    {
+      type: "namespace",
+      name: "functions",
+      tools: [{ type: "custom", name: "apply_patch" }],
+    },
+  ]);
+  const block = rewriteSseBlock(
+    `event: response.completed\ndata: ${JSON.stringify({
+      type: "response.completed",
+      response: {
+        output: [
+          {
+            type: "function_call",
+            name: tools[0].name,
+            arguments: JSON.stringify({ input: "patch" }),
+            call_id: "c1",
+          },
+        ],
+      },
+    })}`,
+    map,
+  );
+  const payload = JSON.parse(block.split("data: ")[1]);
+  assert.equal(payload.response.output[0].type, "custom_tool_call");
+  assert.equal(payload.response.output[0].name, "apply_patch");
+  assert.equal(payload.response.output[0].namespace, "functions");
+  assert.equal(payload.response.output[0].input, "patch");
+});
+
+test("restores the tool name on a streamed arguments event", () => {
+  const { tools, map } = flattenCodexTools([
+    {
+      type: "namespace",
+      name: "functions",
+      tools: [{ type: "custom", name: "apply_patch" }],
+    },
+  ]);
+  const block = rewriteSseBlock(
+    `event: response.function_call_arguments.done\ndata: ${JSON.stringify({
+      type: "response.function_call_arguments.done",
+      name: tools[0].name,
+      arguments: JSON.stringify({ input: "patch" }),
+      call_id: "c1",
+    })}`,
+    map,
+  );
+  const payload = JSON.parse(block.split("data: ")[1]);
+  assert.equal(payload.type, "response.function_call_arguments.done");
+  assert.equal(payload.name, "apply_patch");
+  assert.equal(payload.namespace, undefined);
+  assert.equal(payload.arguments, JSON.stringify({ input: "patch" }));
+});
+
+test("restores a custom tool call that used the Codex name", () => {
+  const { map } = flattenCodexTools([
+    {
+      type: "namespace",
+      name: "functions",
+      tools: [{ type: "custom", name: "apply_patch" }],
+    },
+  ]);
+  const block = rewriteSseBlock(
+    `event: response.output_item.done\ndata: ${JSON.stringify({
+      type: "response.output_item.done",
+      item: {
+        type: "function_call",
+        name: "apply_patch",
+        arguments: JSON.stringify({ input: "patch" }),
+        call_id: "c1",
+      },
+    })}`,
+    map,
+  );
+  const payload = JSON.parse(block.split("data: ")[1]);
+  assert.equal(payload.item.type, "custom_tool_call");
+  assert.equal(payload.item.namespace, "functions");
+  assert.equal(payload.item.name, "apply_patch");
+  assert.equal(payload.item.input, "patch");
+  const ambiguous = flattenCodexTools([
+    { type: "namespace", name: "a", tools: [{ type: "custom", name: "apply_patch" }] },
+    { type: "namespace", name: "b", tools: [{ type: "custom", name: "apply_patch" }] },
+  ]);
+  const untouched = rewriteSseBlock(
+    `event: response.output_item.done\ndata: ${JSON.stringify({
+      type: "response.output_item.done",
+      item: { type: "function_call", name: "apply_patch", arguments: "{}", call_id: "c2" },
+    })}`,
+    ambiguous.map,
+  );
+  const raw = JSON.parse(untouched.split("data: ")[1]);
+  assert.equal(raw.item.type, "function_call");
+  assert.equal(raw.item.name, "apply_patch");
 });
 
 test("rewrites Grok proxy custom tool calls back to Codex freeform input", () => {

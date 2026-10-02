@@ -85,6 +85,14 @@ function pickKeys(node, keys) {
 
 function whitelistContentPart(part) {
   if (!part || typeof part !== "object" || Array.isArray(part)) return part;
+  // Chat audio is not a Responses content part Grok accepts. Leaving the bytes
+  // in history makes the upstream reject the turn, and every later turn with it.
+  if (part.type === "input_audio") {
+    return {
+      type: "input_text",
+      text: "[An audio attachment was not sent to the model. Say so if the user asks about it.]",
+    };
+  }
   const keys = CONTENT_PART_FIELDS[part.type];
   if (!keys) return part;
   const next = pickKeys(part, keys);
@@ -494,10 +502,93 @@ function droppedItemInputTexts(node) {
     rememberTextValue(texts, seen, action.queries);
     rememberText(texts, seen, action.url);
     rememberText(texts, seen, action.pattern);
+    if (Array.isArray(action.sources)) {
+      for (const source of action.sources) {
+        if (typeof source === "string") {
+          rememberText(texts, seen, source);
+          continue;
+        }
+        if (!source || typeof source !== "object") continue;
+        rememberText(texts, seen, source.url);
+        rememberText(texts, seen, source.title);
+        rememberText(texts, seen, source.snippet);
+        rememberText(texts, seen, source.text);
+      }
+    }
   }
   rememberArguments(texts, seen, node.arguments);
   rememberTools(texts, seen, node.tools);
+  const aggregated = readableString(node.aggregated_output) ?? readableString(node.formatted_output);
+  if (aggregated) rememberText(texts, seen, aggregated);
+  else {
+    rememberText(texts, seen, node.stdout);
+    rememberText(texts, seen, node.stderr);
+  }
+  const rememberExit = (value) => {
+    if (Number.isInteger(value) && value !== 0) rememberText(texts, seen, `exit ${value}`);
+  };
+  rememberExit(node.exit_code);
+  const output = node.output;
+  if (Array.isArray(output)) {
+    for (const row of output) {
+      if (!row || typeof row !== "object") continue;
+      rememberExit(row.exit_code);
+      rememberExit(row.outcome?.exit_code);
+    }
+  } else if (output && typeof output === "object") {
+    rememberExit(output.exit_code);
+    rememberExit(output.outcome?.exit_code);
+  }
   return texts;
+}
+
+const INLINE_IMAGE = /^data:image\/(?:png|jpeg|webp);base64,/i;
+
+function functionOutputParts(output) {
+  if (typeof output === "string") return { text: output, images: [] };
+  const parts = [];
+  const images = [];
+  const push = (value) => {
+    if (typeof value === "string" && value.trim()) parts.push(value.trim());
+  };
+  const visit = (value) => {
+    if (typeof value === "string") {
+      push(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const part of value) visit(part);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    push(value.text);
+    push(value.stdout);
+    push(value.stderr);
+    const image = value.image_url;
+    const url =
+      typeof image === "string"
+        ? image
+        : image && typeof image === "object" && typeof image.url === "string"
+          ? image.url
+          : "";
+    if (url && INLINE_IMAGE.test(url)) {
+      const part = { type: "input_image", image_url: url };
+      const detail =
+        typeof value.detail === "string"
+          ? value.detail
+          : image && typeof image === "object" && typeof image.detail === "string"
+            ? image.detail
+            : "";
+      if (detail) part.detail = detail;
+      images.push(part);
+      push("[An image from this tool result follows.]");
+    } else if (url) {
+      push(url);
+    }
+    if (Array.isArray(value.content)) visit(value.content);
+  };
+  visit(output);
+  return { text: parts.join("\n"), images };
 }
 
 function userInputTextMessage(texts) {
@@ -510,11 +601,13 @@ function userInputTextMessage(texts) {
 
 function toProxyInputNode(node, map, state, salvage = false) {
   if (!node || typeof node !== "object") return node;
-  if (Array.isArray(node)) {
+    if (Array.isArray(node)) {
     const items = [];
     for (const item of node) {
       const next = toProxyInputNode(item, map, state);
-      if (next !== DROP) items.push(next);
+      if (next === DROP) continue;
+      if (Array.isArray(next)) items.push(...next);
+      else items.push(next);
     }
     return items;
   }
@@ -547,12 +640,19 @@ function toProxyInputNode(node, map, state, salvage = false) {
   if (next.type === "reasoning") {
     // Forward the summary and nothing else. Codex's own item id and null
     // content fields mean nothing to the upstream and only widen the surface
-    // for a schema rejection.
-    const summary = (Array.isArray(next.summary) ? next.summary : []).filter(
-      (part) => part && typeof part.text === "string" && part.text.trim(),
-    );
-    if (!summary.length) return DROP;
-    return whitelistInputNode({ type: "reasoning", summary });
+    // for a schema rejection. When the summary is empty, the plain text in
+    // content is the only readable reasoning left.
+    const readable = (parts) =>
+      (Array.isArray(parts) ? parts : []).filter(
+        (part) => part && typeof part.text === "string" && part.text.trim() && part.type !== "encrypted_content",
+      );
+    const summary = readable(next.summary);
+    const chosen = summary.length ? summary : readable(next.content);
+    if (!chosen.length) return DROP;
+    return whitelistInputNode({
+      type: "reasoning",
+      summary: chosen.map((part) => ({ type: "summary_text", text: part.text.trim() })),
+    });
   }
 
   if (next.type === "agent_message") {
@@ -606,8 +706,28 @@ function toProxyInputNode(node, map, state, salvage = false) {
     }
   }
 
+  // Codex sends a string or a list of content parts. Grok accepts the string.
+  // An inline image in that list is attached after the tool result so the
+  // model can see it; a remote URL stays as text and is not fetched.
+  let attachedImages = [];
+  if (next.type === "function_call_output" && typeof next.output !== "string") {
+    const parts = functionOutputParts(next.output);
+    next.output = parts.text;
+    attachedImages = parts.images;
+  }
+
   const whitelisted = whitelistInputNode(next);
-  if (!salvage || isForwardedItem(whitelisted)) return whitelisted;
+  if (!salvage || isForwardedItem(whitelisted)) {
+    if (!attachedImages.length) return whitelisted;
+    return [
+      whitelisted,
+      whitelistInputNode({
+        type: "message",
+        role: "user",
+        content: attachedImages,
+      }),
+    ];
+  }
   // Grok rejects these Codex item types. Keep the readable text as a user
   // message, the same shape as a compaction summary. An item with nothing
   // left but an encrypted blob, image bytes, or ids is dropped.
@@ -629,15 +749,21 @@ function isForwardedItem(item) {
 function projectInput(input, map) {
   if (!Array.isArray(input)) {
     const items = toProxyInputNode(input, map, { callIds: new Map() }, true);
-    return { items, pairs: [] };
+    return { items: Array.isArray(items) ? items : items === DROP ? [] : [items], pairs: [] };
   }
   const state = { callIds: new Map() };
   const pairs = [];
   for (const item of input) {
     const fingerprint = logicalFingerprint(item);
-    const next = toProxyInputNode(item, map, state, true);
-    if (!isForwardedItem(next)) continue;
-    pairs.push({ fingerprint, item: next });
+    const produced = toProxyInputNode(item, map, state, true);
+    const list = Array.isArray(produced) ? produced : [produced];
+    list.forEach((next, index) => {
+      if (!isForwardedItem(next)) return;
+      pairs.push({
+        fingerprint: index === 0 ? fingerprint : logicalFingerprint(next),
+        item: next,
+      });
+    });
   }
   return { items: pairs.map((pair) => pair.item), pairs };
 }
@@ -677,8 +803,8 @@ export const IMAGE_GENERATION_PROVENANCE =
 export const VIDEO_GENERATION_PROVENANCE =
   "Videos: clips on this transport are generated by the grok_bridge_generate_video " +
   "function, which is already on the request. The bridge calls Grok's videos API " +
-  "with the grok login and returns the video URL. Do not ask for an API key and " +
-  "do not send the clip to another vendor.";
+  "with the grok login, saves the temporary file locally, and returns that path. " +
+  "Do not ask for an API key and do not send the clip to another vendor.";
 
 export function toProxyRequest(body) {
   const { tools, map } = flattenCodexTools(body.tools ?? []);
@@ -741,14 +867,29 @@ function restoreOriginName(node, origin) {
   else delete node.namespace;
 }
 
+function originForResponseName(map, name) {
+  if (typeof name !== "string") return null;
+  if (map.has(name)) return map.get(name);
+  let found = null;
+  for (const origin of map.values()) {
+    if (origin.name !== name) continue;
+    if (found) return null;
+    found = origin;
+  }
+  return found;
+}
+
 function rewriteResponseItem(node, map, state) {
   if (!node || typeof node !== "object") return;
-  if (typeof node.name === "string" && map.has(node.name)) {
-    const origin = map.get(node.name);
+  const origin =
+    originForResponseName(map, node.name) ??
+    (typeof node.call_id === "string" ? state.callIds.get(node.call_id) : null);
+  if (origin) {
     rememberProxyItem(node, origin, state);
     restoreOriginName(node, origin);
     if (origin.kind === "custom") {
       if (node.type === "function_call") node.type = "custom_tool_call";
+      if (node.type === "function_call_output") node.type = "custom_tool_call_output";
       if (node.type === "custom_tool_call") {
         if (node.input == null) node.input = decodeCustomInput(node.arguments);
         delete node.arguments;
@@ -762,14 +903,27 @@ function rewriteResponseItem(node, map, state) {
 // and no place to put them, so the bridge writes the file and hands back an
 // ordinary assistant message naming it.
 function absorbGeneratedImage(item, state) {
+  const key = typeof item.id === "string" ? item.id : "";
+  if (key && state.savedImages?.has(key)) return state.savedImages.get(key);
   const saved = saveGeneratedImage(item, state.imageOptions);
-  return {
+  const described = describeGeneratedImage(
+    typeof item.prompt === "string" && item.prompt.trim()
+      ? item
+      : { ...item, prompt: item.revised_prompt },
+    saved,
+  );
+  const message = {
     type: "message",
-    id: typeof item.id === "string" ? item.id : undefined,
+    id: key || undefined,
     role: "assistant",
     status: "completed",
-    content: [{ type: "output_text", text: describeGeneratedImage(item, saved) }],
+    content: [{ type: "output_text", text: described }],
   };
+  if (key) {
+    if (!state.savedImages) state.savedImages = new Map();
+    state.savedImages.set(key, message);
+  }
+  return message;
 }
 
 const USAGE_EVENTS = new Set(["response.completed", "response.incomplete"]);
@@ -784,6 +938,24 @@ function rewriteResponseEvent(value, map, state) {
     applyCacheUsage(value.response.usage);
     const cache = readCacheUsage(value.response.usage);
     if (cache) state.cacheUsage = cache;
+  }
+  if (Array.isArray(value.response?.output)) {
+    for (let i = 0; i < value.response.output.length; i += 1) {
+      const item = value.response.output[i];
+      if (isImageGenerationItem(item))
+        value.response.output[i] = absorbGeneratedImage(item, state);
+      else rewriteResponseItem(item, map, state);
+    }
+  }
+  if (
+    value.type === "response.function_call_arguments.delta" ||
+    value.type === "response.function_call_arguments.done"
+  ) {
+    const origin = originForResponseName(map, value.name);
+    if (origin) {
+      rememberProxyItem(value, origin, state);
+      value.name = origin.name;
+    }
   }
   if (
     typeof value.item === "object" &&
@@ -843,6 +1015,7 @@ export function createSseRewriter(map, options = {}) {
   const state = {
     callIds: new Map(),
     itemIds: new Map(),
+    savedImages: new Map(),
     imageOptions: options.imageOptions,
     cacheUsage: null,
   };

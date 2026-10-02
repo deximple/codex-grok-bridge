@@ -13,6 +13,14 @@ import { videoCallsFromParts, videoToolOutput } from "./videogen.mjs";
 import { forwardImagine } from "./imagine.mjs";
 import { attachSidebandUpgrade, forwardRealtime } from "./realtime.mjs";
 import {
+  answerVoiceCall,
+  developerTextFromCallBody,
+  initialItemsFromCallBody,
+  instructionsFromCallBody,
+  ackFillerFromCallBody,
+  offerFromCallBody,
+} from "./voice.mjs";
+import {
   applyCacheUsage,
   createPrefixMemory,
   readCacheUsage,
@@ -143,6 +151,38 @@ async function relayRealtime(req, res, json, upstreamPath, options) {
       signal: controller.signal,
     });
     if (res.writableEnded || res.destroyed) return;
+    if (forwarded.status >= 200 && forwarded.status < 300) {
+      const headers = {};
+      if (forwarded.contentType) headers["content-type"] = forwarded.contentType;
+      if (forwarded.location) headers.location = forwarded.location;
+      res.writeHead(forwarded.status, headers);
+      res.end(forwarded.body);
+      return;
+    }
+    try {
+      const body = Buffer.concat(chunks);
+      const answered = await answerVoiceCall({
+        offer: offerFromCallBody(body, req.headers["content-type"]),
+        instructions: instructionsFromCallBody(body, req.headers["content-type"]),
+        ackFiller: ackFillerFromCallBody(body, req.headers["content-type"]),
+        developerContext: developerTextFromCallBody(body, req.headers["content-type"]),
+        initialItems: initialItemsFromCallBody(body, req.headers["content-type"]),
+        token: session.token,
+        webSocketFactory: options.voiceWebSocket,
+      });
+      if (res.writableEnded || res.destroyed) {
+        answered.close();
+        return;
+      }
+      res.writeHead(201, {
+        "content-type": "application/sdp",
+        location: answered.location,
+      });
+      res.end(answered.sdp);
+      return;
+    } catch {
+      // An offer werift cannot answer stays the upstream response.
+    }
     const headers = {};
     if (forwarded.contentType) headers["content-type"] = forwarded.contentType;
     if (forwarded.location) headers.location = forwarded.location;
@@ -348,6 +388,7 @@ export function createBridgeServer(options = {}) {
                 baseUrl: options.videoBaseUrl,
                 pause: options.videoPause,
                 signal: controller.signal,
+                dir: options.videoDir,
               },
             },
             res,

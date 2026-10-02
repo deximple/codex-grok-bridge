@@ -4,7 +4,10 @@
 // XAI_API_KEY. The bodies are not the same: Codex hardcodes `gpt-image-2`
 // plus `size` / `quality` / `background`, and edits use `{image_url}` or
 // `{file_id}`. Imagine wants `grok-imagine-image-quality`, `response_format:
-// b64_json`, and `{url}` references.
+// b64_json`, and `{url}` references. Codex `size` maps to `aspect_ratio`.
+// Codex `quality: high` maps to resolution `2k`, and `low` to `1k`.
+// `auto` omits resolution so Imagine keeps its own default. `quality` itself
+// is not sent: that field belongs to a different Imagine model.
 
 export const DEFAULT_IMAGINE_API_BASE = "https://api.x.ai/v1";
 export const IMAGINE_MODEL = "grok-imagine-image-quality";
@@ -26,13 +29,39 @@ function basePayload(prompt) {
     model: IMAGINE_MODEL,
     prompt,
     n: 1,
-    resolution: "1k",
     response_format: "b64_json",
   };
 }
 
+const SIZE_ASPECT = {
+  "1024x1024": "1:1",
+  "1536x1024": "3:2",
+  "1024x1536": "2:3",
+};
+
+function aspectFromSize(size) {
+  if (typeof size !== "string") return "";
+  return SIZE_ASPECT[size.trim()] ?? "";
+}
+
+function imageCount(value) {
+  const n = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
+  if (!Number.isInteger(n) || n < 1) return 1;
+  return Math.min(n, 10);
+}
+
+function applyImageOptions(payload, input) {
+  const aspect = aspectFromSize(input?.size);
+  if (aspect) payload.aspect_ratio = aspect;
+  if (input?.quality === "high") payload.resolution = "2k";
+  else if (input?.quality === "low") payload.resolution = "1k";
+  else delete payload.resolution;
+  payload.n = imageCount(input?.n);
+  return payload;
+}
+
 export function imagineGenerationBody(input) {
-  return basePayload(promptOf(input));
+  return applyImageOptions(basePayload(promptOf(input)), input);
 }
 
 export function imagineEditBody(input) {
@@ -42,7 +71,13 @@ export function imagineEditBody(input) {
   for (const image of images) {
     if (!image || typeof image !== "object") continue;
     if (typeof image.image_url === "string" && image.image_url.trim()) {
-      urls.push(image.image_url.trim());
+      const url = image.image_url.trim();
+      if (!/^https?:\/\//i.test(url) && !/^data:/i.test(url)) {
+        const error = new Error("Image edit requires an http(s) URL or a data URL.");
+        error.status = 400;
+        throw error;
+      }
+      urls.push(url);
       continue;
     }
     if (typeof image.file_id === "string" && image.file_id.trim()) {
@@ -58,10 +93,9 @@ export function imagineEditBody(input) {
   }
   const payload = basePayload(prompt);
   if (urls.length === 1) payload.image = { url: urls[0] };
-  else {
-    payload.images = urls.map((url) => ({ url }));
-    payload.aspect_ratio = "auto";
-  }
+  else payload.images = urls.map((url) => ({ url }));
+  applyImageOptions(payload, input);
+  if (!payload.aspect_ratio && urls.length > 1) payload.aspect_ratio = "auto";
   return payload;
 }
 

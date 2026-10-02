@@ -1,6 +1,6 @@
 {
   "name": "codex-grok-bridge",
-  "version": "1.7.2",
+  "version": "1.8.0",
   "description": "Run Grok 4.7 as the model inside Codex, with Codex still owning tools, permissions, history and MCP. Uses the grok login session, not an API key.",
   "type": "module",
   "license": "MIT",
@@ -51,5 +51,9 @@
     "prepublishOnly": "npm test",
     "test": "node --test",
     "test:coverage": "node --test --experimental-test-coverage --test-coverage-include='src/*.mjs' --test-coverage-lines=80 --test-coverage-functions=80 --test-coverage-branches=80"
+  },
+  "dependencies": {
+    "opusscript": "0.1.1",
+    "werift": "0.24.4"
   }
 }

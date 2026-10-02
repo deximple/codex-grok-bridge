@@ -42,6 +42,16 @@ the bridge runs. See Release history.
 
 What each recent version added. Older cuts are in `CHANGELOG.md`.
 
+### 1.8.0 — 2026-10-02
+
+- When xAI rejects a Codex voice offer, the bridge reads the SDP part of the multipart body (CRLF or LF) and answers locally with werift, including Opus when that is the offered codec. Audio is bridged to the xAI voice socket, and that call's sideband stays on the bridge. An offer xAI accepts is still forwarded. Codex cloud tasks are not in this package.
+- Runtime dependencies are `werift` 0.24.4 and `opusscript` 0.1.1. No `XAI_API_KEY`.
+- Codex image `size` maps to Imagine `aspect_ratio` on new pictures and edits. `quality: high` is `2k`, `low` is `1k`, and `auto` omits resolution. `n` is capped at 10. A local file path on an image edit is refused.
+- A generated image is saved once, and the completed response carries that file note.
+- Video generation accepts `480p`, `720p`, or `1080p`. The finished clip is saved under `~/.local/share/codex-grok-bridge/generated-videos/` without the login bearer. The tool result names the URL and the file.
+- Custom tool names and results are restored, including a result that only has a call id. Function results that arrive as content parts are forwarded as text, with an inline PNG, JPEG, or WebP attached so the model can see it.
+- A previous web search keeps its query and the pages it found. Command output and a non-zero exit code stay in history. A chat audio attachment is replaced with an explanation. An empty reasoning summary falls back to plain reasoning text.
+
 ### 1.7.2 — 2026-09-30
 
 - Readable compaction summaries are passed through as user messages. A compaction item that only carries encrypted or internal fields is still dropped.
@@ -172,10 +182,11 @@ Codex keeps the conversation and sends the whole turn each time. Grok can
 treat the unchanged beginning as a cache. If the connection drops before
 Codex has been sent any bytes, the bridge tries again. Codex does not send
 that same request again. Voice call setup (`POST /v1/realtime/calls` and
-`POST /v1/live`) is forwarded raw to xAI. The voice sideband is pointed at
-this bridge and piped raw to `api.x.ai`. xAI may still reject that OpenAI
-sideband path, so the call may not join. Codex cloud tasks are not in this
-package.
+`POST /v1/live`) is forwarded raw when xAI accepts it. When xAI rejects that
+offer, the bridge reads the SDP part of Codex's multipart body, whether the parts use CRLF or LF, answers with
+its own WebRTC peer, including Opus when that is the offered codec, and
+bridges the audio to the xAI voice socket. Microphone audio is held until `session.updated`, up to two seconds of it, and released after 2 seconds if that ack never arrives. A resumed socket waits for its own `session.updated` again. Requests queued on the old socket are dropped, so the new `session.update` goes out first. Audio still waiting to play is dropped with that socket, and the resumed session is told how much was already sent. It does not keep the previous interrupt or a deferred `response.create`, and later audio still plays. Voice audio accepts `response.output_audio.delta` and `response.audio.delta`, fields `delta` or `audio`. A reply shorter than one audio frame is still sent when the turn ends. Playback is paced at one Opus frame per 20 ms. When the user starts speaking, playback of the current reply stops, and a waiting tool reply is held until they stop. A transcript that arrives after that stop is not shown, and the turn closes on the words already sent. Once that caption has closed, the next user utterance leaves the following reply's words visible. Audio that arrives after that reply ends stays silent until the next response starts. A desktop `response.cancel` stops that playback too, without holding later tool replies for speech that did not start. A reply already waiting stays held if the user is still speaking. If playback was still queued, the assistant item is truncated to the audio already sent. A tool reply waits until the voice response is done and queued playback has been sent. If the socket drops first, that reply is sent after the resumed session is ready. A `response.create` that races an active response is sent again after that response finishes, and after any tool reply that was waiting. The answer is the DTLS server and lists only this machine's host addresses, including 127.0.0.1, as plain host candidates, so the desktop voice helper opens its event channel. The sideband for that answered call stays on the bridge. A dropped voice socket redials once on the same xAI conversation (resumption enabled). A second drop tells the desktop "Voice connection closed." An intentional hangup does not. A recoverable xAI error does not, because the desktop would end the call. The first sideband event is `session.updated`, sent when the desktop connects so the call is not held for the xAI session ack. `session.close` from the desktop hangs up without waiting for TCP. xAI transcript events are rewritten into the desktop v3 sideband names. Text replies from `response.output_text.delta` and `response.text.delta` use that same transcript. The chunk may be in `delta` or `text`. If the audio transcript never sends a done event, `response.done` still closes the turn. A new user utterance closes the previous user caption when its completed event never arrived. A later completed event for that same caption is not sent again. The call's session instructions and earlier messages are kept. Developer history from the call is added to those instructions and kept on a later session update. If the call asks for a delegation acknowledgement, those instructions say to speak one short sentence before calling `codex`. A later session update keeps that sentence. Split context appends are joined. A streamed codex reply is spoken once after a pause. Several codex results that finish together are all sent before the spoken reply, or before one continuation. If that spoken turn is rejected before it starts, the next reply is not left waiting. Commentary closes the tool without being read aloud. `[STATUS]` does not finish the call. A `codex` tool call becomes the desktop handoff.
+Codex cloud tasks are not in this package.
 
 If the Responses path misbehaves, `GROK_BRIDGE_INFERENCE=cli` falls back to the
 older CLI envelope. That path pastes the whole JSON into a prompt each turn, so
@@ -214,7 +225,9 @@ not read Codex’s `imagegen` skill and do not send the picture to OpenAI.
 
 ### Reasoning
 
-Plain-text summaries on Codex `reasoning` items are forwarded. Encrypted
+Plain-text summaries on Codex `reasoning` items are forwarded. When that
+summary is empty, plain text in the reasoning content is forwarded instead.
+Encrypted
 `encrypted_content` and Codex’s own item ids are stripped. This is so a
 multi-call turn can continue its own reasoning. The upstream has been observed
 to accept this shape. The same pass keeps only the fields Grok’s Responses
@@ -233,9 +246,17 @@ that overlap the parent turn.
 ### Tools
 
 Ordinary function tools, namespaced function tools, and freeform custom tools
-are translated. File edits, MCP, and similar work inside whatever Codex
-exposed, at whatever approval policy the user set. Not every tool has been
-live-tested individually.
+are translated. A custom tool call that comes back under the Codex name is
+restored when that name belongs to one tool. The same name is restored on a
+streamed arguments event and inside the completed response output. A custom
+tool result is restored too, including when it only carries the call id. A function result that arrives as a list of content parts is
+forwarded as text. A remote image URL in that list is included. An inline
+PNG, JPEG, or WebP is attached after the tool result so the model can see it.
+A previous web search keeps its query and the page URLs it found. Command output
+in stdout, stderr, or an aggregated log stays in the history. A non-zero exit
+code stays with that output. File edits, MCP,
+and similar work inside whatever Codex exposed, at whatever approval policy the
+user set. Not every tool has been live-tested individually.
 
 ### Image attachments (vision)
 
@@ -247,11 +268,13 @@ One unusable attachment no longer kills the conversation. The bridge walks the
 whole history; a single over-limit image used to make every later turn fail
 with 400. Now that attachment is replaced with an explanation and the rest
 goes through. Usable images stay `input_image` (Grok reads them). Remote URLs
-are not fetched.
+are not fetched. An audio attachment is replaced with an explanation so its
+bytes do not reject the turn.
 
 ### Image generation
 
-The bridge declares `{ type: "image_generation" }` on the upstream request.
+A generated image is saved once. The completed response carries that same
+file note instead of the raw image bytes. The bridge declares `{ type: "image_generation" }` on the upstream request.
 Codex does not offer an image-generation tool to this provider (263 tools, none
 of them generate — `view_image` only), so without the declaration Codex’s
 `imagegen` skill falls back to OpenAI (`image_gen` or `OPENAI_API_KEY` +
@@ -280,6 +303,13 @@ The bridge inspects the saved file. If there is no alpha channel it tells the
 model not to describe the picture as transparent. If you need a real alpha
 channel or accurate inpainting, use Codex’s OpenAI path.
 
+### Video generation
+
+A finished clip is a temporary URL. The bridge downloads that file, without
+the login bearer, into `~/.local/share/codex-grok-bridge/generated-videos/`
+and the tool result names both the URL and the saved file. If the download
+fails, the result is still the URL.
+
 ### GPT ↔ Grok switching
 
 Supported on an idle persisted root thread. `turn/start`,
@@ -293,7 +323,7 @@ starting a new thread, before the first turn is saved.
 
 ### Not in this release
 
-The voice sideband is piped to xAI, but xAI may reject the OpenAI sideband path, so a voice session is not guaranteed. Codex cloud tasks are not in this package.
+A voice session still depends on the xAI voice socket accepting the login, and on the desktop completing ICE with the bridge. Codex cloud tasks are not in this package.
 
 Upstream sometimes resets the connection mid-response (three measured cases:
 25 s / 27 s / 253 s, 726 KB–22 MB). The bridge holds the reply and, if that
@@ -425,6 +455,16 @@ Codex `web_search`는 브리지가 실행하는 함수가 아니라 xAI 서버 �
 
 최근 버전이 더한 것입니다. 그 이전은 `CHANGELOG.md`에 있습니다.
 
+### 1.8.0 — 2026-10-02
+
+- xAI가 Codex 음성 offer를 거절하면 브리지가 multipart 본문의 SDP를 읽습니다. 파트 구분이 CRLF든 LF든 같습니다. werift로 로컬에서 답하고, offer가 Opus이면 Opus로 답합니다. 오디오는 xAI 음성 소켓으로 잇고, 그 통화의 sideband는 브리지에 남습니다. xAI가 수락한 offer는 그대로 넘깁니다. Codex 클라우드 작업은 이 패키지에 없습니다.
+- 런타임 의존성은 `werift` 0.24.4와 `opusscript` 0.1.1입니다. `XAI_API_KEY`는 쓰지 않습니다.
+- Codex 이미지 `size`는 새 그림과 편집 모두 Imagine `aspect_ratio`로 보냅니다. `quality: high`는 `2k`, `low`는 `1k`이고, `auto`는 해상도를 비웁니다. `n`은 최대 10장입니다. 이미지 편집의 로컬 파일 경로는 거절합니다.
+- 생성된 이미지는 한 번만 저장하고, 완료된 응답에는 그 파일 설명을 실습니다.
+- 영상 생성은 `480p`, `720p`, `1080p`를 받습니다. 끝난 클립은 로그인 베어러 없이 `~/.local/share/codex-grok-bridge/generated-videos/`에 저장하고, 도구 결과에는 URL과 파일을 함께 넣습니다.
+- 커스텀 도구 이름과 결과를 다시 맞춥니다. call id만 있는 결과도 맞춥니다. 내용 목록으로 온 함수 결과는 텍스트로 넘기고, 인라인 PNG·JPEG·WebP는 모델이 보게 붙입니다.
+- 이전 웹 검색은 질의와 찾은 페이지를 남깁니다. 명령 출력과 0이 아닌 종료 코드도 이력에 남습니다. 채팅 오디오 첨부는 설명으로 바꿉니다. reasoning 요약이 비어 있으면 평문 내용을 넘깁니다.
+
 ### 1.7.2 — 2026-09-30
 
 - 읽을 수 있는 compaction 요약을 사용자 메시지로 넘깁니다. 암호화된 내용이나 내부 필드만 있는 compaction 항목은 그대로 버립니다.
@@ -549,10 +589,12 @@ Codex 창에도 보일 수 있습니다.
 Codex가 대화를 갖고 있고, 턴마다 그 턴 전체를 보냅니다. 앞부분이 그대로면
 Grok는 그 부분을 캐시로 볼 수 있습니다. Codex에 바이트를 보내기 전에 연결이
 끊기면 브리지가 다시 시도합니다. Codex는 그 요청을 또 보내지 않습니다. 음성
-통화 설정(`POST /v1/realtime/calls`, `POST /v1/live`)은 xAI로 원문 그대로
-넘깁니다. 음성 sideband는 이 브리지를 가리키고 `api.x.ai`로 원문 그대로
-넘깁니다. xAI가 OpenAI sideband 경로를 거절하면 통화에 붙지 않을 수 있습니다.
-Codex 클라우드 작업은 이 패키지에 없습니다.
+통화 설정(`POST /v1/realtime/calls`, `POST /v1/live`)은 xAI가 수락하면 원문
+그대로 넘깁니다. xAI가 그 offer를 거절하면 브리지가 Codex multipart 본문에서 SDP를 읽습니다. 파트 구분이 CRLF든 LF든 같습니다.
+자체 WebRTC 피어로 답합니다. offer가 Opus이면 Opus로 답하고, 오디오를 xAI
+음성 소켓으로 잇습니다. 마이크 오디오는 `session.updated`까지 최대 2초분을 붙들고, 그 확인이 없으면 2초 뒤에 보냅니다. 다시 붙은 소켓은 자기 `session.updated`를 다시 기다립니다. 이전 소켓에 쌓인 요청은 버리고, 새 `session.update`를 먼저 보냅니다. 아직 재생되지 않은 음성도 그 소켓과 함께 버리고, 이미 보낸 길이는 다시 붙은 세션에 알립니다. 이전 말끊기나 미뤄 둔 `response.create`는 따라가지 않고, 이후 음성은 재생됩니다. 음성 오디오는 `response.output_audio.delta`와 `response.audio.delta`를 받으며, 필드는 `delta` 또는 `audio`입니다. 한 프레임보다 짧은 답도 턴이 끝나면 보냅니다. 재생은 Opus 프레임을 20 ms마다 하나씩 보냅니다. 사용자가 말하기 시작하면 현재 답의 재생을 멈추고, 기다리던 도구 답은 말이 끝날 때까지 붙듭니다. 그 뒤에 도착한 자막은 보내지 않고, 이미 보낸 말로 턴을 닫습니다. 그 자막이 닫힌 뒤에는 다음 답의 말을 숨기지 않습니다. 그 답이 끝난 뒤의 음성은 다음 응답이 시작되기 전에는 재생하지 않습니다. 데스크톱의 `response.cancel`도 재생을 멈추며, 말하지 않은 뒤의 도구 답은 붙들지 않습니다. 이미 기다리던 답은 사용자가 아직 말하는 동안 붙듭니다. 재생이 아직 남아 있으면 어시스턴트 항목은 이미 보낸 음성 길이까지만 남깁니다. 도구 답은 음성 응답이 끝나고 대기 중인 재생을 보낸 뒤에 나갑니다. 그 전에 소켓이 끊기면, 다시 붙은 세션이 준비된 뒤에 보냅니다. 진행 중인 응답과 겹친 `response.create`는 기다리던 도구 답 다음에, 그 응답이 끝난 뒤에 다시 보냅니다. 답변은 DTLS 서버이고, 이 기기의 호스트 주소만 넣으며 127.0.0.1도
+일반 호스트 후보로 포함해서, 데스크톱 음성 헬퍼가 이벤트 채널을 엽니다. 그렇게 답한 통화의 sideband는 브리지에
+남습니다. 끊긴 음성 소켓은 같은 xAI 대화로 한 번 다시 연결합니다(resumption 사용). 두 번째로 끊기면 데스크톱에 “Voice connection closed.”를 알립니다. 의도한 종료는 알리지 않습니다. 복구 가능한 xAI 오류는 알리지 않습니다. 데스크톱이 통화를 끝내기 때문입니다. sideband가 연결되면 바로 `session.updated`를 보내 xAI 세션 확인을 기다리지 않습니다. 데스크톱의 `session.close`는 TCP를 기다리지 않고 통화를 끊습니다. xAI 전사 이벤트는 데스크톱 v3 sideband가 읽는 이름으로 바꿉니다. `response.output_text.delta`와 `response.text.delta` 텍스트 답도 같은 자막으로 보냅니다. 조각은 `delta` 또는 `text`에 있을 수 있습니다. 음성 자막의 완료 이벤트가 없어도 `response.done`이 그 턴을 닫습니다. 사용자가 다시 말하기 시작하면, 완료 이벤트가 없던 이전 사용자 자막도 닫습니다. 그 자막의 늦은 완료 이벤트는 다시 보내지 않습니다. 통화의 세션 지시문과 이전 메시지는 유지합니다. 개발자 이력은 그 지시문에 넣고, 나중 세션 갱신에도 남깁니다. 도구 호출 전에 짧게 말하라는 설정이 있으면, `codex`를 부르기 전에 한 문장을 말하도록 지시문에 넣습니다. 나중 세션 갱신에도 그 문장을 남깁니다. 나뉜 문맥 추가는 이어 붙입니다. 스트리밍된 codex 답은 잠시 멈춘 뒤 한 번만 말합니다. 같이 끝난 여러 codex 결과는 말을 잇기 전에 모두 보냅니다. 말로 읽는 답이 시작 전에 거절되면 다음 답은 기다리지 않습니다. commentary는 소리 내 읽지 않고 도구를 닫습니다. `[STATUS]`는 통화를 끝내지 않습니다. `codex` 도구 호출은 데스크톱 handoff가 됩니다. Codex 클라우드 작업은 이 패키지에 없습니다.
 
 Responses 경로가 이상하면 `GROK_BRIDGE_INFERENCE=cli`로 이전 CLI 봉투 경로를
 씁니다. 매 턴 전체 JSON을 프롬프트로 넣으므로 더 느리고 비싸며, 토큰 단위
@@ -588,7 +630,8 @@ OpenAI로 보내지 말라는 뜻입니다. `GROK_BRIDGE_IMAGE_GEN=off`면 도�
 
 ### reasoning
 
-Codex `reasoning` 항목의 평문 요약은 상류로 전달합니다. 암호화된
+Codex `reasoning` 항목의 평문 요약은 상류로 전달합니다. 요약이 비어 있으면
+내용의 평문을 대신 전달합니다. 암호화된
 `encrypted_content`와 Codex 자체 아이템 id는 제거합니다. 여러 번 호출이 이어지는
 턴에서 모델이 자기 추론을 이어받게 하기 위한 것이며, 상류가 이 형태를 수락하는
 것을 확인했습니다. 같은 과정에서 아이템과 content part는 Grok Responses가
@@ -604,7 +647,15 @@ Codex `reasoning` 항목의 평문 요약은 상류로 전달합니다. 암호�
 
 ### 도구
 
-일반 함수 도구, namespace 함수 도구, freeform 커스텀 도구를 변환합니다. 파일
+일반 함수 도구, namespace 함수 도구, freeform 커스텀 도구를 변환합니다. 커스텀
+도구 호출이 Codex 이름으로 돌아와도, 그 이름이 도구 하나뿐이면 다시 맞춥니다.
+스트리밍된 인자 이벤트와 완료된 응답 목록의 이름도 같이 맞춥니다. 커스텀
+도구 결과도 맞추며, call id만 있어도 맞춥니다. 내용
+목록으로 온 함수 결과는 텍스트로 넘깁니다. 원격 이미지 주소는 그 글에
+넣고, 인라인 PNG·JPEG·WebP는 도구 결과 뒤에 붙여 모델이 보게 합니다. 이전
+웹 검색은 질의와 찾은 페이지 주소를 이력에 남깁니다. stdout,
+stderr, 합쳐진 명령 출력도 이력에 남습니다. 0이 아닌 종료 코드도 그 출력과
+함께 남습니다. 파일
 변경·MCP 등은 Codex가 노출한 도구와 사용자가 정한 승인 정책 안에서 동작합니다.
 개별 기능을 모두 실검증한 것은 아닙니다.
 
@@ -618,11 +669,13 @@ PNG / JPEG / WebP. **이미지당 10 MiB, 요청 전체 20 MiB**, 서로 다른 
 때문에, 예전에는 한도를 넘는 이미지가 히스토리에 한 번 들어가면 이후 모든 턴이
 영구히 400이었습니다. 지금은 그 첨부만 이유를 밝힌 텍스트로 바꾸고 나머지는
 그대로 보냅니다. 쓸 수 있는 이미지는 `input_image` 그대로 넘어가며 Grok가 직접
-읽습니다. 원격 URL은 가져오지 않습니다.
+읽습니다. 원격 URL은 가져오지 않습니다. 오디오 첨부는 설명으로 바꿔서, 그
+바이트가 턴을 거절하지 않게 합니다.
 
 ### 이미지 생성
 
-브리지가 상류 요청에 `{ type: "image_generation" }`을 직접 선언합니다. Codex는
+생성된 이미지는 한 번만 저장하고, 완료된 응답에는 그 파일 설명을 실어 원본
+바이트를 남기지 않습니다. 브리지가 상류 요청에 `{ type: "image_generation" }`을 직접 선언합니다. Codex는
 이 프로바이더에 이미지 생성 도구를 주지 않습니다(263개 중 없음, `view_image`
 뿐). 선언이 없으면 Codex `imagegen` 스킬이 OpenAI 경로(`image_gen` 또는
 `OPENAI_API_KEY` + `gpt-image-*`)로 가서, 추론은 Grok인데 그림만 다른 벤더가
@@ -650,6 +703,13 @@ Grok의 `image_generation`은 텍스트→이미지만 제대로 됩니다.
 설명하지 말라고 적습니다. 진짜 알파나 정확한 인페인팅이 필요하면 Codex의
 OpenAI 경로가 맞습니다.
 
+### 영상 생성
+
+끝난 클립은 임시 URL입니다. 브리지는 로그인 베어러 없이 그 파일을
+`~/.local/share/codex-grok-bridge/generated-videos/`에 받고, 도구 결과에는
+URL과 저장한 파일 경로를 함께 넣습니다. 다운로드가 실패하면 결과는 URL만
+남습니다.
+
 ### GPT ↔ Grok 전환
 
 대기 중인 저장된 루트 작업에서만 됩니다. `turn/start`,
@@ -662,7 +722,7 @@ OpenAI 경로가 맞습니다.
 
 ### 이번 릴리스에 없는 것
 
-음성 sideband는 xAI로 넘기지만, xAI가 OpenAI sideband 경로를 거절하면 음성 세션이 보장되지 않습니다. Codex 클라우드 작업은 이 패키지에 없습니다.
+음성 세션은 xAI 음성 소켓이 로그인을 수락하는지, 그리고 데스크톱이 브리지와 ICE를 끝내는지를 따릅니다. Codex 클라우드 작업은 이 패키지에 없습니다.
 
 상류가 응답 중간에 연결을 리셋하는 경우가 있습니다(실측 3건: 25초 / 27초 /
 253초, 726 KB–22 MB). 브리지는 응답을 들고 있다가, Codex에 그 응답을 보내기

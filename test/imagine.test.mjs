@@ -60,10 +60,18 @@ test("generation rewrites Codex's image body onto the Imagine API", () => {
       model: IMAGINE_MODEL,
       prompt: "a red cube",
       n: 1,
-      resolution: "1k",
       response_format: "b64_json",
     },
   );
+  assert.equal(imagineGenerationBody({ prompt: "wide", size: "1536x1024" }).aspect_ratio, "3:2");
+  assert.equal(imagineGenerationBody({ prompt: "tall", size: "1024x1536" }).aspect_ratio, "2:3");
+  assert.equal(imagineGenerationBody({ prompt: "square", size: "1024x1024" }).aspect_ratio, "1:1");
+  assert.equal(imagineGenerationBody({ prompt: "sharp", quality: "high" }).resolution, "2k");
+  assert.equal(imagineGenerationBody({ prompt: "draft", quality: "low" }).resolution, "1k");
+  assert.equal(Object.hasOwn(imagineGenerationBody({ prompt: "auto", quality: "auto" }), "resolution"), false);
+  assert.equal(imagineGenerationBody({ prompt: "four", n: 4 }).n, 4);
+  assert.equal(imagineGenerationBody({ prompt: "many", n: 99 }).n, 10);
+  assert.equal(imagineGenerationBody({ prompt: "none", n: 0 }).n, 1);
 });
 
 test("edits map image_url references and refuse OpenAI file ids", () => {
@@ -81,8 +89,28 @@ test("edits map image_url references and refuse OpenAI file ids", () => {
   });
   assert.equal(many.images.length, 2);
   assert.equal(many.aspect_ratio, "auto");
+  assert.equal(
+    imagineEditBody({
+      prompt: "wide",
+      size: "1536x1024",
+      images: [{ image_url: "data:image/png;base64,YQ==" }],
+    }).aspect_ratio,
+    "3:2",
+  );
+  assert.equal(
+    imagineEditBody({
+      prompt: "sharp",
+      quality: "high",
+      images: [{ image_url: "data:image/png;base64,YQ==" }],
+    }).resolution,
+    "2k",
+  );
   assert.equal(Object.hasOwn(many, "image"), false);
   assert.throws(() => imagineEditBody({ prompt: "x", images: [{ file_id: "file_123" }] }), /file ids/);
+  assert.throws(
+    () => imagineEditBody({ prompt: "x", images: [{ image_url: "/tmp/cat.png" }] }),
+    /http\(s\) URL/,
+  );
 });
 
 test("a missing created timestamp is filled and empty images are refused", () => {

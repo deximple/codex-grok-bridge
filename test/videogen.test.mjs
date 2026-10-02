@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { createBridgeServer } from "../src/bridge.mjs";
@@ -12,10 +15,146 @@ import {
 
 const TOKEN = "video-session-token";
 const VIDEO_URL = "https://vid.example/clip.mp4";
+const VIDEO_BYTES = Buffer.concat([
+  Buffer.from([0, 0, 0, 0x18]),
+  Buffer.from("ftyp"),
+  Buffer.from("isom"),
+  Buffer.alloc(8, 0),
+]);
+
+function videoFileResponse() {
+  return new Response(VIDEO_BYTES, {
+    status: 200,
+    headers: { "content-type": "video/mp4" },
+  });
+}
 
 function assertNoBearer(text) {
   assert.equal(String(text).includes(TOKEN), false, "bearer was printed");
 }
+
+test("a video tool call rejects a duration or aspect ratio the API will not accept", async () => {
+  let called = false;
+  const fetchImpl = () => {
+    called = true;
+    throw new Error("no");
+  };
+  const duration = await videoToolOutput(
+    { arguments: JSON.stringify({ prompt: "a cat", duration: 30 }) },
+    { token: TOKEN, fetchImpl },
+  );
+  const ratio = await videoToolOutput(
+    { arguments: JSON.stringify({ prompt: "a cat", aspect_ratio: "2:1" }) },
+    { token: TOKEN, fetchImpl },
+  );
+  const image = await videoToolOutput(
+    { arguments: JSON.stringify({ prompt: "a cat", image_url: "/tmp/cat.png" }) },
+    { token: TOKEN, fetchImpl },
+  );
+  assert.equal(called, false);
+  assert.match(duration, /1 to 15/);
+  assert.match(ratio, /16:9/);
+  assert.match(image, /http\(s\) URL/);
+  assertNoBearer(duration);
+  assertNoBearer(ratio);
+  assertNoBearer(image);
+});
+
+test("a video tool call can ask for 1080p and rejects an unknown resolution", async () => {
+  const bodies = [];
+  const fetchImpl = async (_url, init) => {
+    if (init.method === "POST") {
+      bodies.push(JSON.parse(init.body));
+      return new Response(JSON.stringify({ request_id: "req_res" }), { status: 202 });
+    }
+    return new Response(JSON.stringify({ status: "done", video: { url: VIDEO_URL } }), { status: 200 });
+  };
+  const ready = await videoToolOutput(
+    { arguments: JSON.stringify({ prompt: "a cat", resolution: "1080p" }) },
+    { token: TOKEN, fetchImpl, pause: async () => {} },
+  );
+  assert.match(ready, /vid\.example/);
+  assert.equal(bodies[0].resolution, "1080p");
+  assertNoBearer(ready);
+  let called = false;
+  const bad = await videoToolOutput(
+    { arguments: JSON.stringify({ prompt: "a cat", resolution: "4k" }) },
+    {
+      token: TOKEN,
+      fetchImpl() {
+        called = true;
+        throw new Error("no");
+      },
+    },
+  );
+  assert.equal(called, false);
+  assert.match(bad, /1080p/);
+  assertNoBearer(bad);
+});
+
+test("a finished video is saved once and a failed download keeps the URL", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "grok-video-file-"));
+  const calls = [];
+  const saved = await videoToolOutput(
+    {
+      name: GROK_VIDEO_TOOL_NAME,
+      call_id: "c",
+      arguments: JSON.stringify({ prompt: "waves" }),
+    },
+    {
+      token: TOKEN,
+      dir,
+      now: 1,
+      pause: async () => {},
+      fetchImpl: async (url, init) => {
+        calls.push({ url, authorization: init.headers?.authorization });
+        if (init.method === "POST") {
+          return new Response(JSON.stringify({ request_id: "req_file" }), { status: 200 });
+        }
+        if (url === VIDEO_URL) return videoFileResponse();
+        return new Response(
+          JSON.stringify({ status: "done", video: { url: VIDEO_URL } }),
+          { status: 200 },
+        );
+      },
+    },
+  );
+  assert.equal(calls.length, 3);
+  assert.equal(calls[2].authorization, undefined);
+  assert.match(saved, /Saved to /);
+  assert.match(saved, /vid\.example/);
+  const files = readdirSync(dir);
+  assert.equal(files.length, 1);
+  assert.ok(readFileSync(path.join(dir, files[0])).equals(VIDEO_BYTES));
+  assertNoBearer(saved);
+
+  const again = await videoToolOutput(
+    {
+      name: GROK_VIDEO_TOOL_NAME,
+      call_id: "c2",
+      arguments: JSON.stringify({ prompt: "waves" }),
+    },
+    {
+      token: TOKEN,
+      dir,
+      now: 2,
+      pause: async () => {},
+      fetchImpl: async (url, init) => {
+        if (init.method === "POST") {
+          return new Response(JSON.stringify({ request_id: "req_miss" }), { status: 200 });
+        }
+        if (url === VIDEO_URL) return new Response("missing", { status: 404 });
+        return new Response(
+          JSON.stringify({ status: "done", video: { url: VIDEO_URL } }),
+          { status: 200 },
+        );
+      },
+    },
+  );
+  assert.equal(again, `Video ready at ${VIDEO_URL}`);
+  assert.equal(readdirSync(dir).length, 1);
+  assertNoBearer(again);
+});
 
 test("the video function is declared once and does not take a Codex tool name", () => {
   const { request } = toProxyRequest({
@@ -130,10 +269,12 @@ async function post(port) {
 
 test("a 202 and a completed poll become a tool result containing the URL", async () => {
   const videoCalls = [];
+  const dir = mkdtempSync(path.join(tmpdir(), "grok-video-"));
   let followUp;
   let rounds = 0;
   const text = await withBridge(
     {
+      videoDir: dir,
       proxyFetch: async (_url, init) => {
         rounds += 1;
         const body = JSON.parse(init.body);
@@ -149,9 +290,10 @@ test("a 202 and a completed poll become a tool result containing the URL", async
       },
       videoFetch: async (url, init) => {
         const sent =
-          init.headers.authorization === `Bearer ${TOKEN}` &&
+          init.headers?.authorization === `Bearer ${TOKEN}` &&
           !JSON.stringify(init.body ?? "").includes(TOKEN);
         videoCalls.push({ url, method: init.method, sent, body: init.body });
+        if (url === VIDEO_URL) return videoFileResponse();
         if (init.method === "POST") {
           return new Response(JSON.stringify({ request_id: "req_1" }), { status: 202 });
         }
@@ -163,7 +305,9 @@ test("a 202 and a completed poll become a tool result containing the URL", async
     },
     post,
   );
-  assert.equal(videoCalls.length, 2);
+  assert.equal(videoCalls.length, 3);
+  assert.equal(videoCalls[2].url, VIDEO_URL);
+  assert.equal(videoCalls[2].sent, false);
   assert.equal(videoCalls[0].method, "POST");
   assert.equal(videoCalls[0].url, `${DEFAULT_VIDEO_API_BASE}/videos/generations`);
   assert.equal(videoCalls[0].sent, true);
@@ -176,6 +320,11 @@ test("a 202 and a completed poll become a tool result containing the URL", async
   assert.equal(videoCalls[1].url, `${DEFAULT_VIDEO_API_BASE}/videos/req_1`);
   const output = followUp.input.find((item) => item.type === "function_call_output");
   assert.match(output.output, new RegExp(VIDEO_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(output.output, /Saved to /);
+  const saved = readdirSync(dir);
+  assert.equal(saved.length, 1);
+  assert.ok(readFileSync(path.join(dir, saved[0])).equals(VIDEO_BYTES));
+  assert.match(output.output, new RegExp(saved[0].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assertNoBearer(output.output);
   assertNoBearer(JSON.stringify(followUp.input));
   assert.match(text, /The clip is ready/);
@@ -212,6 +361,31 @@ test("a 401 from the videos API is a tool error and the turn continues", async (
   assert.match(text, /response\.completed/);
   assert.doesNotMatch(text, /response\.failed/);
   assertNoBearer(text);
+});
+
+test("a finished video withheld by moderation is explained", async () => {
+  const output = await videoToolOutput(
+    {
+      name: GROK_VIDEO_TOOL_NAME,
+      call_id: "c",
+      arguments: JSON.stringify({ prompt: "waves" }),
+    },
+    {
+      token: TOKEN,
+      pause: async () => {},
+      fetchImpl: async (_url, init) => {
+        if (init.method === "POST") {
+          return new Response(JSON.stringify({ request_id: "req_mod" }), { status: 200 });
+        }
+        return new Response(
+          JSON.stringify({ status: "done", video: { respect_moderation: false } }),
+          { status: 200 },
+        );
+      },
+    },
+  );
+  assert.equal(output, "Video generation finished, but moderation withheld the URL.");
+  assertNoBearer(output);
 });
 
 test("video tool output does not echo the bearer", async () => {

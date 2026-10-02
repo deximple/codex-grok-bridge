@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import http from "node:http";
 import net from "node:net";
 import { Duplex } from "node:stream";
@@ -9,7 +10,37 @@ import path from "node:path";
 import test from "node:test";
 
 import { createBridgeServer } from "../src/bridge.mjs";
+import OpusScript from "opusscript";
+import { MediaStreamTrack, RTCPeerConnection, RTCRtpCodecParameters, useOPUS } from "werift";
 import { DEFAULT_REALTIME_API_BASE, forwardRealtime } from "../src/realtime.mjs";
+import {
+  appendFromRtp,
+  closeVoiceCalls,
+  mulawToPcm16,
+  pcm16ToMulaw,
+  playbackFromDelta,
+  voiceAudioDelta,
+  voiceSocketUrl,
+  openVoiceSocket,
+  MIC_HOLD_FRAMES,
+  rememberLocalCall,
+  remoteAudioTracks,
+  startVoiceBridge,
+  voiceCallCount,
+  flushDelegationSpeech,
+  mergeVoiceClientBurst,
+  playoutGap,
+  queueDelegationSpeech,
+  voiceClientEvents,
+  voiceSidebandEvent,
+  sidebandFrames,
+  announceSession,
+  ackFillerFromCallBody,
+  developerTextFromCallBody,
+  initialItemsFromCallBody,
+  instructionsFromCallBody,
+  offerFromCallBody,
+} from "../src/voice.mjs";
 
 const BRIDGE = "bridge-token";
 const GROK = "grok-login-token";
@@ -285,7 +316,7 @@ class ScriptedSocket extends Duplex {
   }
 }
 
-function rawUpgrade(port, requestPath, headers = {}) {
+function rawUpgrade(port, requestPath, headers = {}, waitForTrail = requestPath.startsWith("/v1/live/")) {
   return new Promise((resolve, reject) => {
       const socket = net.connect(port, "127.0.0.1", () => {
       const headerMap = {
@@ -318,8 +349,8 @@ function rawUpgrade(port, requestPath, headers = {}) {
       chunks.push(chunk);
       const head = Buffer.concat(chunks);
       const headersDone = head.includes("\r\n\r\n");
-      const sidebandByte = requestPath.startsWith("/v1/live/") && head.includes("\r\n\r\nU");
-      if (!settled && headersDone && (!requestPath.startsWith("/v1/live/") || sidebandByte)) {
+      const sidebandByte = waitForTrail && head.includes("\r\n\r\nU");
+      if (!settled && headersDone && (!waitForTrail || sidebandByte)) {
         settled = true;
         clearTimeout(timer);
         resolve({ socket, head });
@@ -341,6 +372,2443 @@ function rawUpgrade(port, requestPath, headers = {}) {
     });
   });
 }
+
+test("a rejected xAI offer is answered by werift and bridged to the voice socket", async () => {
+  const pcmu = new RTCRtpCodecParameters({
+    mimeType: "audio/PCMU",
+    clockRate: 8000,
+    channels: 1,
+    payloadType: 0,
+  });
+  const offerer = new RTCPeerConnection({
+    iceServers: [],
+    iceUseIpv4: true,
+    iceUseIpv6: false,
+    codecs: { audio: [pcmu] },
+  });
+  offerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+  const offer = await offerer.createOffer();
+  await offerer.setLocalDescription(offer);
+  const sockets = [];
+  const fetchImpl = async () =>
+    new Response(Buffer.from('{"error":"Team is not authorized"}'), {
+      status: 403,
+      headers: { "content-type": "application/json" },
+    });
+  try {
+    await withServer(
+      {
+        realtimeFetch: fetchImpl,
+        voiceWebSocket(_url, token) {
+          assert.equal(token, GROK);
+          const sent = [];
+          const socket = {
+            readyState: 1,
+            sent,
+            send(data) {
+              sent.push(String(data));
+            },
+            close() {
+              this.readyState = 3;
+            },
+          };
+          sockets.push(socket);
+          return socket;
+        },
+      },
+      async (port) => {
+        const answered = await postRaw(port, "/v1/realtime/calls", offerer.localDescription.sdp);
+        assert.equal(answered.status, 201);
+        assert.equal(answered.headers["content-type"], "application/sdp");
+        const sdp = answered.body.toString("utf8");
+        assert.equal(sdp.startsWith("v=0"), true);
+        assert.equal(sdp.includes("a=fingerprint:"), true);
+        assert.equal(sdp.includes("Team is not authorized"), false);
+        assert.match(
+          answered.headers.location,
+          /^\/v1\/realtime\/calls\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+        );
+        const sent = sockets[0].sent.map((line) => JSON.parse(line));
+        assert.equal(sent[0].type, "session.update");
+        assert.equal(sent[0].session.voice, "eve");
+        assert.equal(sent[0].session.resumption.enabled, true);
+        assert.equal(sent[0].session.tools[0].name, "codex");
+        assert.equal(sent[0].session.audio.input.format.rate, 24000);
+        assert.equal(sent[0].session.audio.input.transcription.model, "grok-transcribe");
+        assert.equal(sent[0].session.audio.output.format.type, "audio/pcm");
+      },
+    );
+  } finally {
+    closeVoiceCalls();
+    await offerer.close();
+  }
+});
+
+test("a sideband frame bundled with the upgrade reaches xAI", async () => {
+  const pcmu = new RTCRtpCodecParameters({
+    mimeType: "audio/PCMU",
+    clockRate: 8000,
+    channels: 1,
+    payloadType: 0,
+  });
+  const offerer = new RTCPeerConnection({
+    iceServers: [],
+    iceUseIpv4: true,
+    iceUseIpv6: false,
+    codecs: { audio: [pcmu] },
+  });
+  offerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+  await offerer.setLocalDescription(await offerer.createOffer());
+  const sockets = [];
+  try {
+    await withServer(
+      {
+        realtimeFetch: async () =>
+          new Response(Buffer.from('{"error":"Team is not authorized"}'), {
+            status: 403,
+            headers: { "content-type": "application/json" },
+          }),
+        voiceWebSocket() {
+          const sent = [];
+          const socket = {
+            readyState: 1,
+            sent,
+            send(data) {
+              sent.push(String(data));
+            },
+            close() {},
+          };
+          sockets.push(socket);
+          return socket;
+        },
+      },
+      async (port) => {
+        const answered = await postRaw(port, "/v1/realtime/calls", offerer.localDescription.sdp);
+        assert.equal(answered.status, 201);
+        const id = answered.headers.location.split("/").pop();
+        const payload = Buffer.from(JSON.stringify({ type: "response.cancel" }));
+        const mask = Buffer.from([9, 8, 7, 6]);
+        const frame = Buffer.concat([
+          Buffer.from([0x81, 0x80 | payload.length]),
+          mask,
+          Buffer.from(payload.map((byte, index) => byte ^ mask[index % 4])),
+        ]);
+        const socket = net.connect(port, "127.0.0.1");
+        await once(socket, "connect");
+        socket.write(
+          Buffer.concat([
+            Buffer.from(
+              `GET /v1/live/${id} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nAuthorization: Bearer ${BRIDGE}\r\n\r\n`,
+            ),
+            frame,
+          ]),
+        );
+        const deadline = Date.now() + 1000;
+        while (Date.now() < deadline && !sockets[0].sent.some((line) => line.includes("response.cancel"))) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        socket.destroy();
+        assert.equal(
+          sockets[0].sent.some((line) => JSON.parse(line).type === "response.cancel"),
+          true,
+        );
+      },
+    );
+  } finally {
+    closeVoiceCalls();
+    await offerer.close();
+  }
+});
+
+test("a sideband request waits until the voice socket is open", () => {
+  const sent = [];
+  const socket = {
+    readyState: 0,
+    send(data) {
+      sent.push(JSON.parse(String(data)));
+    },
+  };
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} } },
+    socket,
+  });
+  try {
+    bridge.sendClient({ type: "response.create" });
+    assert.equal(sent.length, 0);
+    socket.readyState = 1;
+    socket.onopen();
+    assert.equal(sent[0].type, "session.update");
+    assert.equal(sent.some((event) => event.type === "response.create"), true);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("a tool reply waits until playback finishes", async () => {
+  const sent = [];
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const socket = {
+    readyState: 1,
+    send(data) {
+      sent.push(JSON.parse(String(data)));
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket,
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  try {
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        delta: Buffer.concat([Buffer.alloc(960), Buffer.alloc(960)]).toString("base64"),
+      }),
+    );
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    bridge.sendClient({
+      type: "conversation.item.create",
+      item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text: "Next." }] },
+    });
+    assert.equal(sent.some((event) => event.item?.type === "force_message"), false);
+    const deadline = Date.now() + 500;
+    while (!sent.some((event) => event.item?.type === "force_message") && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(sent.some((event) => event.item?.type === "force_message"), true);
+    assert.ok(track.rtp.length >= 2);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("audio after an interrupted voice reply waits for the next response", () => {
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: { readyState: 1, send() {} },
+  });
+  try {
+    const pcm = Buffer.alloc(8).toString("base64");
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio.delta", delta: pcm }));
+    const played = track.rtp.length;
+    assert.equal(played > 0, true);
+    bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio.delta", delta: pcm }));
+    assert.equal(track.rtp.length, played);
+    bridge.onUpstream(JSON.stringify({ type: "response.created" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio.delta", delta: pcm }));
+    assert.equal(track.rtp.length > played, true);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("user speech stops queued voice playback", async () => {
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: { readyState: 1, send() {} },
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  try {
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        delta: Buffer.alloc(960 * 4).toString("base64"),
+      }),
+    );
+    assert.equal(track.rtp.length >= 1, true);
+    const sent = track.rtp.length;
+    bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    assert.equal(track.rtp.length, sent);
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.created" }));
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        delta: Buffer.alloc(960).toString("base64"),
+      }),
+    );
+    assert.equal(track.rtp.length > sent, true);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("user speech truncates the assistant item to the audio already sent", () => {
+  const sent = [];
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: {
+      readyState: 1,
+      send(data) {
+        sent.push(JSON.parse(String(data)));
+      },
+    },
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  try {
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        item_id: "item-1",
+        content_index: 0,
+        delta: Buffer.alloc(960 * 4).toString("base64"),
+      }),
+    );
+    assert.equal(track.rtp.length, 1);
+    bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+    const truncated = sent.filter((event) => event.type === "conversation.item.truncate");
+    assert.equal(truncated.length, 1);
+    assert.equal(truncated[0].item_id, "item-1");
+    assert.equal(truncated[0].content_index, 0);
+    assert.equal(truncated[0].audio_end_ms, 20);
+    bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+    assert.equal(sent.filter((event) => event.type === "conversation.item.truncate").length, 1);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("a later user turn does not truncate a finished voice reply", () => {
+  const sent = [];
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: {
+      readyState: 1,
+      send(data) {
+        sent.push(JSON.parse(String(data)));
+      },
+    },
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  try {
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        item_id: "item-1",
+        delta: Buffer.alloc(960).toString("base64"),
+      }),
+    );
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    assert.equal(track.rtp.length, 1);
+    bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+    assert.equal(sent.some((event) => event.type === "conversation.item.truncate"), false);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("a tool reply waits until the user stops speaking", () => {
+  const sent = [];
+  const socket = {
+    readyState: 1,
+    send(data) {
+      sent.push(JSON.parse(String(data)));
+    },
+  };
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket,
+  });
+  try {
+    bridge.onUpstream(JSON.stringify({ type: "response.created" }));
+    bridge.sendClient({
+      type: "conversation.item.create",
+      item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text: "Later." }] },
+    });
+    bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    assert.equal(sent.some((event) => event.item?.type === "force_message"), false);
+    bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_stopped" }));
+    assert.equal(sent.some((event) => event.item?.type === "force_message"), true);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("a tool reply waits until the voice response is done", () => {
+  const sent = [];
+  const socket = {
+    readyState: 1,
+    send(data) {
+      sent.push(JSON.parse(String(data)));
+    },
+  };
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket,
+  });
+  try {
+    bridge.onUpstream(JSON.stringify({ type: "response.created" }));
+    bridge.sendClient({
+      type: "conversation.item.create",
+      item: { type: "function_call_output", call_id: "call-1", output: JSON.stringify("done") },
+    });
+    bridge.sendClient({
+      type: "conversation.item.create",
+      item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text: "Done." }] },
+    });
+    bridge.sendClient({ type: "response.cancel" });
+    assert.equal(sent.some((event) => event.item?.type === "force_message"), false);
+    assert.equal(sent.some((event) => event.type === "response.cancel"), true);
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    const items = sent.map((event) => event.item?.type).filter(Boolean);
+    assert.deepEqual(items, ["function_call_output", "force_message"]);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("microphone audio held for the session ack keeps two seconds", () => {
+  const sent = [];
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket: {
+      readyState: 1,
+      send(data) {
+        sent.push(JSON.parse(String(data)));
+      },
+    },
+  });
+  try {
+    const frames = MIC_HOLD_FRAMES - 10;
+    for (let i = 0; i < frames; i += 1) bridge.onRtp({ payload: Buffer.from([i & 0xff]) });
+    assert.equal(sent.some((event) => event.type === "input_audio_buffer.append"), false);
+    bridge.onUpstream(JSON.stringify({ type: "session.updated", session: { id: "sess-1" } }));
+    assert.equal(sent.filter((event) => event.type === "input_audio_buffer.append").length, frames);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("a spoken voice tool reply does not repeat a deferred response.create", () => {
+  const sent = [];
+  const socket = {
+    readyState: 1,
+    send(data) {
+      sent.push(JSON.parse(String(data)));
+    },
+  };
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket,
+  });
+  try {
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    bridge.sendClient({ type: "response.create" });
+    assert.equal(sent.filter((event) => event.type === "response.create").length, 1);
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "error",
+        error: { message: "Conversation already has an active response in progress: resp_1" },
+      }),
+    );
+    bridge.sendClient({
+      type: "conversation.item.create",
+      item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text: "Later." }] },
+    });
+    assert.equal(sent.some((event) => event.item?.type === "force_message"), false);
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    const forceAt = sent.findIndex((event) => event.item?.type === "force_message");
+    assert.equal(forceAt > sent.findIndex((event) => event.type === "response.create"), true);
+    assert.equal(sent.filter((event) => event.type === "response.create").length, 1);
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    assert.equal(sent.filter((event) => event.type === "response.create").length, 1);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("a desktop response.cancel stops queued playback", async () => {
+  const sent = [];
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: {
+      readyState: 1,
+      send(data) {
+        sent.push(JSON.parse(String(data)));
+      },
+    },
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  try {
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        item_id: "item-1",
+        delta: Buffer.alloc(960 * 4).toString("base64"),
+      }),
+    );
+    const played = track.rtp.length;
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "error",
+        error: { message: "Conversation already has an active response in progress: resp_1" },
+      }),
+    );
+    bridge.sendClient({ type: "response.cancel" });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    assert.equal(track.rtp.length, played);
+    assert.equal(sent.some((event) => event.type === "response.cancel"), true);
+    assert.equal(sent.some((event) => event.type === "conversation.item.truncate"), true);
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    assert.equal(sent.some((event) => event.type === "response.create"), false);
+    bridge.sendClient({
+      type: "conversation.item.create",
+      item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text: "After." }] },
+    });
+    assert.equal(sent.at(-1).item.type, "force_message");
+  } finally {
+    bridge.close();
+  }
+});
+
+test("a desktop response.cancel keeps a tool reply held while the user is speaking", () => {
+  const sent = [];
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket: {
+      readyState: 1,
+      send(data) {
+        sent.push(JSON.parse(String(data)));
+      },
+    },
+  });
+  try {
+    bridge.onUpstream(JSON.stringify({ type: "response.created" }));
+    bridge.sendClient({
+      type: "conversation.item.create",
+      item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text: "Later." }] },
+    });
+    bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+    bridge.sendClient({ type: "response.cancel" });
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    assert.equal(sent.some((event) => event.item?.type === "force_message"), false);
+    bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_stopped" }));
+    assert.equal(sent.some((event) => event.item?.type === "force_message"), true);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("voice audio accepts the documented delta and audio fields", () => {
+  const pcm = Buffer.alloc(6).toString("base64");
+  assert.equal(voiceAudioDelta({ type: "response.output_audio.delta", delta: pcm }), pcm);
+  assert.equal(voiceAudioDelta({ type: "response.audio.delta", audio: pcm }), pcm);
+  assert.equal(voiceAudioDelta({ type: "response.output_audio.delta", audio: pcm }), pcm);
+  assert.equal(voiceAudioDelta({ type: "response.done" }), "");
+});
+
+test("voice audio uses append and output_audio.delta", () => {
+  const sent = [];
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const socket = {
+    readyState: 1,
+    send(data) {
+      sent.push(JSON.parse(String(data)));
+    },
+  };
+  const bridge = startVoiceBridge({ track, socket });
+  const mulaw = Buffer.from([0xff, 0x7f]);
+  bridge.onRtp({ payload: mulaw });
+  assert.equal(sent.some((event) => event.type === "input_audio_buffer.append"), false);
+  bridge.onUpstream(JSON.stringify({ type: "session.updated", session: { id: "sess-1" } }));
+  assert.equal(sent.at(-1).type, "input_audio_buffer.append");
+  assert.equal(Buffer.from(sent.at(-1).audio, "base64").length, mulawToPcm16(mulaw).length * 3);
+  const pcm = Buffer.alloc(6);
+  bridge.onUpstream(
+    JSON.stringify({ type: "response.output_audio.delta", delta: pcm.toString("base64") }),
+  );
+  assert.equal(track.rtp.length, 1);
+  assert.equal(track.rtp[0].payload.length, 1);
+  bridge.onUpstream(JSON.stringify({ type: "ping" }));
+  assert.equal(track.rtp.length, 1);
+  const state = { sequence: 0, timestamp: 0, ssrc: 1 };
+  playbackFromDelta(track, state, "");
+  assert.equal(track.rtp.length, 1);
+  appendFromRtp((event) => sent.push(event), Buffer.from([0x00]));
+  assert.equal(sent.at(-1).type, "input_audio_buffer.append");
+});
+
+test("a short voice reply is played when the turn ends", () => {
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: { readyState: 1, send() {} },
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  bridge.onUpstream(JSON.stringify({ type: "response.output_audio.delta", delta: Buffer.alloc(200).toString("base64") }));
+  assert.equal(track.rtp.length, 0);
+  bridge.onUpstream(JSON.stringify({ type: "response.output_audio.done" }));
+  assert.equal(track.rtp.length, 1);
+  assert.equal(track.rtp[0].header.payloadType, 111);
+  assert.equal(track.rtp[0].header.marker, true);
+  bridge.onUpstream(JSON.stringify({ type: "response.output_audio.delta", delta: Buffer.alloc(200).toString("base64") }));
+  bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+  assert.equal(track.rtp.length, 2);
+  assert.equal(track.rtp[1].header.marker, true);
+});
+
+test("a live-sized voice delta is played as opus", async () => {
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: { readyState: 1, send() {} },
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  bridge.onUpstream(
+    JSON.stringify({
+      type: "response.output_audio.delta",
+      delta: Buffer.alloc(26424).toString("base64"),
+    }),
+  );
+  const second = Date.now() + 500;
+  while (track.rtp.length < 2 && Date.now() < second) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.ok(track.rtp.length > 1);
+  assert.equal(track.rtp[0].header.marker, true);
+  assert.equal(track.rtp[0].header.payloadType, 111);
+  assert.equal(track.rtp[1].header.marker, false);
+  const played = track.rtp.length;
+  bridge.onUpstream(JSON.stringify({ type: "response.output_audio.done" }));
+  assert.ok(track.rtp.length >= played);
+  bridge.close();
+});
+
+test("a later voice turn keeps its own talkspurt marker", async () => {
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: { readyState: 1, send() {} },
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  try {
+    const frame = Buffer.alloc(960);
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        delta: Buffer.concat([frame, frame]).toString("base64"),
+      }),
+    );
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio.done" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio.delta", delta: frame.toString("base64") }));
+    const deadline = Date.now() + 500;
+    while (track.rtp.length < 3 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(track.rtp.length >= 3, true);
+    assert.equal(track.rtp[0].header.marker, true);
+    assert.equal(track.rtp[1].header.marker, false);
+    assert.equal(track.rtp[2].header.marker, true);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("a rejected spoken voice turn does not hold the next reply", () => {
+  const sent = [];
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket: {
+      readyState: 1,
+      send(data) {
+        sent.push(JSON.parse(String(data)));
+      },
+    },
+  });
+  try {
+    const force = (text) => ({
+      type: "conversation.item.create",
+      item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text }] },
+    });
+    bridge.sendClient(force("One."));
+    bridge.sendClient(force("Two."));
+    bridge.onUpstream(JSON.stringify({ type: "error", error: { message: "nope" } }));
+    assert.deepEqual(
+      sent.filter((event) => event.item?.type === "force_message").map((event) => event.item.content[0].text),
+      ["One.", "Two."],
+    );
+    bridge.sendClient(force("Three."));
+    bridge.onUpstream(JSON.stringify({ type: "response.created" }));
+    bridge.onUpstream(JSON.stringify({ type: "error", error: { message: "later" } }));
+    assert.deepEqual(
+      sent.filter((event) => event.item?.type === "force_message").map((event) => event.item.content[0].text),
+      ["One.", "Two."],
+    );
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    assert.deepEqual(
+      sent.filter((event) => event.item?.type === "force_message").map((event) => event.item.content[0].text),
+      ["One.", "Two.", "Three."],
+    );
+  } finally {
+    bridge.close();
+  }
+});
+
+test("a second spoken voice tool reply waits for the first turn", () => {
+  const sent = [];
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket: {
+      readyState: 1,
+      send(data) {
+        sent.push(JSON.parse(String(data)));
+      },
+    },
+  });
+  try {
+    const force = (text) => ({
+      type: "conversation.item.create",
+      item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text }] },
+    });
+    bridge.sendClient(force("One."));
+    bridge.sendClient(force("Two."));
+    assert.deepEqual(
+      sent.filter((event) => event.item?.type === "force_message").map((event) => event.item.content[0].text),
+      ["One."],
+    );
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    assert.deepEqual(
+      sent.filter((event) => event.item?.type === "force_message").map((event) => event.item.content[0].text),
+      ["One.", "Two."],
+    );
+  } finally {
+    bridge.close();
+  }
+});
+
+test("a streamed codex reply is spoken once", () => {
+  const state = { pendingCalls: new Set(["call-1"]) };
+  const frame = (text) => ({
+    type: "delegation.context.append",
+    delegation_item_id: "call-1",
+    content: [{ type: "input_text", text }],
+  });
+  assert.equal(queueDelegationSpeech(state, frame("AAAA")), true);
+  assert.equal(queueDelegationSpeech(state, frame("BBBB")), true);
+  assert.equal(state.pendingCalls.has("call-1"), true);
+  const spoken = flushDelegationSpeech(state);
+  assert.equal(spoken[0].item.type, "function_call_output");
+  assert.equal(spoken[0].item.output, JSON.stringify("AAAABBBB"));
+  assert.equal(spoken[1].item.type, "force_message");
+  assert.equal(spoken[1].item.content[0].text, "AAAABBBB");
+  assert.equal(state.pendingCalls.has("call-1"), false);
+  const quiet = { pendingCalls: new Set(["call-2"]) };
+  assert.equal(
+    queueDelegationSpeech(quiet, {
+      type: "delegation.context.append",
+      delegation_item_id: "call-2",
+      channel: "commentary",
+      content: [{ type: "input_text", text: "[STATUS] reading" }],
+    }),
+    false,
+  );
+  assert.equal(
+    queueDelegationSpeech(quiet, {
+      type: "delegation.context.append",
+      delegation_item_id: "call-2",
+      channel: "commentary",
+      content: [{ type: "input_text", text: "Renamed the helper." }],
+    }),
+    true,
+  );
+  const aside = flushDelegationSpeech(quiet);
+  assert.equal(aside[0].item.type, "function_call_output");
+  assert.equal(aside[1].item.type, "message");
+  assert.equal(aside[2].type, "response.create");
+  assert.equal(aside.some((event) => event.item?.type === "force_message"), false);
+  const batch = { pendingCalls: new Set(["call-a", "call-b"]) };
+  const append = (id, text, channel) =>
+    queueDelegationSpeech(batch, {
+      type: "delegation.context.append",
+      delegation_item_id: id,
+      ...(channel ? { channel } : {}),
+      content: [{ type: "input_text", text }],
+    });
+  assert.equal(append("call-a", "one", "commentary"), true);
+  assert.equal(append("call-b", "two", "commentary"), true);
+  const together = flushDelegationSpeech(batch);
+  assert.equal(together.filter((event) => event.type === "response.create").length, 1);
+  assert.equal(together.at(-1).type, "response.create");
+  assert.equal(
+    together.filter((event) => event.item?.type === "function_call_output").length,
+    2,
+  );
+  const spokenBatch = { pendingCalls: new Set(["call-c", "call-d"]) };
+  assert.equal(
+    queueDelegationSpeech(spokenBatch, {
+      type: "delegation.context.append",
+      delegation_item_id: "call-c",
+      content: [{ type: "input_text", text: "Left." }],
+    }),
+    true,
+  );
+  assert.equal(
+    queueDelegationSpeech(spokenBatch, {
+      type: "delegation.context.append",
+      delegation_item_id: "call-d",
+      content: [{ type: "input_text", text: "Right." }],
+    }),
+    true,
+  );
+  const lines = flushDelegationSpeech(spokenBatch);
+  const firstForce = lines.findIndex((event) => event.item?.type === "force_message");
+  assert.equal(lines.some((event) => event.type === "response.create"), false);
+  assert.equal(firstForce > 1, true);
+  assert.equal(
+    lines.slice(0, firstForce).every((event) => event.item?.type === "function_call_output"),
+    true,
+  );
+});
+
+test("a short playout delay does not split the talkspurt", () => {
+  assert.equal(playoutGap({ lastSentAt: 1000 }, 1040), 0);
+  assert.equal(playoutGap({ lastSentAt: 1000 }, 1070), 0);
+  assert.ok(playoutGap({ lastSentAt: 1000 }, 1120) > 0);
+});
+
+test("a silent gap advances the voice playout clock", async () => {
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: { readyState: 1, send() {} },
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  try {
+    const frame = Buffer.alloc(960).toString("base64");
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio.delta", delta: frame }));
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio.done" }));
+    assert.equal(track.rtp.length, 1);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio.delta", delta: frame }));
+    assert.equal(track.rtp.length, 2);
+    assert.equal(track.rtp[1].header.marker, true);
+    assert.ok(track.rtp[1].header.timestamp > track.rtp[0].header.timestamp + 960);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("closing the voice bridge stops playback retries", async () => {
+  let writes = 0;
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    writeRtp() {
+      writes += 1;
+      throw new Error("not connected");
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: { readyState: 1, send() {} },
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  bridge.onUpstream(
+    JSON.stringify({
+      type: "response.output_audio.delta",
+      delta: Buffer.alloc(960).toString("base64"),
+    }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  const atClose = writes;
+  assert.ok(atClose >= 1);
+  bridge.close();
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(writes, atClose);
+});
+
+test("a playback frame is retried when the peer is not ready", async () => {
+  let fail = true;
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      if (fail) throw new Error("not connected");
+      this.rtp.push(packet);
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: { readyState: 1, send() {} },
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  try {
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        delta: Buffer.alloc(960).toString("base64"),
+      }),
+    );
+    assert.equal(track.rtp.length, 0);
+    fail = false;
+    const deadline = Date.now() + 500;
+    while (track.rtp.length < 1 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(track.rtp.length >= 1, true);
+    assert.equal(track.rtp[0].header.marker, true);
+    assert.equal(track.rtp[0].header.sequenceNumber, 1);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("a dropped voice socket resumes the same conversation once", () => {
+  const first = { readyState: 1, sent: [], send(data) { this.sent.push(JSON.parse(String(data))); }, close() {} };
+  let second;
+  const events = [];
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} } },
+    socket: first,
+    onEvent(text) {
+      events.push(JSON.parse(text));
+    },
+    openSocket(conversationId) {
+      assert.equal(conversationId, "conv-1");
+      second = { readyState: 1, sent: [], send(data) { this.sent.push(JSON.parse(String(data))); }, close() {} };
+      return second;
+    },
+  });
+  try {
+    assert.equal(voiceSocketUrl("conv-1").includes("conversation_id=conv-1"), true);
+    first.onmessage(JSON.stringify({ type: "conversation.created", conversation: { id: "conv-1" } }));
+    first.onclose();
+    assert.equal(events.length, 0);
+    assert.equal(second.sent[0].type, "session.update");
+    assert.equal(second.sent[0].session.resumption.enabled, true);
+    second.onclose();
+    assert.equal(events.at(-1).error.message, "Voice connection closed.");
+  } finally {
+    bridge.close();
+  }
+});
+
+test("a resumed voice socket dials the same conversation", () => {
+  const urls = [];
+  const Original = globalThis.WebSocket;
+  globalThis.WebSocket = class {
+    constructor(url) {
+      urls.push(String(url));
+      this.readyState = 0;
+    }
+    close() {}
+  };
+  try {
+    const socket = openVoiceSocket(voiceSocketUrl("conv-1"), "token");
+    assert.match(urls[0], /conversation_id=conv-1/);
+    assert.equal(urls[0].includes("model=grok-voice-latest"), true);
+    socket.close();
+  } finally {
+    globalThis.WebSocket = Original;
+  }
+});
+
+test("a dropped voice socket sends a held tool reply after the new session is ready", () => {
+  const first = {
+    readyState: 1,
+    sent: [],
+    send(data) {
+      this.sent.push(JSON.parse(String(data)));
+    },
+    close() {},
+  };
+  let second;
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket: first,
+    openSocket() {
+      second = {
+        readyState: 1,
+        sent: [],
+        send(data) {
+          this.sent.push(JSON.parse(String(data)));
+        },
+        close() {},
+      };
+      return second;
+    },
+  });
+  try {
+    first.onmessage(JSON.stringify({ type: "conversation.created", conversation: { id: "conv-1" } }));
+    first.onmessage(JSON.stringify({ type: "session.updated", session: { id: "sess-1" } }));
+    bridge.onUpstream(JSON.stringify({ type: "response.created" }));
+    bridge.sendClient({
+      type: "conversation.item.create",
+      item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text: "Later." }] },
+    });
+    assert.equal(first.sent.some((event) => event.item?.type === "force_message"), false);
+    first.onclose();
+    assert.equal(second.sent[0].type, "session.update");
+    assert.equal(second.sent.some((event) => event.item?.type === "force_message"), false);
+    second.onmessage(JSON.stringify({ type: "session.updated", session: { id: "sess-2" } }));
+    assert.equal(second.sent.at(-1).item.type, "force_message");
+  } finally {
+    bridge.close();
+  }
+});
+
+test("a resumed voice socket drops the previous interrupt", () => {
+  const first = {
+    readyState: 1,
+    sent: [],
+    send(data) {
+      this.sent.push(JSON.parse(String(data)));
+    },
+    close() {},
+  };
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  let second;
+  const bridge = startVoiceBridge({
+    track,
+    socket: first,
+    openSocket() {
+      second = {
+        readyState: 1,
+        sent: [],
+        send(data) {
+          this.sent.push(JSON.parse(String(data)));
+        },
+        close() {},
+      };
+      return second;
+    },
+  });
+  try {
+    first.onmessage(JSON.stringify({ type: "conversation.created", conversation: { id: "conv-1" } }));
+    first.onmessage(JSON.stringify({ type: "session.updated", session: { id: "sess-1" } }));
+    bridge.onUpstream(JSON.stringify({ type: "response.created" }));
+    bridge.sendClient({
+      type: "conversation.item.create",
+      item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text: "Later." }] },
+    });
+    bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "error",
+        error: { message: "Conversation already has an active response in progress: resp_1" },
+      }),
+    );
+    first.onclose();
+    assert.equal(second.sent[0].type, "session.update");
+    assert.equal(second.sent.some((event) => event.item?.type === "force_message"), false);
+    second.onmessage(JSON.stringify({ type: "session.updated", session: { id: "sess-2" } }));
+    assert.equal(second.sent.some((event) => event.item?.type === "force_message"), true);
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        delta: Buffer.alloc(8).toString("base64"),
+      }),
+    );
+    assert.equal(track.rtp.length > 0, true);
+    const creates = second.sent.filter((event) => event.type === "response.create").length;
+    second.onmessage(JSON.stringify({ type: "response.done" }));
+    assert.equal(second.sent.filter((event) => event.type === "response.create").length, creates);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("a resumed voice socket sends the new session update first", () => {
+  const first = {
+    readyState: 0,
+    sent: [],
+    send(data) {
+      this.sent.push(JSON.parse(String(data)));
+    },
+    close() {},
+  };
+  let second;
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket: first,
+    openSocket() {
+      second = {
+        readyState: 0,
+        sent: [],
+        send(data) {
+          this.sent.push(JSON.parse(String(data)));
+        },
+        close() {},
+      };
+      return second;
+    },
+  });
+  try {
+    first.onmessage(JSON.stringify({ type: "conversation.created", conversation: { id: "conv-1" } }));
+    first.onclose();
+    assert.equal(second.sent.length, 0);
+    second.onopen();
+    assert.equal(second.sent.filter((event) => event.type === "session.update").length, 1);
+    assert.equal(second.sent[0].type, "session.update");
+  } finally {
+    bridge.close();
+  }
+});
+
+test("a resumed voice socket drops audio that was still queued", async () => {
+  const first = {
+    readyState: 1,
+    sent: [],
+    send(data) {
+      this.sent.push(JSON.parse(String(data)));
+    },
+    close() {},
+  };
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  let second;
+  const bridge = startVoiceBridge({
+    track,
+    socket: first,
+    codec: { kind: "opus", payloadType: 111 },
+    openSocket() {
+      second = {
+        readyState: 1,
+        sent: [],
+        send(data) {
+          this.sent.push(JSON.parse(String(data)));
+        },
+        close() {},
+      };
+      return second;
+    },
+  });
+  try {
+    first.onmessage(JSON.stringify({ type: "conversation.created", conversation: { id: "conv-1" } }));
+    first.onmessage(JSON.stringify({ type: "session.updated", session: { id: "sess-1" } }));
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        item_id: "item-1",
+        content_index: 0,
+        delta: Buffer.alloc(960 * 4).toString("base64"),
+      }),
+    );
+    const sentBefore = track.rtp.length;
+    assert.equal(sentBefore >= 1, true);
+    first.onclose();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    assert.equal(track.rtp.length, sentBefore);
+    assert.equal(second.sent.some((event) => event.type === "conversation.item.truncate"), false);
+    second.onmessage(JSON.stringify({ type: "session.updated", session: { id: "sess-2" } }));
+    const truncated = second.sent.filter((event) => event.type === "conversation.item.truncate");
+    assert.equal(truncated.length, 1);
+    assert.equal(truncated[0].item_id, "item-1");
+    assert.equal(truncated[0].content_index, 0);
+    assert.equal(truncated[0].audio_end_ms, 20);
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        item_id: "item-2",
+        delta: Buffer.alloc(960).toString("base64"),
+      }),
+    );
+    assert.equal(track.rtp.length > sentBefore, true);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("a dropped voice socket tells the desktop", () => {
+  const seen = [];
+  const socket = { readyState: 1, send() {} };
+  const state = { closing: false };
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} } },
+    socket,
+    onEvent(text) {
+      seen.push(JSON.parse(text));
+    },
+    voiceState: state,
+  });
+  socket.onclose();
+  assert.equal(seen.at(-1).error.message, "Voice connection closed.");
+  state.closing = true;
+  socket.onclose();
+  assert.equal(seen.length, 1);
+  bridge.close();
+});
+
+test("an opus-only offer is answered instead of returned as the xAI rejection", async () => {
+  const offerer = new RTCPeerConnection({
+    iceServers: [],
+    iceUseIpv4: true,
+    iceUseIpv6: false,
+    codecs: { audio: [useOPUS()] },
+  });
+  offerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+  await offerer.setLocalDescription(await offerer.createOffer());
+  try {
+    await withServer(
+      {
+        realtimeFetch: async () =>
+          new Response("no", { status: 403, headers: { "content-type": "text/plain" } }),
+        voiceWebSocket() {
+          return { readyState: 1, send() {}, close() {} };
+        },
+      },
+      async (port) => {
+        const answered = await postRaw(port, "/v1/realtime/calls", offerer.localDescription.sdp);
+        assert.equal(answered.status, 201);
+        const sdp = answered.body.toString("utf8");
+        assert.equal(sdp.startsWith("v=0"), true);
+        assert.match(sdp, /a=rtpmap:\d+ opus\/48000/i);
+        assert.equal(sdp.includes("a=fingerprint:"), true);
+        assert.equal(sdp.includes("no"), false);
+      },
+    );
+  } finally {
+    closeVoiceCalls();
+    await offerer.close();
+  }
+});
+
+test("developer voice history stays in the session instructions", () => {
+  const body = [
+    "--bound",
+    'Content-Disposition: form-data; name="session"',
+    "",
+    JSON.stringify({
+      instructions: "Use the repo.",
+      initial_items: [
+        {
+          type: "message",
+          role: "developer",
+          content: [{ type: "input_text", text: "Repo root is /tmp/work." }],
+        },
+        { type: "message", role: "user", content: [{ type: "input_text", text: "Earlier turn." }] },
+        { type: "message", role: "assistant", content: [{ type: "output_text", text: "Noted." }] },
+      ],
+    }),
+    "--bound--",
+    "",
+  ].join("\r\n");
+  const type = "multipart/form-data; boundary=bound";
+  assert.equal(developerTextFromCallBody(body, type), "Repo root is /tmp/work.");
+  const items = initialItemsFromCallBody(body, type);
+  assert.deepEqual(
+    items.map((event) => event.item.role),
+    ["user", "assistant"],
+  );
+  const sent = [];
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket: {
+      readyState: 1,
+      send(data) {
+        sent.push(JSON.parse(String(data)));
+      },
+      close() {},
+    },
+    instructions: "Use the repo.",
+    developerContext: "Repo root is /tmp/work.",
+    initialItems: items,
+  });
+  try {
+    assert.match(sent[0].session.instructions, /Use the repo\./);
+    assert.match(sent[0].session.instructions, /Repo root is \/tmp\/work\./);
+    assert.equal(sent[1].item.role, "user");
+    assert.equal(sent[1].item.content[0].text, "Earlier turn.");
+    assert.equal(sent[2].item.role, "assistant");
+    const updated = voiceClientEvents(
+      { type: "session.update", session: { instructions: "From the desktop." } },
+      { developerContext: "Repo root is /tmp/work." },
+    );
+    assert.match(updated[0].session.instructions, /From the desktop\./);
+    assert.match(updated[0].session.instructions, /Repo root is \/tmp\/work\./);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("a line-feed multipart call body still yields the sdp and the instructions", () => {
+  const boundary = "lf-bound";
+  const sdp = "v=0\no=- 1 1 IN IP4 127.0.0.1\n";
+  const body = [
+    `--${boundary}`,
+    'Content-Disposition: form-data; name="sdp"',
+    "",
+    sdp,
+    `--${boundary}`,
+    'Content-Disposition: form-data; name="session"',
+    "",
+    '{"instructions":"Stay on the repo."}',
+    `--${boundary}--`,
+    "",
+  ].join("\n");
+  const type = `multipart/form-data; boundary=${boundary}`;
+  assert.equal(offerFromCallBody(body, type), sdp);
+  assert.equal(instructionsFromCallBody(body, type), "Stay on the repo.");
+});
+
+test("a Codex multipart call body is answered from its sdp part", async () => {
+  const offerer = new RTCPeerConnection({
+    iceServers: [],
+    iceUseIpv4: true,
+    iceUseIpv6: false,
+    codecs: { audio: [useOPUS()] },
+  });
+  offerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+  await offerer.setLocalDescription(await offerer.createOffer());
+  const boundary = "codex-realtime-call-boundary";
+  const body = [
+    `--${boundary}`,
+    'Content-Disposition: form-data; name="sdp"',
+    "Content-Type: application/sdp",
+    "",
+    offerer.localDescription.sdp,
+    `--${boundary}`,
+    'Content-Disposition: form-data; name="session"',
+    "Content-Type: application/json",
+    "",
+    '{"instructions":"Use the repo instructions.","initial_items":[{"type":"message","role":"user","content":[{"type":"input_text","text":"Earlier turn."}]}]}',
+    `--${boundary}--`,
+    "",
+  ].join("\r\n");
+  const sockets = [];
+  try {
+    await withServer(
+      {
+        realtimeFetch: async () =>
+          new Response("no", { status: 403, headers: { "content-type": "text/plain" } }),
+        voiceWebSocket() {
+          const sent = [];
+          const socket = {
+            readyState: 1,
+            send(data) {
+              sent.push(String(data));
+            },
+            close() {},
+            sent,
+          };
+          sockets.push(socket);
+          return socket;
+        },
+      },
+      async (port) => {
+        const answered = await postRaw(port, "/v1/live", body, {
+          "content-type": `multipart/form-data; boundary=${boundary}`,
+        });
+        assert.equal(answered.status, 201);
+        const sdp = answered.body.toString("utf8");
+        assert.equal(sdp.startsWith("v=0"), true);
+        assert.equal(sdp.includes("a=fingerprint:"), true);
+        assert.match(sdp, /a=rtpmap:\d+ OPUS\/48000/i);
+        assert.equal(sdp.includes("codex-realtime-call-boundary"), false);
+        const sent = sockets[0].sent.map((line) => JSON.parse(line));
+        assert.equal(sent[0].session.instructions, "Use the repo instructions.");
+        assert.equal(sent[0].session.voice, "eve");
+        assert.equal(sent[1].item.role, "user");
+        assert.equal(sent[1].item.content[0].text, "Earlier turn.");
+        assert.equal(sent[0].session.instructions.includes("one short sentence"), false);
+      },
+    );
+  } finally {
+    closeVoiceCalls();
+    await offerer.close();
+  }
+});
+
+test("ack filler asks the voice model to speak before the codex tool", () => {
+  const body = [
+    "--bound",
+    'Content-Disposition: form-data; name="session"',
+    "",
+    '{"instructions":"Use the repo.","delegation":{"type":"client","ack_filler":true}}',
+    "--bound--",
+    "",
+  ].join("\r\n");
+  assert.equal(ackFillerFromCallBody(body, "multipart/form-data; boundary=bound"), true);
+  const sent = [];
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket: {
+      readyState: 1,
+      send(data) {
+        sent.push(JSON.parse(String(data)));
+      },
+      close() {},
+    },
+    instructions: "Use the repo.",
+    ackFiller: true,
+  });
+  try {
+    assert.match(sent[0].session.instructions, /Use the repo\./);
+    assert.match(sent[0].session.instructions, /one short sentence/);
+    const again = voiceClientEvents(
+      { type: "session.update", session: { instructions: "From the desktop." } },
+      { ackFiller: true },
+    );
+    assert.match(again[0].session.instructions, /From the desktop\./);
+    assert.match(again[0].session.instructions, /one short sentence/);
+    const plain = voiceClientEvents(
+      { type: "session.update", session: { instructions: "From the desktop." } },
+      {},
+    );
+    assert.equal(plain[0].session.instructions.includes("one short sentence"), false);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("a streamed codex reply is sent after the desktop pauses", async () => {
+  const offerer = new RTCPeerConnection({
+    iceServers: [],
+    iceUseIpv4: true,
+    iceUseIpv6: false,
+    codecs: { audio: [useOPUS()] },
+  });
+  offerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+  await offerer.setLocalDescription(await offerer.createOffer());
+  const sockets = [];
+  let live;
+  try {
+    await withServer(
+      {
+        realtimeFetch: async () =>
+          new Response("no", { status: 403, headers: { "content-type": "text/plain" } }),
+        voiceWebSocket() {
+          const socket = { readyState: 1, sent: [], send(data) { this.sent.push(JSON.parse(String(data))); }, close() {} };
+          sockets.push(socket);
+          return socket;
+        },
+      },
+      async (port) => {
+        const answered = await postRaw(port, "/v1/realtime/calls", offerer.localDescription.sdp);
+        const id = answered.headers.location.split("/").pop();
+        live = await rawUpgrade(port, `/v1/live/${id}`, {}, false);
+        sockets[0].onmessage(
+          JSON.stringify({
+            type: "response.function_call_arguments.done",
+            name: "codex",
+            call_id: "call-1",
+            arguments: JSON.stringify({ request: "hi" }),
+          }),
+        );
+        const frame = (text) =>
+          maskedClientText(
+            JSON.stringify({
+              type: "delegation.context.append",
+              delegation_item_id: "call-1",
+              content: [{ type: "input_text", text }],
+            }),
+          );
+        live.socket.write(frame("AAAA"));
+        live.socket.write(frame("BBBB"));
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        assert.equal(
+          sockets[0].sent.some((event) => event.item?.type === "function_call_output"),
+          false,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        const output = sockets[0].sent.find((event) => event.item?.type === "function_call_output");
+        const spoken = sockets[0].sent.find((event) => event.item?.type === "force_message");
+        assert.equal(output.item.output, JSON.stringify("AAAABBBB"));
+        assert.equal(spoken.item.content[0].text, "AAAABBBB");
+      },
+    );
+  } finally {
+    live?.socket.destroy();
+    closeVoiceCalls();
+    await offerer.close();
+  }
+});
+
+test("a session.close frame hangs up the voice call", async () => {
+  const offerer = new RTCPeerConnection({
+    iceServers: [],
+    iceUseIpv4: true,
+    iceUseIpv6: false,
+    codecs: { audio: [useOPUS()] },
+  });
+  offerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+  await offerer.setLocalDescription(await offerer.createOffer());
+  let live;
+  let closed = 0;
+  try {
+    await withServer(
+      {
+        realtimeFetch: async () =>
+          new Response("no", { status: 403, headers: { "content-type": "text/plain" } }),
+        voiceWebSocket() {
+          return {
+            readyState: 1,
+            send() {},
+            close() {
+              closed += 1;
+            },
+          };
+        },
+      },
+      async (port) => {
+        const answered = await postRaw(port, "/v1/realtime/calls", offerer.localDescription.sdp);
+        assert.equal(answered.status, 201);
+        const id = answered.headers.location.split("/").pop();
+        live = await rawUpgrade(port, `/v1/live/${id}`, {}, false);
+        live.socket.write(maskedClientText(JSON.stringify({ type: "session.close" })));
+        const deadline = Date.now() + 500;
+        while (voiceCallCount() !== 0 && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        assert.equal(voiceCallCount(), 0);
+        assert.equal(closed, 1);
+      },
+    );
+  } finally {
+    live?.socket.destroy();
+    closeVoiceCalls();
+    await offerer.close();
+  }
+});
+
+test("closing the v3 sideband hangs up the voice peer", async () => {
+  const offerer = new RTCPeerConnection({
+    iceServers: [],
+    iceUseIpv4: true,
+    iceUseIpv6: false,
+    codecs: { audio: [useOPUS()] },
+  });
+  offerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+  await offerer.setLocalDescription(await offerer.createOffer());
+  let live;
+  try {
+    await withServer(
+      {
+        realtimeFetch: async () =>
+          new Response("no", { status: 403, headers: { "content-type": "text/plain" } }),
+        voiceWebSocket() {
+          return { readyState: 1, send() {}, close() {} };
+        },
+      },
+      async (port) => {
+        const answered = await postRaw(port, "/v1/realtime/calls", offerer.localDescription.sdp);
+        assert.equal(answered.status, 201);
+        assert.equal(answered.body.toString("utf8").includes("a=candidate:"), true);
+        assert.equal(voiceCallCount(), 1);
+        const id = answered.headers.location.split("/").pop();
+        live = await rawUpgrade(port, `/v1/live/${id}`, {}, false);
+        live.socket.destroy();
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        assert.equal(voiceCallCount(), 0);
+      },
+    );
+  } finally {
+    live?.socket.destroy();
+    closeVoiceCalls();
+    await offerer.close();
+  }
+});
+
+function maskedClientText(text, opcode = 0x1, fin = true) {
+  const payload = Buffer.from(text);
+  const mask = Buffer.from([1, 2, 3, 4]);
+  const masked = Buffer.from(payload);
+  for (let i = 0; i < masked.length; i += 1) masked[i] ^= mask[i % 4];
+  return Buffer.concat([Buffer.from([(fin ? 0x80 : 0) | opcode, 0x80 | payload.length]), mask, masked]);
+}
+
+test("voice sideband relays control events and answers pings", async () => {
+  const offerer = new RTCPeerConnection({
+    iceServers: [],
+    iceUseIpv4: true,
+    iceUseIpv6: false,
+    codecs: { audio: [useOPUS()] },
+  });
+  offerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+  await offerer.setLocalDescription(await offerer.createOffer());
+  const sockets = [];
+  let live;
+  try {
+    await withServer(
+      {
+        realtimeFetch: async () =>
+          new Response("no", { status: 403, headers: { "content-type": "text/plain" } }),
+        voiceWebSocket() {
+          const sent = [];
+          const socket = {
+            readyState: 1,
+            sent,
+            send(data) {
+              sent.push(String(data));
+            },
+            close() {},
+          };
+          sockets.push(socket);
+          return socket;
+        },
+      },
+      async (port) => {
+        const answered = await postRaw(port, "/v1/realtime/calls", offerer.localDescription.sdp);
+        const id = answered.headers.location.split("/").pop();
+        const frames = [];
+        live = await rawUpgrade(port, `/v1/live/${id}`, {}, false);
+        live.socket.on("data", (chunk) => frames.push(chunk));
+        sockets[0].onmessage({
+          data: JSON.stringify({ type: "session.created", session: { id: "sess-1", instructions: "Say ready." } }),
+        });
+        live.socket.write(maskedClientText(JSON.stringify({ type: "response.create" })));
+        const cancel = JSON.stringify({ type: "response.cancel" });
+        live.socket.write(maskedClientText(cancel.slice(0, 8), 0x1, false));
+        live.socket.write(maskedClientText(cancel.slice(8), 0x0, true));
+        live.socket.write(Buffer.from([0x89, 0x80, 9, 9, 9, 9]));
+        const inbound = await new Promise((resolve) => {
+          const started = Date.now();
+          const check = () => {
+            const buf = Buffer.concat(frames);
+            if (buf.includes(Buffer.from([0x8a])) || Date.now() - started > 500) resolve(buf);
+            else setTimeout(check, 10);
+          };
+          check();
+        });
+        assert.equal(inbound.toString("utf8").includes('"type":"session.updated"'), true);
+        assert.equal(inbound.toString("utf8").includes("sess-1"), true);
+        assert.equal(sockets[0].sent.some((line) => line.includes("response.create")), true);
+        assert.equal(sockets[0].sent.filter((line) => line.includes("response.cancel")).length, 1);
+        assert.equal(inbound.includes(Buffer.from([0x8a])), true);
+      },
+    );
+  } finally {
+    live?.socket.destroy();
+    closeVoiceCalls();
+    await offerer.close();
+  }
+});
+
+test("an offer with a data channel keeps that channel in the answer", async () => {
+  const offerer = new RTCPeerConnection({
+    iceServers: [],
+    iceUseIpv4: true,
+    iceUseIpv6: false,
+    codecs: { audio: [useOPUS()] },
+  });
+  offerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+  offerer.createDataChannel("oai-events");
+  await offerer.setLocalDescription(await offerer.createOffer());
+  try {
+    await withServer(
+      {
+        realtimeFetch: async () =>
+          new Response("no", { status: 403, headers: { "content-type": "text/plain" } }),
+        voiceWebSocket() {
+          return { readyState: 1, send() {}, close() {} };
+        },
+      },
+      async (port) => {
+        const answered = await postRaw(port, "/v1/live", offerer.localDescription.sdp);
+        const sdp = answered.body.toString("utf8");
+        assert.equal(answered.status, 201);
+        assert.equal(sdp.includes("m=audio"), true);
+        assert.equal(sdp.includes("m=application"), true);
+        assert.equal(sdp.includes("a=sctp-port:"), true);
+        assert.equal(sdp.includes("a=setup:passive"), true);
+        assert.equal(sdp.includes("a=setup:active"), false);
+        assert.equal(sdp.includes(" 127.0.0.1 "), true);
+        assert.equal(sdp.includes(" typ srflx"), false);
+        assert.equal(sdp.includes(" generation "), false);
+        assert.equal(sdp.includes(" ufrag "), false);
+        assert.equal((sdp.match(/^a=candidate:/gm) ?? []).length <= 24, true);
+      },
+    );
+  } finally {
+    closeVoiceCalls();
+    await offerer.close();
+  }
+});
+
+test("a host-only answer opens the offered event channel", async () => {
+  const child = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+        import { MediaStreamTrack, RTCPeerConnection, useOPUS } from "werift";
+        import { answerVoiceCall } from "./src/voice.mjs";
+        const offerer = new RTCPeerConnection({
+          iceServers: [],
+          iceUseIpv4: true,
+          iceUseIpv6: false,
+          iceUseTcp: false,
+          codecs: { audio: [useOPUS()] },
+        });
+        offerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+        const channel = offerer.createDataChannel("oai-events");
+        await offerer.setLocalDescription(await offerer.createOffer());
+        const answered = await answerVoiceCall({
+          offer: offerer.localDescription.sdp,
+          token: "t",
+          webSocketFactory: () => ({ readyState: 1, send() {}, close() {} }),
+        });
+        await offerer.setRemoteDescription({ type: "answer", sdp: answered.sdp });
+        const opened = await new Promise((resolve) => {
+          const timer = setTimeout(() => resolve(false), 4000);
+          const done = (state) => {
+            if (state !== "open") return;
+            clearTimeout(timer);
+            resolve(true);
+          };
+          channel.stateChanged.subscribe(done);
+          done(channel.readyState);
+        });
+        console.log(opened ? "OPEN" : "CLOSED");
+        process.exit(opened ? 0 : 1);
+      `,
+    ],
+    { cwd: process.cwd() },
+  );
+  let out = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    out += chunk;
+  });
+  const code = await new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve(-1);
+    }, 8000);
+    child.on("exit", (status) => {
+      clearTimeout(timer);
+      resolve(status);
+    });
+  });
+  assert.equal(out.includes("OPEN"), true);
+  assert.equal(code, 0);
+});
+
+test("a connected offerer microphone reaches xAI", async () => {
+  const child = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+        import OpusScript from "opusscript";
+        import { MediaStreamTrack, RTCPeerConnection, RtpHeader, RtpPacket, useOPUS } from "werift";
+        import { answerVoiceCall } from "./src/voice.mjs";
+        const offerer = new RTCPeerConnection({
+          iceServers: [],
+          iceUseIpv4: true,
+          iceUseIpv6: false,
+          iceUseTcp: false,
+          codecs: { audio: [useOPUS({ payloadType: 111 })] },
+        });
+        const mic = new MediaStreamTrack({ kind: "audio" });
+        offerer.addTrack(mic);
+        const channel = offerer.createDataChannel("oai-events");
+        await offerer.setLocalDescription(await offerer.createOffer());
+        const sent = [];
+        const upstream = { readyState: 1, send(data) { sent.push(String(data)); }, close() {} };
+        const answered = await answerVoiceCall({
+          offer: offerer.localDescription.sdp,
+          token: "t",
+          webSocketFactory: () => upstream,
+        });
+        upstream.onmessage(JSON.stringify({ type: "session.updated", session: { id: "sess-1" } }));
+        await offerer.setRemoteDescription({ type: "answer", sdp: answered.sdp });
+        const opened = await new Promise((resolve) => {
+          const timer = setTimeout(() => resolve(false), 5000);
+          const done = (state) => {
+            if (state !== "open") return;
+            clearTimeout(timer);
+            resolve(true);
+          };
+          channel.stateChanged.subscribe(done);
+          done(channel.readyState);
+        });
+        if (!opened) {
+          console.log("CLOSED");
+          process.exit(1);
+        }
+        const encoder = new OpusScript(48000, 1, OpusScript.Application.VOIP);
+        const encoded = Buffer.from(encoder.encode(Buffer.alloc(960 * 2), 960));
+        mic.writeRtp(new RtpPacket(new RtpHeader({
+          marker: true,
+          payloadType: 111,
+          sequenceNumber: 1,
+          timestamp: 960,
+          ssrc: 1,
+        }), encoded));
+        const appended = await new Promise((resolve) => {
+          const timer = setTimeout(() => resolve(false), 2000);
+          const check = () => {
+            if (sent.some((line) => line.includes("input_audio_buffer.append"))) {
+              clearTimeout(timer);
+              resolve(true);
+              return;
+            }
+            setTimeout(check, 20);
+          };
+          check();
+        });
+        encoder.delete?.();
+        console.log(appended ? "APPEND" : "NO");
+        process.exit(appended ? 0 : 1);
+      `,
+    ],
+    { cwd: process.cwd() },
+  );
+  let out = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    out += chunk;
+  });
+  let err = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => {
+    err += chunk;
+  });
+  const code = await new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve(-1);
+    }, 12000);
+    child.on("exit", (status) => {
+      clearTimeout(timer);
+      resolve(status);
+    });
+  });
+  assert.equal(out.includes("APPEND"), true, err.slice(0, 500));
+  assert.equal(code, 0);
+});
+
+test("played voice audio reaches the offering peer", async () => {
+  const child = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+        import { MediaStreamTrack, RTCPeerConnection, useOPUS } from "werift";
+        import { answerVoiceCall } from "./src/voice.mjs";
+        const offerer = new RTCPeerConnection({
+          iceServers: [],
+          iceUseIpv4: true,
+          iceUseIpv6: false,
+          iceUseTcp: false,
+          codecs: { audio: [useOPUS({ payloadType: 111 })] },
+        });
+        offerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+        const channel = offerer.createDataChannel("oai-events");
+        await offerer.setLocalDescription(await offerer.createOffer());
+        const upstream = { readyState: 1, send() {}, close() {} };
+        const answered = await answerVoiceCall({
+          offer: offerer.localDescription.sdp,
+          token: "t",
+          webSocketFactory: () => upstream,
+        });
+        await offerer.setRemoteDescription({ type: "answer", sdp: answered.sdp });
+        const opened = await new Promise((resolve) => {
+          const timer = setTimeout(() => resolve(false), 5000);
+          const done = (state) => {
+            if (state !== "open") return;
+            clearTimeout(timer);
+            resolve(true);
+          };
+          channel.stateChanged.subscribe(done);
+          done(channel.readyState);
+        });
+        if (!opened) {
+          console.log("CLOSED");
+          process.exit(1);
+        }
+        let playback = false;
+        for (const transceiver of offerer.getTransceivers()) {
+          const track = transceiver.receiver?.track;
+          track?.onReceiveRtp?.subscribe?.((rtp) => {
+            if (rtp?.header?.payloadType === 111 && rtp.payload?.length) playback = true;
+          });
+        }
+        const pcm = Buffer.alloc(4800);
+        upstream.onmessage?.({
+          data: JSON.stringify({ type: "response.output_audio.delta", delta: pcm.toString("base64") }),
+        });
+        upstream.onmessage?.({ data: JSON.stringify({ type: "response.output_audio.done" }) });
+        const heard = await new Promise((resolve) => {
+          const timer = setTimeout(() => resolve(false), 2000);
+          const check = () => {
+            if (playback) {
+              clearTimeout(timer);
+              resolve(true);
+              return;
+            }
+            setTimeout(check, 20);
+          };
+          check();
+        });
+        console.log(heard ? "HEARD" : "SILENT");
+        process.exit(heard ? 0 : 1);
+      `,
+    ],
+    { cwd: process.cwd() },
+  );
+  let out = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    out += chunk;
+  });
+  let err = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => {
+    err += chunk;
+  });
+  const code = await new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve(-1);
+    }, 12000);
+    child.on("exit", (status) => {
+      clearTimeout(timer);
+      resolve(status);
+    });
+  });
+  assert.equal(out.includes("HEARD"), true, err.slice(0, 500));
+  assert.equal(code, 0);
+});
+
+test("desktop v3 sideband context becomes an xAI voice item", () => {
+  assert.deepEqual(voiceClientEvents({ type: "response.cancel" }), [{ type: "response.cancel" }]);
+  assert.deepEqual(voiceClientEvents({ type: "input_audio.append", audio: "AQID" }), [
+    { type: "input_audio_buffer.append", audio: "AQID" },
+  ]);
+  assert.deepEqual(voiceClientEvents({ type: "session.close" }), []);
+  assert.deepEqual(
+    voiceClientEvents({
+      type: "session.context.append",
+      content: [{ type: "input_text", text: "Say this." }],
+    }),
+    [
+      {
+        type: "conversation.item.create",
+        item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text: "Say this." }] },
+      },
+    ],
+  );
+  assert.equal(
+    voiceClientEvents({
+      type: "delegation.context.append",
+      delegation_item_id: "del-1",
+      channel: "commentary",
+      content: [{ type: "input_text", text: "thinking" }],
+    })[0].item.role,
+    "assistant",
+  );
+  assert.equal(voiceClientEvents({
+    type: "delegation.context.append",
+    channel: "commentary",
+    content: [{ type: "input_text", text: "thinking" }],
+  })[0].item.type, "message");
+  const updated = voiceClientEvents({
+    type: "session.update",
+    session: { instructions: "From the desktop.", voice: "alloy", audio: { output: { voice: "alloy" } } },
+  });
+  assert.equal(updated[0].session.instructions, "From the desktop.");
+  assert.equal(updated[0].session.voice, "eve");
+  assert.equal(updated[0].session.audio.input.format.rate, 24000);
+  const state = { pendingCalls: new Set(["call-1"]) };
+  assert.deepEqual(voiceSidebandEvent({
+    type: "response.function_call_arguments.done",
+    name: "codex",
+    call_id: "call-1",
+    arguments: JSON.stringify({ request: "Rename the helper." }),
+  }, state), {
+    type: "delegation.created",
+    item: {
+      type: "delegation",
+      target: "client",
+      id: "call-1",
+      content: [{ type: "input_text", text: "Rename the helper." }],
+    },
+  });
+  assert.equal(voiceSidebandEvent({
+    type: "response.function_call_arguments.done",
+    name: "web_search",
+    call_id: "other",
+    arguments: "{}",
+  }, state), null);
+  const spoken = voiceClientEvents({
+    type: "delegation.context.append",
+    delegation_item_id: "call-1",
+    content: [{ type: "input_text", text: "Renamed it." }],
+  }, state);
+  assert.equal(spoken[0].item.type, "function_call_output");
+  assert.equal(spoken[0].item.call_id, "call-1");
+  assert.equal(spoken[1].item.type, "force_message");
+  assert.equal(state.pendingCalls.has("call-1"), false);
+});
+
+test("split context appends are joined before the tool result is spoken", () => {
+  const frames = [
+    {
+      type: "delegation.context.append",
+      delegation_item_id: "call-1",
+      content: [{ type: "input_text", text: "AAAA" }],
+    },
+    {
+      type: "delegation.context.append",
+      delegation_item_id: "call-1",
+      content: [{ type: "input_text", text: "BBBB" }],
+    },
+  ];
+  const merged = mergeVoiceClientBurst(frames);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].content[0].text, "AAAABBBB");
+  assert.equal(frames[0].content[0].text, "AAAA");
+  const state = { pendingCalls: new Set(["call-1"]) };
+  const spoken = voiceClientEvents(merged[0], state);
+  assert.equal(spoken[0].item.type, "function_call_output");
+  assert.equal(spoken[0].item.output, JSON.stringify("AAAABBBB"));
+  assert.equal(spoken[1].item.type, "force_message");
+  assert.equal(spoken[1].item.content[0].text, "AAAABBBB");
+  const commentary = mergeVoiceClientBurst([
+    {
+      type: "delegation.context.append",
+      delegation_item_id: "call-2",
+      channel: "commentary",
+      content: [{ type: "input_text", text: "think" }],
+    },
+    {
+      type: "delegation.context.append",
+      delegation_item_id: "call-2",
+      channel: "commentary",
+      content: [{ type: "input_text", text: "ing" }],
+    },
+  ]);
+  const quiet = voiceClientEvents(commentary[0], { pendingCalls: new Set() });
+  assert.equal(quiet.length, 1);
+  assert.equal(quiet[0].item.type, "message");
+  assert.equal(quiet[0].item.content[0].text, "thinking");
+  const split = mergeVoiceClientBurst([
+    frames[0],
+    { type: "response.create" },
+    frames[1],
+  ]);
+  assert.equal(split.length, 3);
+  assert.equal(split[0].content[0].text, "AAAA");
+  assert.equal(split[1].type, "response.create");
+  assert.equal(split[2].content[0].text, "BBBB");
+});
+
+test("user speech after a finished voice reply does not mute the next audio", () => {
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: { readyState: 1, send() {} },
+  });
+  try {
+    const pcm = Buffer.alloc(8).toString("base64");
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio.delta", delta: pcm }));
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio_transcript.done", transcript: "Hi" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    const played = track.rtp.length;
+    assert.equal(played > 0, true);
+    bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio.delta", delta: pcm }));
+    assert.equal(track.rtp.length, played);
+    bridge.onUpstream(JSON.stringify({ type: "response.created" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio.delta", delta: pcm }));
+    assert.equal(track.rtp.length > played, true);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("user speech after a finished voice caption keeps the next words", () => {
+  const seen = [];
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket: { readyState: 1, send() {} },
+    onEvent(text) {
+      seen.push(JSON.parse(text));
+    },
+  });
+  try {
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio_transcript.delta", delta: "Hi" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio_transcript.done", transcript: "Hi there" }));
+    bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio_transcript.delta", delta: "Next" }));
+    assert.deepEqual(
+      seen.filter((event) => event.type === "output_transcript.added").map((event) => event.item.text),
+      ["Hi", "Next"],
+    );
+  } finally {
+    bridge.close();
+  }
+});
+
+test("an interrupted voice reply keeps only the transcript already sent", () => {
+  const state = {};
+  assert.deepEqual(voiceSidebandEvent({ type: "response.output_audio_transcript.delta", delta: "Hi" }, state), {
+    type: "output_transcript.added",
+    item: { text: "Hi" },
+  });
+  assert.equal(voiceSidebandEvent({ type: "input_audio_buffer.speech_started" }, state), null);
+  assert.equal(voiceSidebandEvent({ type: "response.output_audio_transcript.delta", delta: " there" }, state), null);
+  assert.deepEqual(
+    voiceSidebandEvent({ type: "response.output_audio_transcript.done", transcript: "Hi there" }, state),
+    { type: "turn.done", turn: { role: "assistant", transcript: "Hi" } },
+  );
+  assert.equal(voiceSidebandEvent({ type: "response.created" }, state), null);
+  assert.deepEqual(voiceSidebandEvent({ type: "response.output_audio_transcript.delta", delta: "Next" }, state), {
+    type: "output_transcript.added",
+    item: { text: "Next" },
+  });
+});
+
+test("a desktop response.cancel stops later voice transcript", () => {
+  const seen = [];
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket: { readyState: 1, send() {} },
+    onEvent(text) {
+      seen.push(JSON.parse(text));
+    },
+  });
+  try {
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio_transcript.delta", delta: "Hi" }));
+    bridge.sendClient({ type: "response.cancel" });
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio_transcript.delta", delta: " there" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio_transcript.done", transcript: "Hi there" }));
+    assert.deepEqual(
+      seen.filter((event) => event.type === "output_transcript.added").map((event) => event.item.text),
+      ["Hi"],
+    );
+    assert.deepEqual(seen.at(-1), { type: "turn.done", turn: { role: "assistant", transcript: "Hi" } });
+  } finally {
+    bridge.close();
+  }
+});
+
+test("xAI voice events become the desktop v3 sideband events", () => {
+  const state = { inputTranscript: "" };
+  assert.deepEqual(voiceSidebandEvent({ type: "response.output_audio_transcript.delta", delta: "Hi" }, state), {
+    type: "output_transcript.added",
+    item: { text: "Hi" },
+  });
+  assert.deepEqual(
+    voiceSidebandEvent({ type: "response.output_audio_transcript.done", transcript: "Hi there" }, state),
+    { type: "turn.done", turn: { role: "assistant", transcript: "Hi there" } },
+  );
+  const unfinished = {};
+  voiceSidebandEvent({ type: "response.output_audio_transcript.delta", delta: "Hi" }, unfinished);
+  voiceSidebandEvent({ type: "response.output_audio_transcript.delta", delta: " there" }, unfinished);
+  assert.deepEqual(voiceSidebandEvent({ type: "response.done" }, unfinished), {
+    type: "turn.done",
+    turn: { role: "assistant", transcript: "Hi there" },
+  });
+  assert.equal(voiceSidebandEvent({ type: "response.done" }, unfinished), null);
+  assert.deepEqual(
+    voiceSidebandEvent({ type: "conversation.item.input_audio_transcription.updated", transcript: "hel" }, state),
+    { type: "input_transcript.added", item: { text: "hel" } },
+  );
+  assert.deepEqual(
+    voiceSidebandEvent({ type: "conversation.item.input_audio_transcription.updated", transcript: "hello" }, state),
+    { type: "input_transcript.added", item: { text: "lo" } },
+  );
+  assert.deepEqual(
+    voiceSidebandEvent({ type: "conversation.item.input_audio_transcription.updated", transcript: "hallo" }, state),
+    { type: "turn.done", turn: { role: "user", transcript: "hallo" } },
+  );
+  assert.deepEqual(
+    voiceSidebandEvent({ type: "conversation.item.input_audio_transcription.completed", transcript: "hallo" }, state),
+    { type: "turn.done", turn: { role: "user", transcript: "hallo" } },
+  );
+  assert.equal(state.inputTranscript, "");
+  const user = {};
+  voiceSidebandEvent({ type: "conversation.item.input_audio_transcription.updated", transcript: "hello" }, user);
+  assert.deepEqual(voiceSidebandEvent({ type: "input_audio_buffer.speech_started" }, user), {
+    type: "turn.done",
+    turn: { role: "user", transcript: "hello" },
+  });
+  assert.equal(
+    voiceSidebandEvent(
+      { type: "conversation.item.input_audio_transcription.completed", transcript: "hello!" },
+      user,
+    ),
+    null,
+  );
+  assert.equal(voiceSidebandEvent({ type: "input_audio_buffer.speech_started" }, user), null);
+  assert.equal(voiceSidebandEvent({ type: "conversation.created" }, state), null);
+  const textState = {};
+  assert.equal(voiceSidebandEvent({ type: "response.created" }, textState), null);
+  assert.deepEqual(voiceSidebandEvent({ type: "response.output_text.delta", delta: "Hel" }, textState), {
+    type: "output_transcript.added",
+    item: { text: "Hel" },
+  });
+  const textField = {};
+  assert.deepEqual(voiceSidebandEvent({ type: "response.output_text.delta", text: "Yo" }, textField), {
+    type: "output_transcript.added",
+    item: { text: "Yo" },
+  });
+  assert.deepEqual(
+    voiceSidebandEvent({ type: "response.output_text.delta", delta: "A", text: "B" }, {}),
+    { type: "output_transcript.added", item: { text: "A" } },
+  );
+  assert.deepEqual(voiceSidebandEvent({ type: "response.text.delta", delta: "lo" }, textState), {
+    type: "output_transcript.added",
+    item: { text: "lo" },
+  });
+  assert.deepEqual(voiceSidebandEvent({ type: "response.done" }, textState), {
+    type: "turn.done",
+    turn: { role: "assistant", transcript: "Hello" },
+  });
+  assert.equal(voiceSidebandEvent({ type: "response.done" }, textState), null);
+  const audioState = {};
+  voiceSidebandEvent({ type: "response.output_audio_transcript.delta", delta: "Hi" }, audioState);
+  assert.equal(voiceSidebandEvent({ type: "response.text.delta", delta: "Hi" }, audioState), null);
+  assert.equal(voiceSidebandEvent({ type: "error", error: { message: "nope" } }, state), null);
+  const sideband = { sessionAnnounced: false, sessionId: "call-1" };
+  const first = sidebandFrames(sideband, JSON.stringify({ type: "output_transcript.added", item: { text: "Hi" } }));
+  assert.equal(JSON.parse(first[0]).type, "session.updated");
+  assert.equal(JSON.parse(first[0]).session.id, "call-1");
+  assert.equal(JSON.parse(first[1]).type, "output_transcript.added");
+  const next = sidebandFrames(sideband, JSON.stringify({ type: "turn.done", turn: { role: "assistant", transcript: "Hi" } }));
+  assert.equal(next.length, 1);
+  const fresh = { sessionAnnounced: false, sessionId: "call-1" };
+  const opened = announceSession(fresh, []);
+  assert.equal(JSON.parse(opened[0]).session.id, "call-1");
+  assert.equal(announceSession(fresh, []).length, 0);
+});
+
+test("microphone packets come from the remote track", () => {
+  const sent = [];
+  const remoteHandlers = [];
+  const localHandlers = [];
+  const bridge = startVoiceBridge({
+    track: {
+      onReceiveRtp: {
+        subscribe(handler) {
+          localHandlers.push(handler);
+        },
+      },
+    },
+    receiveTracks: [
+      {
+        onReceiveRtp: {
+          subscribe(handler) {
+            remoteHandlers.push(handler);
+          },
+        },
+      },
+    ],
+    socket: {
+      readyState: 1,
+      send(data) {
+        sent.push(JSON.parse(String(data)));
+      },
+    },
+    codec: { kind: "pcmu", payloadType: 0 },
+  });
+  try {
+    assert.equal(remoteHandlers.length, 1);
+    assert.equal(localHandlers.length, 0);
+    remoteHandlers[0]({ header: { payloadType: 0 }, payload: Buffer.from([0xff]) });
+    assert.equal(sent.some((event) => event.type === "input_audio_buffer.append"), false);
+    bridge.onUpstream(JSON.stringify({ type: "session.updated", session: { id: "sess-1" } }));
+    assert.equal(sent.some((event) => event.type === "input_audio_buffer.append"), true);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("an offer registers a remote microphone track", async () => {
+  const offerer = new RTCPeerConnection({
+    iceServers: [],
+    iceUseIpv4: true,
+    iceUseIpv6: false,
+    iceUseTcp: false,
+  });
+  const answerer = new RTCPeerConnection({
+    iceServers: [],
+    iceUseIpv4: true,
+    iceUseIpv6: false,
+    iceUseTcp: false,
+  });
+  try {
+    offerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+    await offerer.setLocalDescription(await offerer.createOffer());
+    answerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+    await answerer.setRemoteDescription({ type: "offer", sdp: offerer.localDescription.sdp });
+    const tracks = remoteAudioTracks(answerer);
+    assert.ok(tracks.length > 0);
+    assert.equal(tracks.every((track) => track.remote && track.kind === "audio"), true);
+  } finally {
+    await offerer.close();
+    await answerer.close();
+  }
+});
+
+test("opus rtp is appended as pcm and playback is opus", () => {
+  const encoder = new OpusScript(48000, 2, OpusScript.Application.AUDIO);
+  const encoded = encoder.encode(Buffer.alloc(960 * 4), 960);
+  const sent = [];
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const socket = {
+    readyState: 1,
+    send(data) {
+      sent.push(JSON.parse(String(data)));
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket,
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  try {
+    bridge.onUpstream(JSON.stringify({ type: "session.updated", session: { id: "sess-1" } }));
+    bridge.onRtp({ header: { payloadType: 111 }, payload: encoded });
+    const appended = sent.find((event) => event.type === "input_audio_buffer.append");
+    assert.ok(appended);
+    assert.ok(Buffer.from(appended.audio, "base64").length > 0);
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        delta: Buffer.alloc(480 * 2).toString("base64"),
+      }),
+    );
+    assert.equal(track.rtp.length, 1);
+    assert.equal(track.rtp[0].header.payloadType, 111);
+    assert.ok(track.rtp[0].payload.length > 0);
+  } finally {
+    bridge.close();
+    encoder.delete?.();
+  }
+});
+
+test("a locally answered sideband stays on the bridge", async () => {
+  const id = rememberLocalCall("local-sideband-test");
+  let dials = 0;
+  await withServer(
+    {
+      sidebandConnect() {
+        dials += 1;
+        return new ScriptedSocket(Buffer.from("HTTP/1.1 101 Switching Protocols\r\n\r\n"));
+      },
+    },
+    async (port) => {
+      let local;
+      let live;
+      try {
+        local = await rawUpgrade(port, `/v1/realtime?call_id=${id}`);
+        assert.equal(local.closed, undefined);
+        assert.match(local.head.toString("latin1"), /^HTTP\/1\.1 101 /);
+        assert.match(local.head.toString("latin1"), /Sec-WebSocket-Accept:/);
+        live = await rawUpgrade(port, `/v1/live/${id}`, {}, false);
+        assert.equal(live.closed, undefined);
+        assert.match(live.head.toString("latin1"), /^HTTP\/1\.1 101 /);
+        const closed = new Promise((resolve) => live.socket.once("close", () => resolve(true)));
+        live.socket.write(Buffer.from("client-frame"));
+        assert.equal(
+          await Promise.race([
+            closed,
+            new Promise((resolve) => setTimeout(() => resolve(false), 50)),
+          ]),
+          false,
+        );
+      } finally {
+        local?.socket.destroy();
+        live?.socket.destroy();
+      }
+    },
+  );
+  assert.equal(dials, 0);
+});
 
 test("sideband upgrade is piped to api.x.ai with the grok bearer", async () => {
   const upstreams = [];
