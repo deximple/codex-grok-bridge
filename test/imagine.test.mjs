@@ -64,6 +64,9 @@ test("generation rewrites Codex's image body onto the Imagine API", () => {
       response_format: "b64_json",
     },
   );
+  assert.equal(imagineGenerationBody({ prompt: "wide", size: "1536x1024" }).aspect_ratio, "3:2");
+  assert.equal(imagineGenerationBody({ prompt: "tall", size: "1024x1536" }).aspect_ratio, "2:3");
+  assert.equal(imagineGenerationBody({ prompt: "square", size: "1024x1024" }).aspect_ratio, "1:1");
 });
 
 test("edits map image_url references and refuse OpenAI file ids", () => {

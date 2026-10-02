@@ -31,8 +31,22 @@ function basePayload(prompt) {
   };
 }
 
+const SIZE_ASPECT = {
+  "1024x1024": "1:1",
+  "1536x1024": "3:2",
+  "1024x1536": "2:3",
+};
+
+function aspectFromSize(size) {
+  if (typeof size !== "string") return "";
+  return SIZE_ASPECT[size.trim()] ?? "";
+}
+
 export function imagineGenerationBody(input) {
-  return basePayload(promptOf(input));
+  const payload = basePayload(promptOf(input));
+  const aspect = aspectFromSize(input?.size);
+  if (aspect) payload.aspect_ratio = aspect;
+  return payload;
 }
 
 export function imagineEditBody(input) {
