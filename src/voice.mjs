@@ -792,8 +792,27 @@ export function voiceSidebandEvent(event, state) {
       },
     };
   }
-  if (type === "error") return event;
+  // Codex treats every sideband error as fatal and ends the call. xAI errors
+  // are usually recoverable, so they stay here. A dead socket reports its own error.
   return null;
+}
+
+// The desktop rejects a frameless call whose first event is not session.updated.
+export function sidebandFrames(state, text) {
+  const frames = [];
+  let event = null;
+  try {
+    event = JSON.parse(text);
+  } catch {
+    event = null;
+  }
+  const announced = event?.type === "session.updated" && typeof event.session?.id === "string";
+  if (!state.sessionAnnounced && !announced && state.sessionId) {
+    frames.push(JSON.stringify({ type: "session.updated", session: { id: state.sessionId } }));
+  }
+  if (announced || frames.length) state.sessionAnnounced = true;
+  frames.push(text);
+  return frames;
 }
 
 export function startVoiceBridge({
@@ -1096,9 +1115,12 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
       for (const text of pendingEvents.splice(0)) sock.write(encodeServerFrame(0x1, text));
     },
   };
-  const noteEvent = (text) => {
-    if (sidebandSocket && !sidebandSocket.destroyed) sidebandSocket.write(encodeServerFrame(0x1, text));
-    else pendingEvents.push(text);
+  const noteState = { sessionAnnounced: false, sessionId: null };
+  const writeSideband = (text) => {
+    for (const frame of sidebandFrames(noteState, text)) {
+      if (sidebandSocket && !sidebandSocket.destroyed) sidebandSocket.write(encodeServerFrame(0x1, frame));
+      else pendingEvents.push(frame);
+    }
   };
   try {
     pc.addTrack(track);
@@ -1122,6 +1144,7 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
     sdp = await waitForHostCandidate(pc);
     const id = rememberLocalCall();
     session.id = id;
+    noteState.sessionId = id;
     sessionsById.set(id, session);
     const dial = webSocketFactory ?? openVoiceSocket;
     socket = dial(VOICE_SOCKET_URL, token);
@@ -1130,7 +1153,7 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
       track,
       socket,
       codec: audioCodecFromSdp(sdp),
-      onEvent: noteEvent,
+      onEvent: writeSideband,
       instructions,
       initialItems,
       voiceState,

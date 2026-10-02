@@ -33,6 +33,7 @@ import {
   queueDelegationSpeech,
   voiceClientEvents,
   voiceSidebandEvent,
+  sidebandFrames,
 } from "../src/voice.mjs";
 
 const BRIDGE = "bridge-token";
@@ -1958,7 +1959,14 @@ test("xAI voice events become the desktop v3 sideband events", () => {
   const audioState = {};
   voiceSidebandEvent({ type: "response.output_audio_transcript.delta", delta: "Hi" }, audioState);
   assert.equal(voiceSidebandEvent({ type: "response.text.delta", delta: "Hi" }, audioState), null);
-  assert.deepEqual(voiceSidebandEvent({ type: "error", error: { message: "nope" } }, state).type, "error");
+  assert.equal(voiceSidebandEvent({ type: "error", error: { message: "nope" } }, state), null);
+  const sideband = { sessionAnnounced: false, sessionId: "call-1" };
+  const first = sidebandFrames(sideband, JSON.stringify({ type: "output_transcript.added", item: { text: "Hi" } }));
+  assert.equal(JSON.parse(first[0]).type, "session.updated");
+  assert.equal(JSON.parse(first[0]).session.id, "call-1");
+  assert.equal(JSON.parse(first[1]).type, "output_transcript.added");
+  const next = sidebandFrames(sideband, JSON.stringify({ type: "turn.done", turn: { role: "assistant", transcript: "Hi" } }));
+  assert.equal(next.length, 1);
 });
 
 test("microphone packets come from the remote track", () => {
