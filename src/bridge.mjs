@@ -12,7 +12,7 @@ import { emitProxySse, readRelayProxySse } from "./proxy.mjs";
 import { videoCallsFromParts, videoToolOutput } from "./videogen.mjs";
 import { forwardImagine } from "./imagine.mjs";
 import { attachSidebandUpgrade, forwardRealtime } from "./realtime.mjs";
-import { answerVoiceCall } from "./voice.mjs";
+import { answerVoiceCall, offerFromCallBody } from "./voice.mjs";
 import {
   applyCacheUsage,
   createPrefixMemory,
@@ -154,7 +154,7 @@ async function relayRealtime(req, res, json, upstreamPath, options) {
     }
     try {
       const answered = await answerVoiceCall({
-        offer: Buffer.concat(chunks).toString("utf8"),
+        offer: offerFromCallBody(Buffer.concat(chunks), req.headers["content-type"]),
         token: session.token,
         webSocketFactory: options.voiceWebSocket,
       });

@@ -490,6 +490,57 @@ test("an opus-only offer is answered instead of returned as the xAI rejection", 
   }
 });
 
+test("a Codex multipart call body is answered from its sdp part", async () => {
+  const offerer = new RTCPeerConnection({
+    iceServers: [],
+    iceUseIpv4: true,
+    iceUseIpv6: false,
+    codecs: { audio: [useOPUS()] },
+  });
+  offerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+  await offerer.setLocalDescription(await offerer.createOffer());
+  const boundary = "codex-realtime-call-boundary";
+  const body = [
+    `--${boundary}`,
+    'Content-Disposition: form-data; name="sdp"',
+    "Content-Type: application/sdp",
+    "",
+    offerer.localDescription.sdp,
+    `--${boundary}`,
+    'Content-Disposition: form-data; name="session"',
+    "Content-Type: application/json",
+    "",
+    '{"type":"realtime"}',
+    `--${boundary}--`,
+    "",
+  ].join("\r\n");
+  try {
+    await withServer(
+      {
+        realtimeFetch: async () =>
+          new Response("no", { status: 403, headers: { "content-type": "text/plain" } }),
+        voiceWebSocket() {
+          return { readyState: 1, send() {}, close() {} };
+        },
+      },
+      async (port) => {
+        const answered = await postRaw(port, "/v1/live", body, {
+          "content-type": `multipart/form-data; boundary=${boundary}`,
+        });
+        assert.equal(answered.status, 201);
+        const sdp = answered.body.toString("utf8");
+        assert.equal(sdp.startsWith("v=0"), true);
+        assert.equal(sdp.includes("a=fingerprint:"), true);
+        assert.match(sdp, /a=rtpmap:\d+ OPUS\/48000/i);
+        assert.equal(sdp.includes("codex-realtime-call-boundary"), false);
+      },
+    );
+  } finally {
+    closeVoiceCalls();
+    await offerer.close();
+  }
+});
+
 test("opus rtp is appended as pcm and playback is opus", () => {
   const encoder = new OpusScript(48000, 2, OpusScript.Application.AUDIO);
   const encoded = encoder.encode(Buffer.alloc(960 * 4), 960);

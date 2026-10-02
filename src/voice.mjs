@@ -26,6 +26,25 @@ function peerConfig() {
   };
 }
 
+export function offerFromCallBody(body, contentType) {
+  const text = Buffer.isBuffer(body) ? body.toString("utf8") : String(body ?? "");
+  const type = String(contentType ?? "");
+  if (!type.toLowerCase().includes("multipart/form-data")) return text;
+  const boundaryMatch = type.match(/boundary="?([^";]+)"?/i);
+  if (!boundaryMatch) return text;
+  const boundary = boundaryMatch[1];
+  for (const part of text.split(`--${boundary}`)) {
+    const headerEnd = part.indexOf("\r\n\r\n");
+    if (headerEnd === -1) continue;
+    const headers = part.slice(0, headerEnd).toLowerCase();
+    if (!headers.includes('name="sdp"') && !headers.includes("name=sdp")) continue;
+    let value = part.slice(headerEnd + 4);
+    if (value.endsWith("\r\n")) value = value.slice(0, -2);
+    return value;
+  }
+  return text;
+}
+
 export function audioCodecFromSdp(sdp) {
   const opus = String(sdp ?? "").match(/a=rtpmap:(\d+) opus\/48000/i);
   if (opus) return { kind: "opus", payloadType: Number(opus[1]) };
