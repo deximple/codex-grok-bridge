@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.8.0 — 2026-10-02
+
+- When xAI rejects a Codex voice offer on `POST /v1/realtime/calls` or `POST /v1/live`, the bridge reads the SDP part of the multipart body, whether the parts use CRLF or LF, and answers locally with werift. Opus is used when that is the offered codec. Audio is bridged to the xAI voice socket. The sideband for that answered call stays on the bridge. An offer the local peer cannot answer stays the upstream response. An offer xAI accepts is still forwarded. Codex cloud tasks are not in this package.
+- Runtime dependencies are `werift` 0.24.4 and `opusscript` 0.1.1. There is still no `XAI_API_KEY`.
+- Codex image `size` is sent to Imagine as `aspect_ratio` (`1024x1024` → `1:1`, `1536x1024` → `3:2`, `1024x1536` → `2:3`) for new pictures and edits. `quality: high` is `2k`, `low` is `1k`, and `auto` omits resolution. `n` is capped at 10. A local file path on an image edit is refused.
+- A generated image is saved once. The completed response carries that file note instead of the raw image bytes.
+- `grok_bridge_generate_video` accepts `480p`, `720p`, or `1080p`. A bad duration, aspect ratio, resolution, or local image path is rejected without calling the API. The finished clip is downloaded, without the login bearer, into `~/.local/share/codex-grok-bridge/generated-videos/`. The tool result names the temporary URL and the saved file. A moderation withhold is a tool message, not a failed turn. If the download fails, the result is still the URL.
+- A custom tool call that comes back under its Codex name is restored when that name belongs to one tool, including streamed argument events and the completed response output. A custom tool result is restored even when it only has a call id.
+- A function result that arrives as a list of content parts is forwarded as text. A remote image URL in that list is included. An inline PNG, JPEG, or WebP is attached after the tool result so the model can see it.
+- A previous web search keeps its query and the pages it found.
+- Command stdout, stderr, or an aggregated log stays in the forwarded history, with a non-zero exit code.
+- A chat audio attachment is replaced with an explanation so its bytes do not reject the turn.
+- When a reasoning summary is empty, plain text in the reasoning content is forwarded. Encrypted reasoning stays dropped.
+
 ## 1.7.2 — 2026-09-30
 
 - Readable compaction summaries are passed through as user messages. A compaction item that only carries encrypted or internal fields is still dropped.

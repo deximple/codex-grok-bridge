@@ -42,6 +42,16 @@ the bridge runs. See Release history.
 
 What each recent version added. Older cuts are in `CHANGELOG.md`.
 
+### 1.8.0 — 2026-10-02
+
+- When xAI rejects a Codex voice offer, the bridge reads the SDP part of the multipart body (CRLF or LF) and answers locally with werift, including Opus when that is the offered codec. Audio is bridged to the xAI voice socket, and that call's sideband stays on the bridge. An offer xAI accepts is still forwarded. Codex cloud tasks are not in this package.
+- Runtime dependencies are `werift` 0.24.4 and `opusscript` 0.1.1. No `XAI_API_KEY`.
+- Codex image `size` maps to Imagine `aspect_ratio` on new pictures and edits. `quality: high` is `2k`, `low` is `1k`, and `auto` omits resolution. `n` is capped at 10. A local file path on an image edit is refused.
+- A generated image is saved once, and the completed response carries that file note.
+- Video generation accepts `480p`, `720p`, or `1080p`. The finished clip is saved under `~/.local/share/codex-grok-bridge/generated-videos/` without the login bearer. The tool result names the URL and the file.
+- Custom tool names and results are restored, including a result that only has a call id. Function results that arrive as content parts are forwarded as text, with an inline PNG, JPEG, or WebP attached so the model can see it.
+- A previous web search keeps its query and the pages it found. Command output and a non-zero exit code stay in history. A chat audio attachment is replaced with an explanation. An empty reasoning summary falls back to plain reasoning text.
+
 ### 1.7.2 — 2026-09-30
 
 - Readable compaction summaries are passed through as user messages. A compaction item that only carries encrypted or internal fields is still dropped.
@@ -444,6 +454,16 @@ Codex `web_search`는 브리지가 실행하는 함수가 아니라 xAI 서버 �
 ## 릴리스 기록
 
 최근 버전이 더한 것입니다. 그 이전은 `CHANGELOG.md`에 있습니다.
+
+### 1.8.0 — 2026-10-02
+
+- xAI가 Codex 음성 offer를 거절하면 브리지가 multipart 본문의 SDP를 읽습니다. 파트 구분이 CRLF든 LF든 같습니다. werift로 로컬에서 답하고, offer가 Opus이면 Opus로 답합니다. 오디오는 xAI 음성 소켓으로 잇고, 그 통화의 sideband는 브리지에 남습니다. xAI가 수락한 offer는 그대로 넘깁니다. Codex 클라우드 작업은 이 패키지에 없습니다.
+- 런타임 의존성은 `werift` 0.24.4와 `opusscript` 0.1.1입니다. `XAI_API_KEY`는 쓰지 않습니다.
+- Codex 이미지 `size`는 새 그림과 편집 모두 Imagine `aspect_ratio`로 보냅니다. `quality: high`는 `2k`, `low`는 `1k`이고, `auto`는 해상도를 비웁니다. `n`은 최대 10장입니다. 이미지 편집의 로컬 파일 경로는 거절합니다.
+- 생성된 이미지는 한 번만 저장하고, 완료된 응답에는 그 파일 설명을 실습니다.
+- 영상 생성은 `480p`, `720p`, `1080p`를 받습니다. 끝난 클립은 로그인 베어러 없이 `~/.local/share/codex-grok-bridge/generated-videos/`에 저장하고, 도구 결과에는 URL과 파일을 함께 넣습니다.
+- 커스텀 도구 이름과 결과를 다시 맞춥니다. call id만 있는 결과도 맞춥니다. 내용 목록으로 온 함수 결과는 텍스트로 넘기고, 인라인 PNG·JPEG·WebP는 모델이 보게 붙입니다.
+- 이전 웹 검색은 질의와 찾은 페이지를 남깁니다. 명령 출력과 0이 아닌 종료 코드도 이력에 남습니다. 채팅 오디오 첨부는 설명으로 바꿉니다. reasoning 요약이 비어 있으면 평문 내용을 넘깁니다.
 
 ### 1.7.2 — 2026-09-30
 
