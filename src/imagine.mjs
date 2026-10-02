@@ -4,7 +4,9 @@
 // XAI_API_KEY. The bodies are not the same: Codex hardcodes `gpt-image-2`
 // plus `size` / `quality` / `background`, and edits use `{image_url}` or
 // `{file_id}`. Imagine wants `grok-imagine-image-quality`, `response_format:
-// b64_json`, and `{url}` references.
+// b64_json`, and `{url}` references. Codex `size` maps to `aspect_ratio`.
+// Codex `quality: high` maps to resolution `2k`. `quality` itself is not sent:
+// that field belongs to a different Imagine model.
 
 export const DEFAULT_IMAGINE_API_BASE = "https://api.x.ai/v1";
 export const IMAGINE_MODEL = "grok-imagine-image-quality";
