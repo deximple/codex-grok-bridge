@@ -56,6 +56,8 @@ linuxOnly("the Linux installer creates a separate app and never writes /usr/lib/
     const desktop = path.join(home, ".local/share/applications/codex-grok.desktop");
     await stat(path.join(app, "scripts/codex-wrapper.mjs"));
     await stat(path.join(app, "src/paths.mjs"));
+    await stat(path.join(app, "node_modules/opusscript/package.json"));
+    await stat(path.join(app, "node_modules/werift/package.json"));
     await stat(launcher);
     const desktopText = await readFile(desktop, "utf8");
     const launcherText = await readFile(launcher, "utf8");

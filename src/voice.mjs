@@ -1,13 +1,51 @@
 import { createHash, randomUUID } from "node:crypto";
-import OpusScript from "opusscript";
-import {
-  MediaStreamTrack,
-  RTCPeerConnection,
-  RtpHeader,
-  RtpPacket,
-  useOPUS,
-  usePCMU,
-} from "werift";
+
+let OpusScript;
+let MediaStreamTrack;
+let RTCPeerConnection;
+let RtpHeader;
+let RtpPacket;
+let useOPUS;
+let usePCMU;
+let voicePackagesError;
+
+try {
+  const opusMod = await import("opusscript");
+  const weriftMod = await import("werift");
+  OpusScript = opusMod.default ?? opusMod;
+  ({ MediaStreamTrack, RTCPeerConnection, RtpHeader, RtpPacket, useOPUS, usePCMU } = weriftMod);
+  if (
+    typeof OpusScript !== "function" ||
+    typeof MediaStreamTrack !== "function" ||
+    typeof RTCPeerConnection !== "function" ||
+    typeof RtpHeader !== "function" ||
+    typeof RtpPacket !== "function" ||
+    typeof useOPUS !== "function" ||
+    typeof usePCMU !== "function"
+  ) {
+    throw new Error("opusscript or werift did not export the voice runtime");
+  }
+} catch (error) {
+  OpusScript = undefined;
+  MediaStreamTrack = undefined;
+  RTCPeerConnection = undefined;
+  RtpHeader = undefined;
+  RtpPacket = undefined;
+  useOPUS = undefined;
+  usePCMU = undefined;
+  voicePackagesError = error;
+}
+
+function voicePackages() {
+  if (OpusScript && MediaStreamTrack && RTCPeerConnection && RtpHeader && RtpPacket && useOPUS && usePCMU) {
+    return { OpusScript, MediaStreamTrack, RTCPeerConnection, RtpHeader, RtpPacket, useOPUS, usePCMU };
+  }
+  const detail = voicePackagesError instanceof Error ? voicePackagesError.message : "missing";
+  throw new Error(
+    `Voice needs opusscript and werift installed in the bridge directory (${detail}). Re-run the Codex Grok installer.`,
+    voicePackagesError instanceof Error ? { cause: voicePackagesError } : undefined,
+  );
+}
 
 export const VOICE_SOCKET_URL = "wss://api.x.ai/v1/realtime?model=grok-voice-latest";
 
@@ -25,6 +63,7 @@ const sessionsById = new Map();
 const OPUS_FRAME = 960;
 
 function peerConfig() {
+  const { useOPUS, usePCMU } = voicePackages();
   return {
     iceServers: [],
     iceUseIpv4: true,
@@ -188,6 +227,7 @@ export function audioCodecFromSdp(sdp) {
 }
 
 function createOpus() {
+  const { OpusScript } = voicePackages();
   return new OpusScript(48000, 2, OpusScript.Application.VOIP);
 }
 
@@ -423,6 +463,7 @@ export function playoutGap(state, now) {
 
 function writeAudio(track, state, payload, clockStep, forceMarker = false) {
   if (payload.length === 0) return;
+  const { RtpHeader, RtpPacket } = voicePackages();
   const now = Date.now();
   const extra = playoutGap(state, now);
   const sequence = (state.sequence + 1) & 0xffff;
@@ -1213,6 +1254,7 @@ export async function answerVoiceCall({
   developerContext = "",
   initialItems,
 }) {
+  const { MediaStreamTrack, RTCPeerConnection } = voicePackages();
   const pc = new RTCPeerConnection(peerConfig());
   const track = new MediaStreamTrack({ kind: "audio" });
   let socket;

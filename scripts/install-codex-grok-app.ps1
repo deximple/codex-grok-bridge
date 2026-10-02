@@ -52,6 +52,36 @@ function Resolve-NodeExe {
 }
 
 $Node = Resolve-NodeExe
+$npm = Join-Path (Split-Path -Parent $Node) "npm.cmd"
+if (-not (Test-Path -LiteralPath $npm)) {
+  $npmSh = Join-Path (Split-Path -Parent $Node) "npm"
+  if (Test-Path -LiteralPath $npmSh) { $npm = $npmSh }
+  else {
+    $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
+    if ($npmCmd -and $npmCmd.Source) { $npm = $npmCmd.Source }
+  }
+}
+if (-not $npm -or -not (Test-Path -LiteralPath $npm)) {
+  Write-Error "no npm on PATH; voice packages were not installed"
+}
+@"
+{
+  "name": "codex-grok-bridge-runtime",
+  "private": true,
+  "dependencies": {
+    "opusscript": "0.1.1",
+    "werift": "0.24.4"
+  }
+}
+"@ | Set-Content -Path (Join-Path $App "package.json") -Encoding ASCII
+Push-Location $App
+try {
+  & $npm install --omit=dev --no-fund --no-audit
+  if ($LASTEXITCODE -ne 0) { Write-Error "npm install of opusscript and werift failed" }
+} finally {
+  Pop-Location
+}
+
 $Launcher = Join-Path $App "codex-grok-desktop.cmd"
 @"
 @echo off

@@ -94,6 +94,32 @@ for dir in scripts src; do
 done
 [ "$status" -eq 0 ] || { echo "bundle did not match the checkout" >&2; exit 1; }
 
+install_voice_runtime() {
+  node_bin="${NODE:-$(command -v node || true)}"
+  [ -n "$node_bin" ] || { echo "no node on PATH; set NODE=/path/to/node" >&2; exit 1; }
+  npm_bin=""
+  node_dir="$(dirname "$node_bin")"
+  if [ -x "$node_dir/npm" ]; then
+    npm_bin="$node_dir/npm"
+  elif command -v npm >/dev/null 2>&1; then
+    npm_bin="$(command -v npm)"
+  fi
+  [ -n "$npm_bin" ] || { echo "no npm on PATH; voice packages were not installed" >&2; exit 1; }
+  cat > "$BRIDGE/package.json" <<'EOF'
+{
+  "name": "codex-grok-bridge-runtime",
+  "private": true,
+  "dependencies": {
+    "opusscript": "0.1.1",
+    "werift": "0.24.4"
+  }
+}
+EOF
+  (cd "$BRIDGE" && "$npm_bin" install --omit=dev --no-fund --no-audit)
+}
+
+install_voice_runtime
+
 write_linux_wrapper() {
   NODE="${NODE:-$(command -v node || true)}"
   [ -n "$NODE" ] || { echo "no node on PATH; set NODE=/path/to/node" >&2; exit 1; }
