@@ -406,12 +406,40 @@ export function playbackFromDelta(track, state, delta) {
       const frame = state.pending.subarray(0, frameBytes);
       state.pending = state.pending.subarray(frameBytes);
       const encoded = Buffer.from(state.opus.encode(monoToStereo(frame), OPUS_FRAME));
-      writeAudio(track, state, encoded, OPUS_FRAME);
+      enqueueAudio(state, encoded, OPUS_FRAME);
     }
+    kickAudio(track, state);
     return;
   }
   const mulaw = pcm16ToMulaw(resampleInt16(pcm, 3, "down"));
   writeAudio(track, state, mulaw, mulaw.length);
+}
+
+function enqueueAudio(state, payload, clockStep) {
+  if (!state.playout) state.playout = [];
+  state.playout.push({ payload, clockStep });
+}
+
+function kickAudio(track, state) {
+  if (state.pumping) return;
+  const frame = state.playout?.shift();
+  if (!frame) {
+    if (state.endTalk) state.talking = false;
+    return;
+  }
+  writeAudio(track, state, frame.payload, frame.clockStep);
+  if (!state.playout.length) {
+    if (state.endTalk) state.talking = false;
+    return;
+  }
+  state.pumping = true;
+  const timer = setTimeout(() => {
+    state.pumping = false;
+    state.playoutTimer = null;
+    kickAudio(track, state);
+  }, 20);
+  timer.unref?.();
+  state.playoutTimer = timer;
 }
 
 function flushPlayback(track, state) {
@@ -421,7 +449,8 @@ function flushPlayback(track, state) {
   state.pending.copy(padded);
   state.pending = Buffer.alloc(0);
   const encoded = Buffer.from(state.opus.encode(monoToStereo(padded), OPUS_FRAME));
-  writeAudio(track, state, encoded, OPUS_FRAME);
+  enqueueAudio(state, encoded, OPUS_FRAME);
+  kickAudio(track, state);
 }
 
 const CODEX_TOOL = {
@@ -690,7 +719,8 @@ export function startVoiceBridge({
       } catch {
         // A short tail is dropped. The call stays up.
       }
-      state.talking = false;
+      state.endTalk = true;
+      if (!state.playout?.length) state.talking = false;
       if (event.type === "response.done") releaseHeld();
     }
     const sideband = voiceSidebandEvent(event, sidebandState);
@@ -722,6 +752,7 @@ export function startVoiceBridge({
       }
     },
     close() {
+      if (state.playoutTimer) clearTimeout(state.playoutTimer);
       try {
         opus?.delete?.();
       } catch {
