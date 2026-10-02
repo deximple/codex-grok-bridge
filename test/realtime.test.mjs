@@ -23,8 +23,10 @@ import {
   remoteAudioTracks,
   startVoiceBridge,
   voiceCallCount,
+  flushDelegationSpeech,
   mergeVoiceClientBurst,
   playoutGap,
+  queueDelegationSpeech,
   voiceClientEvents,
   voiceSidebandEvent,
 } from "../src/voice.mjs";
@@ -692,6 +694,33 @@ test("a later voice turn keeps its own talkspurt marker", async () => {
   }
 });
 
+test("a streamed codex reply is spoken once", () => {
+  const state = { pendingCalls: new Set(["call-1"]) };
+  const frame = (text) => ({
+    type: "delegation.context.append",
+    delegation_item_id: "call-1",
+    content: [{ type: "input_text", text }],
+  });
+  assert.equal(queueDelegationSpeech(state, frame("AAAA")), true);
+  assert.equal(queueDelegationSpeech(state, frame("BBBB")), true);
+  assert.equal(state.pendingCalls.has("call-1"), true);
+  const spoken = flushDelegationSpeech(state);
+  assert.equal(spoken[0].item.type, "function_call_output");
+  assert.equal(spoken[0].item.output, JSON.stringify("AAAABBBB"));
+  assert.equal(spoken[1].item.type, "force_message");
+  assert.equal(spoken[1].item.content[0].text, "AAAABBBB");
+  assert.equal(state.pendingCalls.has("call-1"), false);
+  assert.equal(
+    queueDelegationSpeech(state, {
+      type: "delegation.context.append",
+      delegation_item_id: "call-2",
+      channel: "commentary",
+      content: [{ type: "input_text", text: "quiet" }],
+    }),
+    false,
+  );
+});
+
 test("a short playout delay does not split the talkspurt", () => {
   assert.equal(playoutGap({ lastSentAt: 1000 }, 1040), 0);
   assert.equal(playoutGap({ lastSentAt: 1000 }, 1070), 0);
@@ -905,6 +934,69 @@ test("a Codex multipart call body is answered from its sdp part", async () => {
       },
     );
   } finally {
+    closeVoiceCalls();
+    await offerer.close();
+  }
+});
+
+test("a streamed codex reply is sent after the desktop pauses", async () => {
+  const offerer = new RTCPeerConnection({
+    iceServers: [],
+    iceUseIpv4: true,
+    iceUseIpv6: false,
+    codecs: { audio: [useOPUS()] },
+  });
+  offerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+  await offerer.setLocalDescription(await offerer.createOffer());
+  const sockets = [];
+  let live;
+  try {
+    await withServer(
+      {
+        realtimeFetch: async () =>
+          new Response("no", { status: 403, headers: { "content-type": "text/plain" } }),
+        voiceWebSocket() {
+          const socket = { readyState: 1, sent: [], send(data) { this.sent.push(JSON.parse(String(data))); }, close() {} };
+          sockets.push(socket);
+          return socket;
+        },
+      },
+      async (port) => {
+        const answered = await postRaw(port, "/v1/realtime/calls", offerer.localDescription.sdp);
+        const id = answered.headers.location.split("/").pop();
+        live = await rawUpgrade(port, `/v1/live/${id}`, {}, false);
+        sockets[0].onmessage(
+          JSON.stringify({
+            type: "response.function_call_arguments.done",
+            name: "codex",
+            call_id: "call-1",
+            arguments: JSON.stringify({ request: "hi" }),
+          }),
+        );
+        const frame = (text) =>
+          maskedClientText(
+            JSON.stringify({
+              type: "delegation.context.append",
+              delegation_item_id: "call-1",
+              content: [{ type: "input_text", text }],
+            }),
+          );
+        live.socket.write(frame("AAAA"));
+        live.socket.write(frame("BBBB"));
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        assert.equal(
+          sockets[0].sent.some((event) => event.item?.type === "function_call_output"),
+          false,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        const output = sockets[0].sent.find((event) => event.item?.type === "function_call_output");
+        const spoken = sockets[0].sent.find((event) => event.item?.type === "force_message");
+        assert.equal(output.item.output, JSON.stringify("AAAABBBB"));
+        assert.equal(spoken.item.content[0].text, "AAAABBBB");
+      },
+    );
+  } finally {
+    live?.socket.destroy();
     closeVoiceCalls();
     await offerer.close();
   }

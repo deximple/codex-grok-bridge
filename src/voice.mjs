@@ -611,6 +611,41 @@ export function voiceClientEvents(event, state = {}) {
   return [];
 }
 
+// Desktop streams a codex reply in pieces about 200 ms apart. Hold them until
+// the stream pauses, then close the tool and speak the whole reply once.
+export const DELEGATION_SPEECH_WAIT_MS = 350;
+
+export function queueDelegationSpeech(state, event) {
+  if (event?.type !== "delegation.context.append" || event.channel === "commentary") return false;
+  const id = event.delegation_item_id;
+  if (typeof id !== "string") return false;
+  if (!state.pendingCalls?.has(id) && !state.speechParts?.has(id)) return false;
+  const text = textFromContent(event.content);
+  if (!state.speechParts) state.speechParts = new Map();
+  if (text) state.speechParts.set(id, (state.speechParts.get(id) ?? "") + text);
+  return true;
+}
+
+export function flushDelegationSpeech(state) {
+  const parts = state.speechParts;
+  if (!parts?.size) return [];
+  const events = [];
+  for (const [id, text] of parts) {
+    events.push(
+      ...voiceClientEvents(
+        {
+          type: "delegation.context.append",
+          delegation_item_id: id,
+          content: [{ type: "input_text", text }],
+        },
+        state,
+      ),
+    );
+  }
+  parts.clear();
+  return events;
+}
+
 // Desktop v3 reads frameless sideband events. xAI voice uses different names.
 // Cumulative user captions are reduced to the new suffix. A rewrite that no
 // longer extends the previous caption is sent as the completed turn text.
@@ -807,10 +842,12 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
   let bridge;
   let closed = false;
   let appendTimer = null;
+  let speechTimer = null;
   const close = () => {
     if (closed) return;
     closed = true;
     if (appendTimer) clearTimeout(appendTimer);
+    if (speechTimer) clearTimeout(speechTimer);
     voiceState.closing = true;
     active.delete(session);
     if (session.id) sessionsById.delete(session.id);
@@ -848,6 +885,15 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
         const type = event?.type;
         if (type === "session.close") {
           queueMicrotask(() => close());
+          return;
+        }
+        if (queueDelegationSpeech(voiceState, event)) {
+          if (speechTimer) clearTimeout(speechTimer);
+          speechTimer = setTimeout(() => {
+            speechTimer = null;
+            for (const outbound of flushDelegationSpeech(voiceState)) bridge?.sendClient?.(outbound);
+          }, DELEGATION_SPEECH_WAIT_MS);
+          speechTimer.unref();
           return;
         }
         if (type === "session.context.append" || type === "delegation.context.append") {
