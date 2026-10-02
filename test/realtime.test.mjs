@@ -532,6 +532,50 @@ test("a sideband request waits until the voice socket is open", () => {
   }
 });
 
+test("a tool reply waits until playback finishes", async () => {
+  const sent = [];
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const socket = {
+    readyState: 1,
+    send(data) {
+      sent.push(JSON.parse(String(data)));
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket,
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  try {
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        delta: Buffer.concat([Buffer.alloc(960), Buffer.alloc(960)]).toString("base64"),
+      }),
+    );
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    bridge.sendClient({
+      type: "conversation.item.create",
+      item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text: "Next." }] },
+    });
+    assert.equal(sent.some((event) => event.item?.type === "force_message"), false);
+    const deadline = Date.now() + 500;
+    while (!sent.some((event) => event.item?.type === "force_message") && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(sent.some((event) => event.item?.type === "force_message"), true);
+    assert.ok(track.rtp.length >= 2);
+  } finally {
+    bridge.close();
+  }
+});
+
 test("a tool reply waits until the voice response is done", () => {
   const sent = [];
   const socket = {

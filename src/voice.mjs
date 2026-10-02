@@ -454,6 +454,7 @@ function kickAudio(track, state) {
   const frame = state.playout?.[0];
   if (!frame) {
     if (state.endTalk) state.talking = false;
+    state.onDrained?.();
     return;
   }
   try {
@@ -465,6 +466,7 @@ function kickAudio(track, state) {
   state.playout.shift();
   if (!state.playout.length) {
     if (state.endTalk) state.talking = false;
+    state.onDrained?.();
     return;
   }
   scheduleAudio(track, state);
@@ -740,10 +742,12 @@ export function startVoiceBridge({
       (item?.type === "force_message" || item?.type === "function_call_output")
     );
   };
+  const playbackBusy = () => Boolean(state.playout?.length || state.pumping);
   const releaseHeld = () => {
-    responseActive = false;
+    if (responseActive || playbackBusy()) return;
     for (const event of held.splice(0)) send(event);
   };
+  state.onDrained = releaseHeld;
   const flush = () => {
     opened = true;
     for (const text of queued.splice(0)) socket.send(text);
@@ -787,7 +791,10 @@ export function startVoiceBridge({
       }
       state.endTalk = true;
       if (!state.playout?.length) state.talking = false;
-      if (event.type === "response.done") releaseHeld();
+      if (event.type === "response.done") {
+        responseActive = false;
+        releaseHeld();
+      }
     }
     const sideband = voiceSidebandEvent(event, sidebandState);
     if (sideband) onEvent?.(JSON.stringify(sideband));
@@ -808,7 +815,7 @@ export function startVoiceBridge({
     onUpstream,
     sendClient(event) {
       try {
-        if (responseActive && holdsForIdleResponse(event)) {
+        if ((responseActive || playbackBusy()) && holdsForIdleResponse(event)) {
           held.push(event);
           return;
         }
