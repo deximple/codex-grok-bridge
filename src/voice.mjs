@@ -488,12 +488,12 @@ function kickAudio(track, state) {
   scheduleAudio(track, state);
 }
 
-export function stopPlayback(state) {
+export function stopPlayback(state, options = {}) {
   state.playout = [];
   state.pending = Buffer.alloc(0);
   state.pumping = false;
   state.dropping = true;
-  state.userSpeaking = true;
+  state.userSpeaking = options.userSpeaking !== false;
   state.endTalk = true;
   state.talking = false;
   if (state.playoutTimer) {
@@ -907,6 +907,19 @@ export function startVoiceBridge({
     if (responseActive || playbackBusy() || state.userSpeaking) return;
     for (const event of held.splice(0)) send(event);
   };
+  const interruptAssistant = (userSpeaking) => {
+    const unsent = Boolean(state.playout?.length || state.pending?.length);
+    stopPlayback(state, { userSpeaking });
+    if (unsent && state.audioItemId && !state.truncated) {
+      state.truncated = true;
+      send({
+        type: "conversation.item.truncate",
+        item_id: state.audioItemId,
+        content_index: state.audioContentIndex ?? 0,
+        audio_end_ms: state.playedMs ?? 0,
+      });
+    }
+  };
   state.onDrained = releaseHeld;
   const flush = () => {
     opened = true;
@@ -947,19 +960,7 @@ export function startVoiceBridge({
       sidebandState.conversationId = event.conversation.id;
     }
     if (event?.type === "session.updated") markSessionReady();
-    if (event?.type === "input_audio_buffer.speech_started") {
-      const unsent = Boolean(state.playout?.length || state.pending?.length);
-      stopPlayback(state);
-      if (unsent && state.audioItemId && !state.truncated) {
-        state.truncated = true;
-        send({
-          type: "conversation.item.truncate",
-          item_id: state.audioItemId,
-          content_index: state.audioContentIndex ?? 0,
-          audio_end_ms: state.playedMs ?? 0,
-        });
-      }
-    }
+    if (event?.type === "input_audio_buffer.speech_started") interruptAssistant(true);
     if (event?.type === "input_audio_buffer.speech_stopped") {
       state.userSpeaking = false;
       releaseHeld();
@@ -1044,7 +1045,13 @@ export function startVoiceBridge({
     onUpstream,
     sendClient(event) {
       try {
-        if ((responseActive || playbackBusy()) && holdsForIdleResponse(event)) {
+        if (event?.type === "response.cancel") {
+          pendingCreate = false;
+          interruptAssistant(false);
+          send(event);
+          return;
+        }
+        if ((responseActive || playbackBusy() || state.userSpeaking) && holdsForIdleResponse(event)) {
           held.push(event);
           return;
         }

@@ -823,6 +823,57 @@ test("a voice response.create that races an active response is deferred", () => 
   }
 });
 
+test("a desktop response.cancel stops queued playback", async () => {
+  const sent = [];
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: {
+      readyState: 1,
+      send(data) {
+        sent.push(JSON.parse(String(data)));
+      },
+    },
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  try {
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        item_id: "item-1",
+        delta: Buffer.alloc(960 * 4).toString("base64"),
+      }),
+    );
+    const played = track.rtp.length;
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "error",
+        error: { message: "Conversation already has an active response in progress: resp_1" },
+      }),
+    );
+    bridge.sendClient({ type: "response.cancel" });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    assert.equal(track.rtp.length, played);
+    assert.equal(sent.some((event) => event.type === "response.cancel"), true);
+    assert.equal(sent.some((event) => event.type === "conversation.item.truncate"), true);
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    assert.equal(sent.some((event) => event.type === "response.create"), false);
+    bridge.sendClient({
+      type: "conversation.item.create",
+      item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text: "After." }] },
+    });
+    assert.equal(sent.at(-1).item.type, "force_message");
+  } finally {
+    bridge.close();
+  }
+});
+
 test("voice audio accepts the documented delta and audio fields", () => {
   const pcm = Buffer.alloc(6).toString("base64");
   assert.equal(voiceAudioDelta({ type: "response.output_audio.delta", delta: pcm }), pcm);
