@@ -388,6 +388,7 @@ export function createBridgeServer(options = {}) {
                 baseUrl: options.videoBaseUrl,
                 pause: options.videoPause,
                 signal: controller.signal,
+                dir: options.videoDir,
               },
             },
             res,

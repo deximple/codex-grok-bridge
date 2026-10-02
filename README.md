@@ -291,6 +291,13 @@ The bridge inspects the saved file. If there is no alpha channel it tells the
 model not to describe the picture as transparent. If you need a real alpha
 channel or accurate inpainting, use Codex’s OpenAI path.
 
+### Video generation
+
+A finished clip is a temporary URL. The bridge downloads that file, without
+the login bearer, into `~/.local/share/codex-grok-bridge/generated-videos/`
+and the tool result names both the URL and the saved file. If the download
+fails, the result is still the URL.
+
 ### GPT ↔ Grok switching
 
 Supported on an idle persisted root thread. `turn/start`,
@@ -671,6 +678,13 @@ Grok의 `image_generation`은 텍스트→이미지만 제대로 됩니다.
 브리지는 저장한 파일의 포맷을 확인합니다. 알파가 없으면 모델에게 투명하다고
 설명하지 말라고 적습니다. 진짜 알파나 정확한 인페인팅이 필요하면 Codex의
 OpenAI 경로가 맞습니다.
+
+### 영상 생성
+
+끝난 클립은 임시 URL입니다. 브리지는 로그인 베어러 없이 그 파일을
+`~/.local/share/codex-grok-bridge/generated-videos/`에 받고, 도구 결과에는
+URL과 저장한 파일 경로를 함께 넣습니다. 다운로드가 실패하면 결과는 URL만
+남습니다.
 
 ### GPT ↔ Grok 전환
 
