@@ -1424,6 +1424,17 @@ test("ack filler asks the voice model to speak before the codex tool", () => {
   try {
     assert.match(sent[0].session.instructions, /Use the repo\./);
     assert.match(sent[0].session.instructions, /one short sentence/);
+    const again = voiceClientEvents(
+      { type: "session.update", session: { instructions: "From the desktop." } },
+      { ackFiller: true },
+    );
+    assert.match(again[0].session.instructions, /From the desktop\./);
+    assert.match(again[0].session.instructions, /one short sentence/);
+    const plain = voiceClientEvents(
+      { type: "session.update", session: { instructions: "From the desktop." } },
+      {},
+    );
+    assert.equal(plain[0].session.instructions.includes("one short sentence"), false);
   } finally {
     bridge.close();
   }

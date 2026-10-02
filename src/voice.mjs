@@ -537,7 +537,7 @@ const ACK_FILLER =
 
 function sessionUpdate(instructions, ackFiller = false) {
   const base = typeof instructions === "string" && instructions.trim() ? instructions.trim() : "Say ready.";
-  const text = ackFiller ? `${base}\n\n${ACK_FILLER}` : base;
+  const text = ackFiller && !base.includes(ACK_FILLER) ? `${base}\n\n${ACK_FILLER}` : base;
   return {
     type: "session.update",
     session: {
@@ -620,7 +620,7 @@ export function voiceClientEvents(event, state = {}) {
   }
   if (type === "session.update") {
     const instructions = typeof event.session?.instructions === "string" ? event.session.instructions.trim() : "";
-    return instructions ? [sessionUpdate(instructions)] : [];
+    return instructions ? [sessionUpdate(instructions, state.ackFiller === true)] : [];
   }
   if (type === "session.context.append" || type === "delegation.context.append") {
     const text = textFromContent(event.content);
@@ -1113,7 +1113,7 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
     pc.close().catch(() => {});
   };
   const pendingEvents = [];
-  const voiceState = { inputTranscript: "", pendingCalls: new Set() };
+  const voiceState = { inputTranscript: "", pendingCalls: new Set(), ackFiller };
   const appendBurst = [];
   const flushAppends = () => {
     appendTimer = null;
