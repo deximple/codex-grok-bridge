@@ -638,6 +638,8 @@ test("voice audio uses append and output_audio.delta", () => {
   const bridge = startVoiceBridge({ track, socket });
   const mulaw = Buffer.from([0xff, 0x7f]);
   bridge.onRtp({ payload: mulaw });
+  assert.equal(sent.some((event) => event.type === "input_audio_buffer.append"), false);
+  bridge.onUpstream(JSON.stringify({ type: "session.updated", session: { id: "sess-1" } }));
   assert.equal(sent.at(-1).type, "input_audio_buffer.append");
   assert.equal(Buffer.from(sent.at(-1).audio, "base64").length, mulawToPcm16(mulaw).length * 3);
   const pcm = Buffer.alloc(6);
@@ -1385,11 +1387,13 @@ test("a connected offerer microphone reaches xAI", async () => {
         const channel = offerer.createDataChannel("oai-events");
         await offerer.setLocalDescription(await offerer.createOffer());
         const sent = [];
+        const upstream = { readyState: 1, send(data) { sent.push(String(data)); }, close() {} };
         const answered = await answerVoiceCall({
           offer: offerer.localDescription.sdp,
           token: "t",
-          webSocketFactory: () => ({ readyState: 1, send(data) { sent.push(String(data)); }, close() {} }),
+          webSocketFactory: () => upstream,
         });
+        upstream.onmessage(JSON.stringify({ type: "session.updated", session: { id: "sess-1" } }));
         await offerer.setRemoteDescription({ type: "answer", sdp: answered.sdp });
         const opened = await new Promise((resolve) => {
           const timer = setTimeout(() => resolve(false), 5000);
@@ -1738,6 +1742,8 @@ test("microphone packets come from the remote track", () => {
     assert.equal(remoteHandlers.length, 1);
     assert.equal(localHandlers.length, 0);
     remoteHandlers[0]({ header: { payloadType: 0 }, payload: Buffer.from([0xff]) });
+    assert.equal(sent.some((event) => event.type === "input_audio_buffer.append"), false);
+    bridge.onUpstream(JSON.stringify({ type: "session.updated", session: { id: "sess-1" } }));
     assert.equal(sent.some((event) => event.type === "input_audio_buffer.append"), true);
   } finally {
     bridge.close();
@@ -1794,6 +1800,7 @@ test("opus rtp is appended as pcm and playback is opus", () => {
     codec: { kind: "opus", payloadType: 111 },
   });
   try {
+    bridge.onUpstream(JSON.stringify({ type: "session.updated", session: { id: "sess-1" } }));
     bridge.onRtp({ header: { payloadType: 111 }, payload: encoded });
     const appended = sent.find((event) => event.type === "input_audio_buffer.append");
     assert.ok(appended);

@@ -767,13 +767,25 @@ export function startVoiceBridge({
   let opened = socket.readyState === 1;
   let responseActive = false;
   let resumed = false;
+  let sessionReady = false;
+  const pendingAudio = [];
   const send = (event) => {
+    if (!sessionReady && event?.type === "input_audio_buffer.append") {
+      pendingAudio.push(event);
+      if (pendingAudio.length > 50) pendingAudio.shift();
+      return;
+    }
     const text = JSON.stringify(event);
     if (!opened) {
       queued.push(text);
       return;
     }
     current.send(text);
+  };
+  const markSessionReady = () => {
+    if (sessionReady) return;
+    sessionReady = true;
+    for (const event of pendingAudio.splice(0)) send(event);
   };
   const holdsForIdleResponse = (event) => {
     const item = event?.item;
@@ -818,6 +830,7 @@ export function startVoiceBridge({
     if (event?.type === "conversation.created" && typeof event.conversation?.id === "string") {
       sidebandState.conversationId = event.conversation.id;
     }
+    if (event?.type === "session.updated") markSessionReady();
     const spoken = voiceAudioDelta(event);
     if (spoken) {
       try {
@@ -853,6 +866,7 @@ export function startVoiceBridge({
       try {
         current = openSocket(sidebandState.conversationId);
         opened = current.readyState === 1;
+        sessionReady = false;
         bindSocket(current);
         send(sessionUpdate(instructions));
         return;
