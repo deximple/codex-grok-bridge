@@ -84,6 +84,14 @@ test("edits map image_url references and refuse OpenAI file ids", () => {
   });
   assert.equal(many.images.length, 2);
   assert.equal(many.aspect_ratio, "auto");
+  assert.equal(
+    imagineEditBody({
+      prompt: "wide",
+      size: "1536x1024",
+      images: [{ image_url: "data:image/png;base64,YQ==" }],
+    }).aspect_ratio,
+    "3:2",
+  );
   assert.equal(Object.hasOwn(many, "image"), false);
   assert.throws(() => imagineEditBody({ prompt: "x", images: [{ file_id: "file_123" }] }), /file ids/);
   assert.throws(

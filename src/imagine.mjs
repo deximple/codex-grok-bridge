@@ -77,11 +77,11 @@ export function imagineEditBody(input) {
     throw error;
   }
   const payload = basePayload(prompt);
+  const aspect = aspectFromSize(input?.size);
   if (urls.length === 1) payload.image = { url: urls[0] };
-  else {
-    payload.images = urls.map((url) => ({ url }));
-    payload.aspect_ratio = "auto";
-  }
+  else payload.images = urls.map((url) => ({ url }));
+  if (aspect) payload.aspect_ratio = aspect;
+  else if (urls.length > 1) payload.aspect_ratio = "auto";
   return payload;
 }
 
