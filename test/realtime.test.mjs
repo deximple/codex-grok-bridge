@@ -1954,6 +1954,13 @@ test("xAI voice events become the desktop v3 sideband events", () => {
     type: "turn.done",
     turn: { role: "user", transcript: "hello" },
   });
+  assert.equal(
+    voiceSidebandEvent(
+      { type: "conversation.item.input_audio_transcription.completed", transcript: "hello!" },
+      user,
+    ),
+    null,
+  );
   assert.equal(voiceSidebandEvent({ type: "input_audio_buffer.speech_started" }, user), null);
   assert.equal(voiceSidebandEvent({ type: "conversation.created" }, state), null);
   const textState = {};

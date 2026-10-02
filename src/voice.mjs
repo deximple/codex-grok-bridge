@@ -761,6 +761,7 @@ export function voiceSidebandEvent(event, state) {
   if (type === "input_audio_buffer.speech_started" && state.inputTranscript) {
     const transcript = state.inputTranscript;
     state.inputTranscript = "";
+    state.userClosed = transcript;
     return { type: "turn.done", turn: { role: "user", transcript } };
   }
   if (type === "conversation.item.input_audio_transcription.updated" && typeof event.transcript === "string") {
@@ -779,7 +780,10 @@ export function voiceSidebandEvent(event, state) {
     typeof event.transcript === "string" &&
     event.transcript
   ) {
+    const closed = state.userClosed ?? "";
     state.inputTranscript = "";
+    state.userClosed = "";
+    if (closed && (event.transcript === closed || event.transcript.startsWith(closed))) return null;
     return { type: "turn.done", turn: { role: "user", transcript: event.transcript } };
   }
   if ((type === "session.created" || type === "session.updated") && typeof event.session?.id === "string") {
