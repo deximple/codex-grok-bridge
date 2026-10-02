@@ -858,14 +858,15 @@ export function startVoiceBridge({
     }
     if (event?.type === "session.updated") markSessionReady();
     if (event?.type === "input_audio_buffer.speech_started") {
+      const unsent = Boolean(state.playout?.length || state.pending?.length);
       stopPlayback(state);
-      if (state.audioItemId && state.playedMs > 0 && !state.truncated) {
+      if (unsent && state.audioItemId && !state.truncated) {
         state.truncated = true;
         send({
           type: "conversation.item.truncate",
           item_id: state.audioItemId,
           content_index: state.audioContentIndex ?? 0,
-          audio_end_ms: state.playedMs,
+          audio_end_ms: state.playedMs ?? 0,
         });
       }
     }

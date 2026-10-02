@@ -661,6 +661,42 @@ test("user speech truncates the assistant item to the audio already sent", () =>
   }
 });
 
+test("a later user turn does not truncate a finished voice reply", () => {
+  const sent = [];
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: {
+      readyState: 1,
+      send(data) {
+        sent.push(JSON.parse(String(data)));
+      },
+    },
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  try {
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        item_id: "item-1",
+        delta: Buffer.alloc(960).toString("base64"),
+      }),
+    );
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    assert.equal(track.rtp.length, 1);
+    bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+    assert.equal(sent.some((event) => event.type === "conversation.item.truncate"), false);
+  } finally {
+    bridge.close();
+  }
+});
+
 test("a tool reply waits until the user stops speaking", () => {
   const sent = [];
   const socket = {
