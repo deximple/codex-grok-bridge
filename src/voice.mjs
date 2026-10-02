@@ -758,6 +758,11 @@ export function voiceSidebandEvent(event, state) {
     state.assistantTurnClosed = true;
     return { type: "turn.done", turn: { role: "assistant", transcript: full } };
   }
+  if (type === "input_audio_buffer.speech_started" && state.inputTranscript) {
+    const transcript = state.inputTranscript;
+    state.inputTranscript = "";
+    return { type: "turn.done", turn: { role: "user", transcript } };
+  }
   if (type === "conversation.item.input_audio_transcription.updated" && typeof event.transcript === "string") {
     const next = event.transcript;
     const prev = state.inputTranscript ?? "";
