@@ -705,13 +705,51 @@ export function flushDelegationSpeech(state) {
 // Desktop v3 reads frameless sideband events. xAI voice uses different names.
 // Cumulative user captions are reduced to the new suffix. A rewrite that no
 // longer extends the previous caption is sent as the completed turn text.
+function assistantTextDelta(event) {
+  if (event?.type !== "response.output_text.delta" && event?.type !== "response.text.delta") return "";
+  return typeof event.delta === "string" ? event.delta : "";
+}
+
 export function voiceSidebandEvent(event, state) {
   const type = event?.type;
+  if (type === "response.created") {
+    state.outputText = "";
+    state.audioTranscript = false;
+    state.assistantTurnClosed = false;
+    return null;
+  }
+  const text = assistantTextDelta(event);
+  if (text) {
+    if (state.audioTranscript) return null;
+    state.outputText = `${state.outputText ?? ""}${text}`;
+    return { type: "output_transcript.added", item: { text } };
+  }
+  if (type === "response.output_text.done" || type === "response.text.done") {
+    const full =
+      typeof event.text === "string" && event.text
+        ? event.text
+        : typeof event.transcript === "string" && event.transcript
+          ? event.transcript
+          : (state.outputText ?? "");
+    state.outputText = "";
+    state.assistantTurnClosed = true;
+    return full ? { type: "turn.done", turn: { role: "assistant", transcript: full } } : null;
+  }
   if (type === "response.output_audio_transcript.delta" && typeof event.delta === "string" && event.delta) {
+    state.audioTranscript = true;
+    state.outputText = "";
     return { type: "output_transcript.added", item: { text: event.delta } };
   }
   if (type === "response.output_audio_transcript.done" && typeof event.transcript === "string" && event.transcript) {
+    state.outputText = "";
+    state.assistantTurnClosed = true;
     return { type: "turn.done", turn: { role: "assistant", transcript: event.transcript } };
+  }
+  if (type === "response.done" && state.outputText && !state.assistantTurnClosed && !state.audioTranscript) {
+    const full = state.outputText;
+    state.outputText = "";
+    state.assistantTurnClosed = true;
+    return { type: "turn.done", turn: { role: "assistant", transcript: full } };
   }
   if (type === "conversation.item.input_audio_transcription.updated" && typeof event.transcript === "string") {
     const next = event.transcript;
