@@ -502,6 +502,19 @@ function droppedItemInputTexts(node) {
     rememberTextValue(texts, seen, action.queries);
     rememberText(texts, seen, action.url);
     rememberText(texts, seen, action.pattern);
+    if (Array.isArray(action.sources)) {
+      for (const source of action.sources) {
+        if (typeof source === "string") {
+          rememberText(texts, seen, source);
+          continue;
+        }
+        if (!source || typeof source !== "object") continue;
+        rememberText(texts, seen, source.url);
+        rememberText(texts, seen, source.title);
+        rememberText(texts, seen, source.snippet);
+        rememberText(texts, seen, source.text);
+      }
+    }
   }
   rememberArguments(texts, seen, node.arguments);
   rememberTools(texts, seen, node.tools);

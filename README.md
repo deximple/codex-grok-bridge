@@ -241,7 +241,8 @@ restored when that name belongs to one tool. The same name is restored on a
 streamed arguments event and inside the completed response output. A custom
 tool result is restored too, including when it only carries the call id. A function result that arrives as a list of content parts is
 forwarded as text. A remote image URL in that list is included. An inline
-PNG, JPEG, or WebP is attached after the tool result so the model can see it. Command output
+PNG, JPEG, or WebP is attached after the tool result so the model can see it.
+A previous web search keeps its query and the page URLs it found. Command output
 in stdout, stderr, or an aggregated log stays in the history. A non-zero exit
 code stays with that output. File edits, MCP,
 and similar work inside whatever Codex exposed, at whatever approval policy the
@@ -631,7 +632,8 @@ Codex `reasoning` 항목의 평문 요약은 상류로 전달합니다. 요약�
 스트리밍된 인자 이벤트와 완료된 응답 목록의 이름도 같이 맞춥니다. 커스텀
 도구 결과도 맞추며, call id만 있어도 맞춥니다. 내용
 목록으로 온 함수 결과는 텍스트로 넘깁니다. 원격 이미지 주소는 그 글에
-넣고, 인라인 PNG·JPEG·WebP는 도구 결과 뒤에 붙여 모델이 보게 합니다. stdout,
+넣고, 인라인 PNG·JPEG·WebP는 도구 결과 뒤에 붙여 모델이 보게 합니다. 이전
+웹 검색은 질의와 찾은 페이지 주소를 이력에 남깁니다. stdout,
 stderr, 합쳐진 명령 출력도 이력에 남습니다. 0이 아닌 종료 코드도 그 출력과
 함께 남습니다. 파일
 변경·MCP 등은 Codex가 노출한 도구와 사용자가 정한 승인 정책 안에서 동작합니다.

@@ -275,6 +275,37 @@ test("flattens namespaced Codex tools into function tools", () => {
   );
 });
 
+test("a previous web search keeps the pages it found", () => {
+  const { request } = toProxyRequest({
+    input: [
+      {
+        type: "web_search_call",
+        id: "ws_1",
+        status: "completed",
+        action: {
+          type: "search",
+          query: "weather seattle",
+          sources: [
+            { type: "url", url: "https://example.com/weather", title: "Forecast" },
+            { type: "url", url: "https://example.com/weather" },
+            "https://example.com/also",
+          ],
+        },
+      },
+    ],
+    tools: [],
+  });
+  assert.deepEqual(
+    request.input[0].content.map((part) => part.text),
+    [
+      "weather seattle",
+      "https://example.com/weather",
+      "Forecast",
+      "https://example.com/also",
+    ],
+  );
+});
+
 test("forwards one Codex web_search server tool and passes web_search_call through", () => {
   const fixture = JSON.parse(
     readFileSync(new URL("./fixtures/web-search.json", import.meta.url)),
