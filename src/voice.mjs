@@ -1025,6 +1025,9 @@ export function startVoiceBridge({
       try {
         const pendingHeld = held.splice(0);
         responseActive = false;
+        pendingCreate = false;
+        state.dropping = false;
+        state.userSpeaking = false;
         current = openSocket(sidebandState.conversationId);
         opened = current.readyState === 1;
         sessionReady = false;
