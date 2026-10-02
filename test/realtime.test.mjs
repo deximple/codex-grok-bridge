@@ -428,6 +428,82 @@ test("a rejected xAI offer is answered by werift and bridged to the voice socket
   }
 });
 
+test("a sideband frame bundled with the upgrade reaches xAI", async () => {
+  const pcmu = new RTCRtpCodecParameters({
+    mimeType: "audio/PCMU",
+    clockRate: 8000,
+    channels: 1,
+    payloadType: 0,
+  });
+  const offerer = new RTCPeerConnection({
+    iceServers: [],
+    iceUseIpv4: true,
+    iceUseIpv6: false,
+    codecs: { audio: [pcmu] },
+  });
+  offerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+  await offerer.setLocalDescription(await offerer.createOffer());
+  const sockets = [];
+  try {
+    await withServer(
+      {
+        realtimeFetch: async () =>
+          new Response(Buffer.from('{"error":"Team is not authorized"}'), {
+            status: 403,
+            headers: { "content-type": "application/json" },
+          }),
+        voiceWebSocket() {
+          const sent = [];
+          const socket = {
+            readyState: 1,
+            sent,
+            send(data) {
+              sent.push(String(data));
+            },
+            close() {},
+          };
+          sockets.push(socket);
+          return socket;
+        },
+      },
+      async (port) => {
+        const answered = await postRaw(port, "/v1/realtime/calls", offerer.localDescription.sdp);
+        assert.equal(answered.status, 201);
+        const id = answered.headers.location.split("/").pop();
+        const payload = Buffer.from(JSON.stringify({ type: "response.cancel" }));
+        const mask = Buffer.from([9, 8, 7, 6]);
+        const frame = Buffer.concat([
+          Buffer.from([0x81, 0x80 | payload.length]),
+          mask,
+          Buffer.from(payload.map((byte, index) => byte ^ mask[index % 4])),
+        ]);
+        const socket = net.connect(port, "127.0.0.1");
+        await once(socket, "connect");
+        socket.write(
+          Buffer.concat([
+            Buffer.from(
+              `GET /v1/live/${id} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nAuthorization: Bearer ${BRIDGE}\r\n\r\n`,
+            ),
+            frame,
+          ]),
+        );
+        const deadline = Date.now() + 1000;
+        while (Date.now() < deadline && !sockets[0].sent.some((line) => line.includes("response.cancel"))) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        socket.destroy();
+        assert.equal(
+          sockets[0].sent.some((line) => JSON.parse(line).type === "response.cancel"),
+          true,
+        );
+      },
+    );
+  } finally {
+    closeVoiceCalls();
+    await offerer.close();
+  }
+});
+
 test("voice audio uses append and output_audio.delta", () => {
   const sent = [];
   const track = {
