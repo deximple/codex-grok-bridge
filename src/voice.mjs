@@ -152,7 +152,7 @@ export function audioCodecFromSdp(sdp) {
 }
 
 function createOpus() {
-  return new OpusScript(48000, 2, OpusScript.Application.AUDIO);
+  return new OpusScript(48000, 2, OpusScript.Application.VOIP);
 }
 
 function opusPayloadToMono(decoder, payload) {
@@ -376,14 +376,14 @@ export function appendFromRtp(send, payload, codec = { kind: "pcmu", payloadType
   });
 }
 
-function writeAudio(track, state, payload, clockStep) {
+function writeAudio(track, state, payload, clockStep, forceMarker = false) {
   if (payload.length === 0) return;
   const sequence = (state.sequence + 1) & 0xffff;
   const timestamp = (state.timestamp + clockStep) >>> 0;
   track.writeRtp(
     new RtpPacket(
       new RtpHeader({
-        marker: !state.talking,
+        marker: forceMarker || !state.talking,
         payloadType: state.payloadType,
         sequenceNumber: sequence,
         timestamp,
@@ -400,6 +400,8 @@ function writeAudio(track, state, payload, clockStep) {
 export function playbackFromDelta(track, state, delta) {
   const pcm = Buffer.from(String(delta ?? ""), "base64");
   if (state.kind === "opus" && state.opus) {
+    if (state.endTalk) state.armMarker = true;
+    state.endTalk = false;
     const wide = resampleInt16(pcm, 2, "up");
     state.pending = Buffer.concat([state.pending ?? Buffer.alloc(0), wide]);
     const frameBytes = OPUS_FRAME * 2;
@@ -418,7 +420,9 @@ export function playbackFromDelta(track, state, delta) {
 
 function enqueueAudio(state, payload, clockStep) {
   if (!state.playout) state.playout = [];
-  state.playout.push({ payload, clockStep });
+  const marker = state.armMarker === true;
+  if (marker) state.armMarker = false;
+  state.playout.push({ payload, clockStep, marker });
 }
 
 function scheduleAudio(track, state) {
@@ -440,7 +444,7 @@ function kickAudio(track, state) {
     return;
   }
   try {
-    writeAudio(track, state, frame.payload, frame.clockStep);
+    writeAudio(track, state, frame.payload, frame.clockStep, frame.marker);
   } catch {
     scheduleAudio(track, state);
     return;

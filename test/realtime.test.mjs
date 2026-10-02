@@ -655,6 +655,42 @@ test("a live-sized voice delta is played as opus", async () => {
   bridge.close();
 });
 
+test("a later voice turn keeps its own talkspurt marker", async () => {
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: { readyState: 1, send() {} },
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  try {
+    const frame = Buffer.alloc(960);
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        delta: Buffer.concat([frame, frame]).toString("base64"),
+      }),
+    );
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio.done" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio.delta", delta: frame.toString("base64") }));
+    const deadline = Date.now() + 500;
+    while (track.rtp.length < 3 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(track.rtp.length >= 3, true);
+    assert.equal(track.rtp[0].header.marker, true);
+    assert.equal(track.rtp[1].header.marker, false);
+    assert.equal(track.rtp[2].header.marker, true);
+  } finally {
+    bridge.close();
+  }
+});
+
 test("a playback frame is retried when the peer is not ready", async () => {
   let fail = true;
   const track = {
