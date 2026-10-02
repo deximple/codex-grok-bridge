@@ -171,7 +171,9 @@ before any of it is sent.
 Codex keeps the conversation and sends the whole turn each time. Grok can
 treat the unchanged beginning as a cache. If the connection drops before
 Codex has been sent any bytes, the bridge tries again. Codex does not send
-that same request again. Voice WebRTC (`POST /v1/realtime/calls`) and
+that same request again. Voice call setup (`POST /v1/realtime/calls` and
+`POST /v1/live`) is forwarded raw to xAI. Codex’s voice sideband stays
+hardcoded at `https://api.openai.com/v1`, so this does not join the call.
 Codex cloud tasks are not in this package.
 
 If the Responses path misbehaves, `GROK_BRIDGE_INFERENCE=cli` falls back to the
@@ -290,7 +292,7 @@ starting a new thread, before the first turn is saved.
 
 ### Not in this release
 
-Voice WebRTC (`POST /v1/realtime/calls`) and Codex cloud tasks are not in this package.
+Voice call setup (`POST /v1/realtime/calls` and `POST /v1/live`) is forwarded raw to xAI. Codex’s voice sideband stays hardcoded at `https://api.openai.com/v1`. Codex cloud tasks are not in this package.
 
 Upstream sometimes resets the connection mid-response (three measured cases:
 25 s / 27 s / 253 s, 726 KB–22 MB). The bridge holds the reply and, if that
@@ -546,7 +548,9 @@ Codex 창에도 보일 수 있습니다.
 Codex가 대화를 갖고 있고, 턴마다 그 턴 전체를 보냅니다. 앞부분이 그대로면
 Grok는 그 부분을 캐시로 볼 수 있습니다. Codex에 바이트를 보내기 전에 연결이
 끊기면 브리지가 다시 시도합니다. Codex는 그 요청을 또 보내지 않습니다. 음성
-WebRTC(`POST /v1/realtime/calls`)와 Codex 클라우드 작업은 이 패키지에 없습니다.
+통화 설정(`POST /v1/realtime/calls`, `POST /v1/live`)은 xAI로 원문 그대로
+넘깁니다. Codex 음성 sideband는 `https://api.openai.com/v1`에 고정되어 있어
+이 경로가 통화에 붙지는 않습니다. Codex 클라우드 작업은 이 패키지에 없습니다.
 
 Responses 경로가 이상하면 `GROK_BRIDGE_INFERENCE=cli`로 이전 CLI 봉투 경로를
 씁니다. 매 턴 전체 JSON을 프롬프트로 넣으므로 더 느리고 비싸며, 토큰 단위
@@ -656,7 +660,7 @@ OpenAI 경로가 맞습니다.
 
 ### 이번 릴리스에 없는 것
 
-음성 WebRTC(`POST /v1/realtime/calls`)와 Codex 클라우드 작업은 이 패키지에 없습니다.
+음성 통화 설정(`POST /v1/realtime/calls`, `POST /v1/live`)은 xAI로 원문 그대로 넘깁니다. Codex 음성 sideband는 `https://api.openai.com/v1`에 고정되어 있습니다. Codex 클라우드 작업은 이 패키지에 없습니다.
 
 상류가 응답 중간에 연결을 리셋하는 경우가 있습니다(실측 3건: 25초 / 27초 /
 253초, 726 KB–22 MB). 브리지는 응답을 들고 있다가, Codex에 그 응답을 보내기

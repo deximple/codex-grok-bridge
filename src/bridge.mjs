@@ -11,6 +11,7 @@ import {
 import { emitProxySse, readRelayProxySse } from "./proxy.mjs";
 import { videoCallsFromParts, videoToolOutput } from "./videogen.mjs";
 import { forwardImagine } from "./imagine.mjs";
+import { forwardRealtime } from "./realtime.mjs";
 import {
   applyCacheUsage,
   createPrefixMemory,
@@ -108,6 +109,52 @@ async function relayImagine(req, res, json, kind, options) {
   }
 }
 
+function requestSearch(url) {
+  const query = String(url ?? "").indexOf("?");
+  return query === -1 ? "" : String(url).slice(query);
+}
+
+async function relayRealtime(req, res, json, upstreamPath, options) {
+  const controller = new AbortController();
+  res.on("close", () => controller.abort());
+  const chunks = [];
+  let size = 0;
+  const limit = options.maxBodyBytes ?? 40 * 1024 * 1024;
+  try {
+    for await (const chunk of req) {
+      size += chunk.length;
+      if (size > limit) return json(413, { error: "Request too large" });
+      chunks.push(chunk);
+    }
+  } catch {
+    if (!res.writableEnded && !res.destroyed) json(400, { error: "Invalid request" });
+    return;
+  }
+  try {
+    const session = options.grokSession ?? readGrokBearerToken(options.grokHome);
+    const forwarded = await forwardRealtime({
+      path: upstreamPath,
+      search: requestSearch(req.url),
+      body: Buffer.concat(chunks),
+      contentType: req.headers["content-type"],
+      token: session.token,
+      fetchImpl: options.realtimeFetch,
+      baseUrl: options.realtimeBaseUrl,
+      signal: controller.signal,
+    });
+    if (res.writableEnded || res.destroyed) return;
+    const headers = {};
+    if (forwarded.contentType) headers["content-type"] = forwarded.contentType;
+    if (forwarded.location) headers.location = forwarded.location;
+    res.writeHead(forwarded.status, headers);
+    res.end(forwarded.body);
+  } catch (error) {
+    if (res.writableEnded || res.destroyed) return;
+    if (error instanceof GrokAuthError) return json(401, { error: error.message });
+    return json(502, { error: "Realtime call failed." });
+  }
+}
+
 export function publicBridgeError(error, context = {}) {
   if (error instanceof GrokAuthError) return error.message;
   const message = String(error?.message ?? "");
@@ -142,7 +189,13 @@ export function createBridgeServer(options = {}) {
         : route === "/v1/images/edits"
           ? "edits"
           : null;
-    if (req.method !== "POST" || (!imagineKind && route !== "/v1/responses"))
+    const realtimePath =
+      route === "/v1/realtime/calls"
+        ? "/realtime/calls"
+        : route === "/v1/live"
+          ? "/live"
+          : null;
+    if (req.method !== "POST" || (!imagineKind && !realtimePath && route !== "/v1/responses"))
       return json(404, { error: "Not found" });
     const auth = Buffer.from(req.headers.authorization ?? "");
     if (auth.length !== token.length || !timingSafeEqual(auth, token))
@@ -150,6 +203,7 @@ export function createBridgeServer(options = {}) {
     if (req.headers.origin)
       return json(403, { error: "Browser requests are not accepted" });
     if (imagineKind) return relayImagine(req, res, json, imagineKind, options);
+    if (realtimePath) return relayRealtime(req, res, json, realtimePath, options);
     let body;
     let requestBytes = 0;
     try {
