@@ -487,6 +487,34 @@ test("a short voice reply is played when the turn ends", () => {
   assert.equal(track.rtp[1].header.marker, true);
 });
 
+test("a live-sized voice delta is played as opus", () => {
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: { readyState: 1, send() {} },
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  bridge.onUpstream(
+    JSON.stringify({
+      type: "response.output_audio.delta",
+      delta: Buffer.alloc(26424).toString("base64"),
+    }),
+  );
+  assert.ok(track.rtp.length > 1);
+  assert.equal(track.rtp[0].header.marker, true);
+  assert.equal(track.rtp[0].header.payloadType, 111);
+  const played = track.rtp.length;
+  bridge.onUpstream(JSON.stringify({ type: "response.output_audio.done" }));
+  assert.ok(track.rtp.length >= played);
+  assert.equal(track.rtp[1].header.marker, false);
+});
+
 test("a dropped voice socket tells the desktop", () => {
   const seen = [];
   const socket = { readyState: 1, send() {} };
