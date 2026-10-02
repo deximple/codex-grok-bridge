@@ -175,7 +175,7 @@ that same request again. Voice call setup (`POST /v1/realtime/calls` and
 `POST /v1/live`) is forwarded raw when xAI accepts it. When xAI rejects that
 offer, the bridge reads the SDP part of Codex's multipart body, answers with
 its own WebRTC peer, including Opus when that is the offered codec, and
-bridges the audio to the xAI voice socket. The sideband for that answered call stays on the bridge.
+bridges the audio to the xAI voice socket. The answer lists only this machine's host addresses, including 127.0.0.1, so the desktop voice helper can open its event channel. The sideband for that answered call stays on the bridge.
 Codex cloud tasks are not in this package.
 
 If the Responses path misbehaves, `GROK_BRIDGE_INFERENCE=cli` falls back to the
@@ -553,7 +553,8 @@ Grok는 그 부분을 캐시로 볼 수 있습니다. Codex에 바이트를 보�
 통화 설정(`POST /v1/realtime/calls`, `POST /v1/live`)은 xAI가 수락하면 원문
 그대로 넘깁니다. xAI가 그 offer를 거절하면 브리지가 Codex multipart 본문에서 SDP를 읽고
 자체 WebRTC 피어로 답합니다. offer가 Opus이면 Opus로 답하고, 오디오를 xAI
-음성 소켓으로 잇습니다. 그렇게 답한 통화의 sideband는 브리지에
+음성 소켓으로 잇습니다. 답변에는 이 기기의 호스트 주소만 넣고 127.0.0.1도
+포함해서, 데스크톱 음성 헬퍼가 이벤트 채널을 열 수 있게 합니다. 그렇게 답한 통화의 sideband는 브리지에
 남습니다. Codex 클라우드 작업은 이 패키지에 없습니다.
 
 Responses 경로가 이상하면 `GROK_BRIDGE_INFERENCE=cli`로 이전 CLI 봉투 경로를

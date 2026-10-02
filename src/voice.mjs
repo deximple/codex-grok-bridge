@@ -23,8 +23,33 @@ function peerConfig() {
     iceUseIpv4: true,
     iceUseIpv6: false,
     iceUseTcp: false,
+    iceAdditionalHostAddresses: ["127.0.0.1"],
     codecs: { audio: [useOPUS(), usePCMU()] },
   };
+}
+
+// Codex voice-host rejects an answer with more than 32 candidate lines and
+// waits until the offered oai-events channel opens. A public srflx address
+// is not the local bridge, so the desktop only sees host candidates.
+function hostAnswerSdp(sdp) {
+  const lines = String(sdp ?? "").split("\r\n");
+  const hosts = [];
+  lines.forEach((line, index) => {
+    if (line.startsWith("a=candidate:") && line.includes(" typ host") && line.includes(" 1 udp ")) {
+      hosts.push(index);
+    }
+  });
+  const picked = new Set(
+    hosts
+      .sort((left, right) => {
+        const loopback = Number(lines[right].includes(" 127.0.0.1 ")) - Number(lines[left].includes(" 127.0.0.1 "));
+        return loopback || left - right;
+      })
+      .slice(0, 24),
+  );
+  return lines
+    .filter((line, index) => !line.startsWith("a=candidate:") || picked.has(index))
+    .join("\r\n");
 }
 
 export function offerFromCallBody(body, contentType) {
@@ -179,19 +204,31 @@ export function acceptLocalSideband(socket, key, url) {
 }
 
 function waitForHostCandidate(pc) {
-  const sdp = () => pc.localDescription?.sdp ?? "";
-  if (sdp().includes("a=candidate:")) return Promise.resolve(sdp());
+  const sdp = () => hostAnswerSdp(pc.localDescription?.sdp ?? "");
+  const hasHost = () => (pc.localDescription?.sdp ?? "").includes(" typ host");
+  const hasLoopback = () => (pc.localDescription?.sdp ?? "").includes(" 127.0.0.1 ");
+  if (hasHost() && hasLoopback()) return Promise.resolve(sdp());
   return new Promise((resolve) => {
+    let done = false;
     const finish = () => {
-      clearTimeout(timer);
+      if (done) return;
+      done = true;
+      clearTimeout(limit);
+      clearTimeout(loopbackGrace);
       resolve(sdp());
     };
-    const timer = setTimeout(finish, 500);
+    const limit = setTimeout(finish, 500);
+    const loopbackGrace = setTimeout(() => {
+      if (hasHost()) finish();
+    }, 100);
+    const check = () => {
+      if (hasHost() && hasLoopback()) finish();
+    };
     if (typeof pc.iceGatheringStateChange?.subscribe === "function") {
-      pc.iceGatheringStateChange.subscribe((state) => {
-        if (state === "complete" || sdp().includes("a=candidate:")) finish();
-      });
+      pc.iceGatheringStateChange.subscribe(check);
     }
+    if (typeof pc.onIceCandidate?.subscribe === "function") pc.onIceCandidate.subscribe(check);
+    check();
   });
 }
 

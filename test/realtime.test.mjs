@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import http from "node:http";
 import net from "node:net";
 import { Duplex } from "node:stream";
@@ -678,12 +679,75 @@ test("an offer with a data channel keeps that channel in the answer", async () =
         assert.equal(sdp.includes("m=audio"), true);
         assert.equal(sdp.includes("m=application"), true);
         assert.equal(sdp.includes("a=sctp-port:"), true);
+        assert.equal(sdp.includes(" 127.0.0.1 "), true);
+        assert.equal(sdp.includes(" typ srflx"), false);
+        assert.equal((sdp.match(/^a=candidate:/gm) ?? []).length <= 24, true);
       },
     );
   } finally {
     closeVoiceCalls();
     await offerer.close();
   }
+});
+
+test("a host-only answer opens the offered event channel", async () => {
+  const child = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+        import { MediaStreamTrack, RTCPeerConnection, useOPUS } from "werift";
+        import { answerVoiceCall } from "./src/voice.mjs";
+        const offerer = new RTCPeerConnection({
+          iceServers: [],
+          iceUseIpv4: true,
+          iceUseIpv6: false,
+          iceUseTcp: false,
+          codecs: { audio: [useOPUS()] },
+        });
+        offerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+        const channel = offerer.createDataChannel("oai-events");
+        await offerer.setLocalDescription(await offerer.createOffer());
+        const answered = await answerVoiceCall({
+          offer: offerer.localDescription.sdp,
+          token: "t",
+          webSocketFactory: () => ({ readyState: 1, send() {}, close() {} }),
+        });
+        await offerer.setRemoteDescription({ type: "answer", sdp: answered.sdp });
+        const opened = await new Promise((resolve) => {
+          const timer = setTimeout(() => resolve(false), 4000);
+          const done = (state) => {
+            if (state !== "open") return;
+            clearTimeout(timer);
+            resolve(true);
+          };
+          channel.stateChanged.subscribe(done);
+          done(channel.readyState);
+        });
+        console.log(opened ? "OPEN" : "CLOSED");
+        process.exit(opened ? 0 : 1);
+      `,
+    ],
+    { cwd: process.cwd() },
+  );
+  let out = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    out += chunk;
+  });
+  const code = await new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve(-1);
+    }, 8000);
+    child.on("exit", (status) => {
+      clearTimeout(timer);
+      resolve(status);
+    });
+  });
+  assert.equal(out.includes("OPEN"), true);
+  assert.equal(code, 0);
 });
 
 test("opus rtp is appended as pcm and playback is opus", () => {
