@@ -52,23 +52,44 @@ function hostAnswerSdp(sdp) {
     .join("\r\n");
 }
 
-export function offerFromCallBody(body, contentType) {
-  const text = Buffer.isBuffer(body) ? body.toString("utf8") : String(body ?? "");
+function callBodyText(body) {
+  return Buffer.isBuffer(body) ? body.toString("utf8") : String(body ?? "");
+}
+
+function partFromCallBody(body, contentType, name) {
+  const text = callBodyText(body);
   const type = String(contentType ?? "");
-  if (!type.toLowerCase().includes("multipart/form-data")) return text;
+  if (!type.toLowerCase().includes("multipart/form-data")) return null;
   const boundaryMatch = type.match(/boundary="?([^";]+)"?/i);
-  if (!boundaryMatch) return text;
+  if (!boundaryMatch) return null;
   const boundary = boundaryMatch[1];
   for (const part of text.split(`--${boundary}`)) {
     const headerEnd = part.indexOf("\r\n\r\n");
     if (headerEnd === -1) continue;
     const headers = part.slice(0, headerEnd).toLowerCase();
-    if (!headers.includes('name="sdp"') && !headers.includes("name=sdp")) continue;
+    if (!headers.includes(`name="${name}"`) && !headers.includes(`name=${name}`)) continue;
     let value = part.slice(headerEnd + 4);
     if (value.endsWith("\r\n")) value = value.slice(0, -2);
     return value;
   }
-  return text;
+  return null;
+}
+
+export function offerFromCallBody(body, contentType) {
+  return partFromCallBody(body, contentType, "sdp") ?? callBodyText(body);
+}
+
+export function instructionsFromCallBody(body, contentType) {
+  const raw = partFromCallBody(body, contentType, "session");
+  if (!raw) return "";
+  try {
+    const session = JSON.parse(raw);
+    const value =
+      typeof session?.instructions === "string" ? session.instructions : session?.session?.instructions;
+    return typeof value === "string" ? value.trim() : "";
+  } catch {
+    return "";
+  }
 }
 
 export function audioCodecFromSdp(sdp) {
@@ -336,12 +357,13 @@ export function playbackFromDelta(track, state, delta) {
   writeAudio(track, state, mulaw, mulaw.length);
 }
 
-function sessionUpdate() {
+function sessionUpdate(instructions) {
+  const text = typeof instructions === "string" && instructions.trim() ? instructions.trim() : "Say ready.";
   return {
     type: "session.update",
     session: {
       voice: "eve",
-      instructions: "Say ready.",
+      instructions: text,
       turn_detection: { type: "server_vad" },
       audio: {
         input: {
@@ -352,6 +374,46 @@ function sessionUpdate() {
       },
     },
   };
+}
+
+function textFromContent(content) {
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((part) => part?.type === "input_text" && typeof part.text === "string")
+    .map((part) => part.text)
+    .join("");
+}
+
+// v3 puts instructions in the call's session part and later sends frameless
+// appends. xAI accepts session.update, conversation.item.create, and force_message.
+export function voiceClientEvents(event) {
+  const type = event?.type;
+  if (type === "response.create" || type === "response.cancel" || type === "conversation.item.create") {
+    return [event];
+  }
+  if (type === "session.update") {
+    const instructions = typeof event.session?.instructions === "string" ? event.session.instructions.trim() : "";
+    return instructions ? [sessionUpdate(instructions)] : [];
+  }
+  if (type === "session.context.append" || type === "delegation.context.append") {
+    const text = textFromContent(event.content);
+    if (!text) return [];
+    if (event.channel === "commentary") {
+      return [
+        {
+          type: "conversation.item.create",
+          item: { type: "message", role: "assistant", content: [{ type: "input_text", text }] },
+        },
+      ];
+    }
+    return [
+      {
+        type: "conversation.item.create",
+        item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text }] },
+      },
+    ];
+  }
+  return [];
 }
 
 // Desktop v3 reads frameless sideband events. xAI voice uses different names.
@@ -398,6 +460,7 @@ export function startVoiceBridge({
   socket,
   codec = { kind: "pcmu", payloadType: 0 },
   onEvent,
+  instructions,
 }) {
   const opus = codec.kind === "opus" ? createOpus() : null;
   const state = {
@@ -460,7 +523,7 @@ export function startVoiceBridge({
   if (typeof track.onReceiveRtp?.subscribe === "function") track.onReceiveRtp.subscribe(onRtp);
   socket.onopen = flush;
   socket.onmessage = (event) => onUpstream(event?.data ?? event);
-  send(sessionUpdate());
+  send(sessionUpdate(instructions));
   if (opened) flush();
   return {
     onRtp,
@@ -481,7 +544,7 @@ function openVoiceSocket(_url, token) {
   });
 }
 
-export async function answerVoiceCall({ offer, token, webSocketFactory }) {
+export async function answerVoiceCall({ offer, token, webSocketFactory, instructions }) {
   const pc = new RTCPeerConnection(peerConfig());
   const track = new MediaStreamTrack({ kind: "audio" });
   let socket;
@@ -508,10 +571,18 @@ export async function answerVoiceCall({ offer, token, webSocketFactory }) {
     attachSideband(sock) {
       sidebandSocket = sock;
       attachClientFrames(sock, (text) => {
+        let event;
         try {
-          socket?.send(text);
+          event = JSON.parse(text);
         } catch {
-          // The xAI socket may already be closed.
+          return;
+        }
+        for (const outbound of voiceClientEvents(event)) {
+          try {
+            socket?.send(JSON.stringify(outbound));
+          } catch {
+            // The xAI socket may already be closed.
+          }
         }
       });
       for (const text of pendingEvents.splice(0)) sock.write(encodeServerFrame(0x1, text));
@@ -540,6 +611,7 @@ export async function answerVoiceCall({ offer, token, webSocketFactory }) {
       socket,
       codec: audioCodecFromSdp(sdp),
       onEvent: noteEvent,
+      instructions,
     });
     active.add(session);
     return { sdp, location: `/v1/realtime/calls/${id}`, close };

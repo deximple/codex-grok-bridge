@@ -22,6 +22,7 @@ import {
   rememberLocalCall,
   startVoiceBridge,
   voiceCallCount,
+  voiceClientEvents,
   voiceSidebandEvent,
 } from "../src/voice.mjs";
 
@@ -514,17 +515,28 @@ test("a Codex multipart call body is answered from its sdp part", async () => {
     'Content-Disposition: form-data; name="session"',
     "Content-Type: application/json",
     "",
-    '{"type":"realtime"}',
+    '{"instructions":"Use the repo instructions."}',
     `--${boundary}--`,
     "",
   ].join("\r\n");
+  const sockets = [];
   try {
     await withServer(
       {
         realtimeFetch: async () =>
           new Response("no", { status: 403, headers: { "content-type": "text/plain" } }),
         voiceWebSocket() {
-          return { readyState: 1, send() {}, close() {} };
+          const sent = [];
+          const socket = {
+            readyState: 1,
+            send(data) {
+              sent.push(String(data));
+            },
+            close() {},
+            sent,
+          };
+          sockets.push(socket);
+          return socket;
         },
       },
       async (port) => {
@@ -537,6 +549,9 @@ test("a Codex multipart call body is answered from its sdp part", async () => {
         assert.equal(sdp.includes("a=fingerprint:"), true);
         assert.match(sdp, /a=rtpmap:\d+ OPUS\/48000/i);
         assert.equal(sdp.includes("codex-realtime-call-boundary"), false);
+        const sent = sockets[0].sent.map((line) => JSON.parse(line));
+        assert.equal(sent[0].session.instructions, "Use the repo instructions.");
+        assert.equal(sent[0].session.voice, "eve");
       },
     );
   } finally {
@@ -753,6 +768,44 @@ test("a host-only answer opens the offered event channel", async () => {
   });
   assert.equal(out.includes("OPEN"), true);
   assert.equal(code, 0);
+});
+
+test("desktop v3 sideband context becomes an xAI voice item", () => {
+  assert.deepEqual(voiceClientEvents({ type: "response.cancel" }), [{ type: "response.cancel" }]);
+  assert.deepEqual(voiceClientEvents({ type: "session.close" }), []);
+  assert.deepEqual(
+    voiceClientEvents({
+      type: "session.context.append",
+      content: [{ type: "input_text", text: "Say this." }],
+    }),
+    [
+      {
+        type: "conversation.item.create",
+        item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text: "Say this." }] },
+      },
+    ],
+  );
+  assert.equal(
+    voiceClientEvents({
+      type: "delegation.context.append",
+      delegation_item_id: "del-1",
+      channel: "commentary",
+      content: [{ type: "input_text", text: "thinking" }],
+    })[0].item.role,
+    "assistant",
+  );
+  assert.equal(voiceClientEvents({
+    type: "delegation.context.append",
+    channel: "commentary",
+    content: [{ type: "input_text", text: "thinking" }],
+  })[0].item.type, "message");
+  const updated = voiceClientEvents({
+    type: "session.update",
+    session: { instructions: "From the desktop.", voice: "alloy", audio: { output: { voice: "alloy" } } },
+  });
+  assert.equal(updated[0].session.instructions, "From the desktop.");
+  assert.equal(updated[0].session.voice, "eve");
+  assert.equal(updated[0].session.audio.input.format.rate, 24000);
 });
 
 test("xAI voice events become the desktop v3 sideband events", () => {
