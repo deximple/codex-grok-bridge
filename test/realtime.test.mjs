@@ -35,6 +35,7 @@ import {
   voiceSidebandEvent,
   sidebandFrames,
   announceSession,
+  ackFillerFromCallBody,
 } from "../src/voice.mjs";
 
 const BRIDGE = "bridge-token";
@@ -1388,11 +1389,43 @@ test("a Codex multipart call body is answered from its sdp part", async () => {
         assert.equal(sent[0].session.voice, "eve");
         assert.equal(sent[1].item.role, "user");
         assert.equal(sent[1].item.content[0].text, "Earlier turn.");
+        assert.equal(sent[0].session.instructions.includes("one short sentence"), false);
       },
     );
   } finally {
     closeVoiceCalls();
     await offerer.close();
+  }
+});
+
+test("ack filler asks the voice model to speak before the codex tool", () => {
+  const body = [
+    "--bound",
+    'Content-Disposition: form-data; name="session"',
+    "",
+    '{"instructions":"Use the repo.","delegation":{"type":"client","ack_filler":true}}',
+    "--bound--",
+    "",
+  ].join("\r\n");
+  assert.equal(ackFillerFromCallBody(body, "multipart/form-data; boundary=bound"), true);
+  const sent = [];
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket: {
+      readyState: 1,
+      send(data) {
+        sent.push(JSON.parse(String(data)));
+      },
+      close() {},
+    },
+    instructions: "Use the repo.",
+    ackFiller: true,
+  });
+  try {
+    assert.match(sent[0].session.instructions, /Use the repo\./);
+    assert.match(sent[0].session.instructions, /one short sentence/);
+  } finally {
+    bridge.close();
   }
 });
 

@@ -118,6 +118,10 @@ export function instructionsFromCallBody(body, contentType) {
   return typeof session?.instructions === "string" ? session.instructions.trim() : "";
 }
 
+export function ackFillerFromCallBody(body, contentType) {
+  return sessionObject(body, contentType)?.delegation?.ack_filler === true;
+}
+
 export function initialItemsFromCallBody(body, contentType) {
   const items = sessionObject(body, contentType)?.initial_items;
   if (!Array.isArray(items)) return [];
@@ -528,8 +532,12 @@ const CODEX_TOOL = {
   },
 };
 
-function sessionUpdate(instructions) {
-  const text = typeof instructions === "string" && instructions.trim() ? instructions.trim() : "Say ready.";
+const ACK_FILLER =
+  "When you call the codex tool, say one short sentence first so the user hears that work has started.";
+
+function sessionUpdate(instructions, ackFiller = false) {
+  const base = typeof instructions === "string" && instructions.trim() ? instructions.trim() : "Say ready.";
+  const text = ackFiller ? `${base}\n\n${ACK_FILLER}` : base;
   return {
     type: "session.update",
     session: {
@@ -842,6 +850,7 @@ export function startVoiceBridge({
   codec = { kind: "pcmu", payloadType: 0 },
   onEvent,
   instructions,
+  ackFiller = false,
   initialItems = [],
   voiceState,
   receiveTracks = [],
@@ -1021,7 +1030,7 @@ export function startVoiceBridge({
         sessionReady = false;
         armReadyTimer();
         bindSocket(current);
-        send(sessionUpdate(instructions));
+        send(sessionUpdate(instructions, ackFiller));
         held.push(...pendingHeld);
         return;
       } catch {
@@ -1037,7 +1046,7 @@ export function startVoiceBridge({
     next.onerror = () => {};
   };
   bindSocket(socket);
-  send(sessionUpdate(instructions));
+  send(sessionUpdate(instructions, ackFiller));
   for (const item of initialItems) send(item);
   if (opened) flush();
   return {
@@ -1079,7 +1088,7 @@ export function openVoiceSocket(url, token) {
   });
 }
 
-export async function answerVoiceCall({ offer, token, webSocketFactory, instructions, initialItems }) {
+export async function answerVoiceCall({ offer, token, webSocketFactory, instructions, ackFiller = false, initialItems }) {
   const pc = new RTCPeerConnection(peerConfig());
   const track = new MediaStreamTrack({ kind: "audio" });
   let socket;
@@ -1199,6 +1208,7 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
       codec: audioCodecFromSdp(sdp),
       onEvent: writeSideband,
       instructions,
+      ackFiller,
       initialItems,
       voiceState,
       receiveTracks,
