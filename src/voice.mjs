@@ -983,8 +983,13 @@ export function startVoiceBridge({
     }
   };
   const interruptAssistant = (userSpeaking) => {
-    if (!sidebandState.assistantTurnClosed) sidebandState.interrupted = true;
+    const open = !sidebandState.assistantTurnClosed;
+    if (open) sidebandState.interrupted = true;
     const unsent = Boolean(state.playout?.length || state.pending?.length);
+    if (!open && !unsent) {
+      state.userSpeaking = userSpeaking;
+      return;
+    }
     stopPlayback(state, { userSpeaking });
     if (unsent && state.audioItemId && !state.truncated) {
       state.truncated = true;

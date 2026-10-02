@@ -2451,6 +2451,33 @@ test("split context appends are joined before the tool result is spoken", () => 
   assert.equal(split[2].content[0].text, "BBBB");
 });
 
+test("user speech after a finished voice reply does not mute the next audio", () => {
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: { readyState: 1, send() {} },
+  });
+  try {
+    const pcm = Buffer.alloc(8).toString("base64");
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio.delta", delta: pcm }));
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio_transcript.done", transcript: "Hi" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    const played = track.rtp.length;
+    assert.equal(played > 0, true);
+    bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio.delta", delta: pcm }));
+    assert.equal(track.rtp.length > played, true);
+  } finally {
+    bridge.close();
+  }
+});
+
 test("user speech after a finished voice caption keeps the next words", () => {
   const seen = [];
   const bridge = startVoiceBridge({
