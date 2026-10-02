@@ -580,6 +580,73 @@ test("a tool reply waits until playback finishes", async () => {
   }
 });
 
+test("user speech stops queued voice playback", async () => {
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: { readyState: 1, send() {} },
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  try {
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        delta: Buffer.alloc(960 * 4).toString("base64"),
+      }),
+    );
+    assert.equal(track.rtp.length >= 1, true);
+    const sent = track.rtp.length;
+    bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    assert.equal(track.rtp.length, sent);
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.created" }));
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        delta: Buffer.alloc(960).toString("base64"),
+      }),
+    );
+    assert.equal(track.rtp.length > sent, true);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("a tool reply waits until the user stops speaking", () => {
+  const sent = [];
+  const socket = {
+    readyState: 1,
+    send(data) {
+      sent.push(JSON.parse(String(data)));
+    },
+  };
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket,
+  });
+  try {
+    bridge.onUpstream(JSON.stringify({ type: "response.created" }));
+    bridge.sendClient({
+      type: "conversation.item.create",
+      item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text: "Later." }] },
+    });
+    bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    assert.equal(sent.some((event) => event.item?.type === "force_message"), false);
+    bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_stopped" }));
+    assert.equal(sent.some((event) => event.item?.type === "force_message"), true);
+  } finally {
+    bridge.close();
+  }
+});
+
 test("a tool reply waits until the voice response is done", () => {
   const sent = [];
   const socket = {

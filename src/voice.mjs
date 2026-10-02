@@ -486,7 +486,22 @@ function kickAudio(track, state) {
   scheduleAudio(track, state);
 }
 
+export function stopPlayback(state) {
+  state.playout = [];
+  state.pending = Buffer.alloc(0);
+  state.pumping = false;
+  state.dropping = true;
+  state.userSpeaking = true;
+  state.endTalk = true;
+  state.talking = false;
+  if (state.playoutTimer) {
+    clearTimeout(state.playoutTimer);
+    state.playoutTimer = null;
+  }
+}
+
 function flushPlayback(track, state) {
+  if (state.dropping) return;
   if (state.kind !== "opus" || !state.opus || !state.pending?.length) return;
   const frameBytes = OPUS_FRAME * 2;
   const padded = Buffer.alloc(frameBytes);
@@ -806,7 +821,7 @@ export function startVoiceBridge({
   };
   const playbackBusy = () => Boolean(state.playout?.length || state.pumping);
   const releaseHeld = () => {
-    if (responseActive || playbackBusy()) return;
+    if (responseActive || playbackBusy() || state.userSpeaking) return;
     for (const event of held.splice(0)) send(event);
   };
   state.onDrained = releaseHeld;
@@ -840,16 +855,26 @@ export function startVoiceBridge({
       sidebandState.conversationId = event.conversation.id;
     }
     if (event?.type === "session.updated") markSessionReady();
+    if (event?.type === "input_audio_buffer.speech_started") stopPlayback(state);
+    if (event?.type === "input_audio_buffer.speech_stopped") {
+      state.userSpeaking = false;
+      releaseHeld();
+    }
     const spoken = voiceAudioDelta(event);
     if (spoken) {
-      try {
-        playbackFromDelta(track, state, spoken);
-      } catch {
-        // The peer may not be connected yet. Keep the socket.
+      if (!state.dropping) {
+        try {
+          playbackFromDelta(track, state, spoken);
+        } catch {
+          // The peer may not be connected yet. Keep the socket.
+        }
       }
       return;
     }
-    if (event?.type === "response.created") responseActive = true;
+    if (event?.type === "response.created") {
+      responseActive = true;
+      state.dropping = false;
+    }
     if (event?.type === "response.output_audio.done" || event?.type === "response.done") {
       try {
         flushPlayback(track, state);
@@ -860,6 +885,7 @@ export function startVoiceBridge({
       if (!state.playout?.length) state.talking = false;
       if (event.type === "response.done") {
         responseActive = false;
+        state.dropping = false;
         releaseHeld();
       }
     }
