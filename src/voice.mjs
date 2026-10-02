@@ -409,6 +409,13 @@ function writeAudio(track, state, payload, clockStep, forceMarker = false) {
   state.lastSentAt = now;
 }
 
+export function voiceAudioDelta(event) {
+  if (event?.type !== "response.output_audio.delta" && event?.type !== "response.audio.delta") return "";
+  if (typeof event.delta === "string" && event.delta) return event.delta;
+  if (typeof event.audio === "string" && event.audio) return event.audio;
+  return "";
+}
+
 export function playbackFromDelta(track, state, delta) {
   const pcm = Buffer.from(String(delta ?? ""), "base64");
   if (state.kind === "opus" && state.opus) {
@@ -797,9 +804,10 @@ export function startVoiceBridge({
     } catch {
       return;
     }
-    if (event?.type === "response.output_audio.delta" && typeof event.delta === "string") {
+    const spoken = voiceAudioDelta(event);
+    if (spoken) {
       try {
-        playbackFromDelta(track, state, event.delta);
+        playbackFromDelta(track, state, spoken);
       } catch {
         // The peer may not be connected yet. Keep the socket.
       }

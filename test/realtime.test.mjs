@@ -19,6 +19,7 @@ import {
   mulawToPcm16,
   pcm16ToMulaw,
   playbackFromDelta,
+  voiceAudioDelta,
   rememberLocalCall,
   remoteAudioTracks,
   startVoiceBridge,
@@ -607,6 +608,14 @@ test("a tool reply waits until the voice response is done", () => {
   } finally {
     bridge.close();
   }
+});
+
+test("voice audio accepts the documented delta and audio fields", () => {
+  const pcm = Buffer.alloc(6).toString("base64");
+  assert.equal(voiceAudioDelta({ type: "response.output_audio.delta", delta: pcm }), pcm);
+  assert.equal(voiceAudioDelta({ type: "response.audio.delta", audio: pcm }), pcm);
+  assert.equal(voiceAudioDelta({ type: "response.output_audio.delta", audio: pcm }), pcm);
+  assert.equal(voiceAudioDelta({ type: "response.done" }), "");
 });
 
 test("voice audio uses append and output_audio.delta", () => {
