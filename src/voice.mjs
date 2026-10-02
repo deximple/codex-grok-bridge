@@ -135,6 +135,16 @@ export function initialItemsFromCallBody(body, contentType) {
   return seeded;
 }
 
+export function remoteAudioTracks(pc) {
+  const found = [];
+  for (const transceiver of pc.getTransceivers?.() ?? []) {
+    for (const track of transceiver.receiver?.tracks ?? []) {
+      if (track?.remote && track.kind === "audio") found.push(track);
+    }
+  }
+  return found;
+}
+
 export function audioCodecFromSdp(sdp) {
   const opus = String(sdp ?? "").match(/a=rtpmap:(\d+) opus\/48000/i);
   if (opus) return { kind: "opus", payloadType: Number(opus[1]) };
@@ -570,6 +580,7 @@ export function startVoiceBridge({
   instructions,
   initialItems = [],
   voiceState,
+  receiveTracks = [],
 }) {
   const opus = codec.kind === "opus" ? createOpus() : null;
   const state = {
@@ -637,7 +648,8 @@ export function startVoiceBridge({
     const sideband = voiceSidebandEvent(event, sidebandState);
     if (sideband) onEvent?.(JSON.stringify(sideband));
   };
-  if (typeof track.onReceiveRtp?.subscribe === "function") track.onReceiveRtp.subscribe(onRtp);
+  // The local track reports packets we send. The microphone is the remote track.
+  for (const remote of receiveTracks) remote.onReceiveRtp?.subscribe?.(onRtp);
   socket.onopen = flush;
   socket.onmessage = (event) => onUpstream(event?.data ?? event);
   socket.onclose = () => {
@@ -718,7 +730,17 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
   };
   try {
     pc.addTrack(track);
+    const seenRemote = new Set();
+    const receiveTracks = [];
+    const watchRemote = (remote) => {
+      if (!remote?.remote || remote.kind !== "audio" || seenRemote.has(remote)) return;
+      seenRemote.add(remote);
+      if (bridge?.onRtp) remote.onReceiveRtp?.subscribe?.(bridge.onRtp);
+      else receiveTracks.push(remote);
+    };
+    pc.onTrack?.subscribe?.(watchRemote);
     await pc.setRemoteDescription({ type: "offer", sdp: offer });
+    for (const remote of remoteAudioTracks(pc)) watchRemote(remote);
     const answer = await pc.createAnswer();
     await pc.setLocalDescription({ type: "answer", sdp: answerSdpForOffer(offer, answer?.sdp) });
     let sdp = pc.localDescription?.sdp ?? "";
@@ -739,6 +761,7 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
       instructions,
       initialItems,
       voiceState,
+      receiveTracks,
     });
     active.add(session);
     return { sdp, location: `/v1/realtime/calls/${id}`, close };

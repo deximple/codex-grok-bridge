@@ -20,6 +20,7 @@ import {
   pcm16ToMulaw,
   playbackFromDelta,
   rememberLocalCall,
+  remoteAudioTracks,
   startVoiceBridge,
   voiceCallCount,
   voiceClientEvents,
@@ -946,6 +947,72 @@ test("xAI voice events become the desktop v3 sideband events", () => {
   assert.equal(state.inputTranscript, "");
   assert.equal(voiceSidebandEvent({ type: "conversation.created" }, state), null);
   assert.deepEqual(voiceSidebandEvent({ type: "error", error: { message: "nope" } }, state).type, "error");
+});
+
+test("microphone packets come from the remote track", () => {
+  const sent = [];
+  const remoteHandlers = [];
+  const localHandlers = [];
+  const bridge = startVoiceBridge({
+    track: {
+      onReceiveRtp: {
+        subscribe(handler) {
+          localHandlers.push(handler);
+        },
+      },
+    },
+    receiveTracks: [
+      {
+        onReceiveRtp: {
+          subscribe(handler) {
+            remoteHandlers.push(handler);
+          },
+        },
+      },
+    ],
+    socket: {
+      readyState: 1,
+      send(data) {
+        sent.push(JSON.parse(String(data)));
+      },
+    },
+    codec: { kind: "pcmu", payloadType: 0 },
+  });
+  try {
+    assert.equal(remoteHandlers.length, 1);
+    assert.equal(localHandlers.length, 0);
+    remoteHandlers[0]({ header: { payloadType: 0 }, payload: Buffer.from([0xff]) });
+    assert.equal(sent.some((event) => event.type === "input_audio_buffer.append"), true);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("an offer registers a remote microphone track", async () => {
+  const offerer = new RTCPeerConnection({
+    iceServers: [],
+    iceUseIpv4: true,
+    iceUseIpv6: false,
+    iceUseTcp: false,
+  });
+  const answerer = new RTCPeerConnection({
+    iceServers: [],
+    iceUseIpv4: true,
+    iceUseIpv6: false,
+    iceUseTcp: false,
+  });
+  try {
+    offerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+    await offerer.setLocalDescription(await offerer.createOffer());
+    answerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+    await answerer.setRemoteDescription({ type: "offer", sdp: offerer.localDescription.sdp });
+    const tracks = remoteAudioTracks(answerer);
+    assert.ok(tracks.length > 0);
+    assert.equal(tracks.every((track) => track.remote && track.kind === "audio"), true);
+  } finally {
+    await offerer.close();
+    await answerer.close();
+  }
 });
 
 test("opus rtp is appended as pcm and playback is opus", () => {
