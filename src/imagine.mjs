@@ -42,11 +42,15 @@ function aspectFromSize(size) {
   return SIZE_ASPECT[size.trim()] ?? "";
 }
 
-export function imagineGenerationBody(input) {
-  const payload = basePayload(promptOf(input));
+function applyImageOptions(payload, input) {
   const aspect = aspectFromSize(input?.size);
   if (aspect) payload.aspect_ratio = aspect;
+  if (input?.quality === "high") payload.resolution = "2k";
   return payload;
+}
+
+export function imagineGenerationBody(input) {
+  return applyImageOptions(basePayload(promptOf(input)), input);
 }
 
 export function imagineEditBody(input) {
@@ -77,11 +81,10 @@ export function imagineEditBody(input) {
     throw error;
   }
   const payload = basePayload(prompt);
-  const aspect = aspectFromSize(input?.size);
   if (urls.length === 1) payload.image = { url: urls[0] };
   else payload.images = urls.map((url) => ({ url }));
-  if (aspect) payload.aspect_ratio = aspect;
-  else if (urls.length > 1) payload.aspect_ratio = "auto";
+  applyImageOptions(payload, input);
+  if (!payload.aspect_ratio && urls.length > 1) payload.aspect_ratio = "auto";
   return payload;
 }
 
