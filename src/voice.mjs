@@ -741,36 +741,41 @@ export function voiceSidebandEvent(event, state) {
     state.audioText = "";
     state.audioTranscript = false;
     state.assistantTurnClosed = false;
+    state.interrupted = false;
     return null;
   }
   const text = assistantTextDelta(event);
   if (text) {
-    if (state.audioTranscript) return null;
+    if (state.interrupted || state.audioTranscript) return null;
     state.outputText = `${state.outputText ?? ""}${text}`;
     return { type: "output_transcript.added", item: { text } };
   }
   if (type === "response.output_text.done" || type === "response.text.done") {
-    const full =
-      typeof event.text === "string" && event.text
+    const streamed = state.outputText ?? "";
+    const full = state.interrupted
+      ? streamed
+      : typeof event.text === "string" && event.text
         ? event.text
         : typeof event.transcript === "string" && event.transcript
           ? event.transcript
-          : (state.outputText ?? "");
+          : streamed;
     state.outputText = "";
     state.assistantTurnClosed = true;
     return full ? { type: "turn.done", turn: { role: "assistant", transcript: full } } : null;
   }
   if (type === "response.output_audio_transcript.delta" && typeof event.delta === "string" && event.delta) {
+    if (state.interrupted) return null;
     state.audioTranscript = true;
     state.outputText = "";
     state.audioText = `${state.audioText ?? ""}${event.delta}`;
     return { type: "output_transcript.added", item: { text: event.delta } };
   }
   if (type === "response.output_audio_transcript.done" && typeof event.transcript === "string" && event.transcript) {
+    const full = state.interrupted ? (state.audioText ?? "") : event.transcript;
     state.outputText = "";
     state.audioText = "";
     state.assistantTurnClosed = true;
-    return { type: "turn.done", turn: { role: "assistant", transcript: event.transcript } };
+    return full ? { type: "turn.done", turn: { role: "assistant", transcript: full } } : null;
   }
   if (type === "response.done" && !state.assistantTurnClosed) {
     const full = state.audioTranscript ? (state.audioText ?? "") : (state.outputText ?? "");
@@ -780,7 +785,9 @@ export function voiceSidebandEvent(event, state) {
     state.assistantTurnClosed = true;
     return { type: "turn.done", turn: { role: "assistant", transcript: full } };
   }
-  if (type === "input_audio_buffer.speech_started" && state.inputTranscript) {
+  if (type === "input_audio_buffer.speech_started") {
+    state.interrupted = true;
+    if (!state.inputTranscript) return null;
     const transcript = state.inputTranscript;
     state.inputTranscript = "";
     state.userClosed = transcript;
@@ -931,6 +938,7 @@ export function startVoiceBridge({
     for (const event of held.splice(0)) send(event);
   };
   const interruptAssistant = (userSpeaking) => {
+    sidebandState.interrupted = true;
     const unsent = Boolean(state.playout?.length || state.pending?.length);
     stopPlayback(state, { userSpeaking });
     if (unsent && state.audioItemId && !state.truncated) {

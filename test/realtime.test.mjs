@@ -2250,6 +2250,49 @@ test("split context appends are joined before the tool result is spoken", () => 
   assert.equal(split[2].content[0].text, "BBBB");
 });
 
+test("an interrupted voice reply keeps only the transcript already sent", () => {
+  const state = {};
+  assert.deepEqual(voiceSidebandEvent({ type: "response.output_audio_transcript.delta", delta: "Hi" }, state), {
+    type: "output_transcript.added",
+    item: { text: "Hi" },
+  });
+  assert.equal(voiceSidebandEvent({ type: "input_audio_buffer.speech_started" }, state), null);
+  assert.equal(voiceSidebandEvent({ type: "response.output_audio_transcript.delta", delta: " there" }, state), null);
+  assert.deepEqual(
+    voiceSidebandEvent({ type: "response.output_audio_transcript.done", transcript: "Hi there" }, state),
+    { type: "turn.done", turn: { role: "assistant", transcript: "Hi" } },
+  );
+  assert.equal(voiceSidebandEvent({ type: "response.created" }, state), null);
+  assert.deepEqual(voiceSidebandEvent({ type: "response.output_audio_transcript.delta", delta: "Next" }, state), {
+    type: "output_transcript.added",
+    item: { text: "Next" },
+  });
+});
+
+test("a desktop response.cancel stops later voice transcript", () => {
+  const seen = [];
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket: { readyState: 1, send() {} },
+    onEvent(text) {
+      seen.push(JSON.parse(text));
+    },
+  });
+  try {
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio_transcript.delta", delta: "Hi" }));
+    bridge.sendClient({ type: "response.cancel" });
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio_transcript.delta", delta: " there" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio_transcript.done", transcript: "Hi there" }));
+    assert.deepEqual(
+      seen.filter((event) => event.type === "output_transcript.added").map((event) => event.item.text),
+      ["Hi"],
+    );
+    assert.deepEqual(seen.at(-1), { type: "turn.done", turn: { role: "assistant", transcript: "Hi" } });
+  } finally {
+    bridge.close();
+  }
+});
+
 test("xAI voice events become the desktop v3 sideband events", () => {
   const state = { inputTranscript: "" };
   assert.deepEqual(voiceSidebandEvent({ type: "response.output_audio_transcript.delta", delta: "Hi" }, state), {
