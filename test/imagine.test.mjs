@@ -193,8 +193,8 @@ test("image routes keep the bridge token gate and leave other paths at 404", asy
     assert.equal(missing.status, 401);
     const browser = await post(port, "/v1/images/generations", { prompt: "x" }, { origin: "https://evil.example" });
     assert.equal(browser.status, 403);
-    const realtime = await post(port, "/v1/realtime/calls", { sdp: "v=0" });
-    assert.equal(realtime.status, 404);
+    const unknown = await post(port, "/v1/audio/speech", { sdp: "v=0" });
+    assert.equal(unknown.status, 404);
     const get = await fetch(`http://127.0.0.1:${port}/v1/images/generations`);
     assert.equal(get.status, 404);
   });
