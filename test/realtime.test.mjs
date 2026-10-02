@@ -691,6 +691,34 @@ test("a later voice turn keeps its own talkspurt marker", async () => {
   }
 });
 
+test("a silent gap advances the voice playout clock", async () => {
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: { readyState: 1, send() {} },
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  try {
+    const frame = Buffer.alloc(960).toString("base64");
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio.delta", delta: frame }));
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio.done" }));
+    assert.equal(track.rtp.length, 1);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio.delta", delta: frame }));
+    assert.equal(track.rtp.length, 2);
+    assert.equal(track.rtp[1].header.marker, true);
+    assert.ok(track.rtp[1].header.timestamp > track.rtp[0].header.timestamp + 960);
+  } finally {
+    bridge.close();
+  }
+});
+
 test("a playback frame is retried when the peer is not ready", async () => {
   let fail = true;
   const track = {

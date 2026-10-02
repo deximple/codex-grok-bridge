@@ -376,14 +376,22 @@ export function appendFromRtp(send, payload, codec = { kind: "pcmu", payloadType
   });
 }
 
+function playoutGap(state, now) {
+  if (state.lastSentAt == null) return 0;
+  const frames = Math.floor((now - state.lastSentAt) / 20);
+  return Math.max(0, frames - 1);
+}
+
 function writeAudio(track, state, payload, clockStep, forceMarker = false) {
   if (payload.length === 0) return;
+  const now = Date.now();
+  const extra = playoutGap(state, now);
   const sequence = (state.sequence + 1) & 0xffff;
-  const timestamp = (state.timestamp + clockStep) >>> 0;
+  const timestamp = (state.timestamp + (extra + 1) * clockStep) >>> 0;
   track.writeRtp(
     new RtpPacket(
       new RtpHeader({
-        marker: forceMarker || !state.talking,
+        marker: forceMarker || extra > 0 || !state.talking,
         payloadType: state.payloadType,
         sequenceNumber: sequence,
         timestamp,
@@ -395,6 +403,7 @@ function writeAudio(track, state, payload, clockStep, forceMarker = false) {
   state.talking = true;
   state.sequence = sequence;
   state.timestamp = timestamp;
+  state.lastSentAt = now;
 }
 
 export function playbackFromDelta(track, state, delta) {
