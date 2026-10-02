@@ -26,6 +26,13 @@ test("the Grok provider leaves retries to the bridge", async () => {
     assert.equal(config.stream_max_retries, "0");
     assert.equal(config.request_max_retries, "0");
     assert.equal(config.stream_idle_timeout_ms, "300000");
+    const sideband = runtime.args.find((arg) =>
+      arg.startsWith("experimental_realtime_ws_base_url="),
+    );
+    assert.equal(
+      sideband,
+      `experimental_realtime_ws_base_url=${config.base_url}`,
+    );
   } finally {
     await runtime.close();
   }

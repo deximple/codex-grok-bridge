@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import http from "node:http";
+import net from "node:net";
+import { Duplex } from "node:stream";
 import { mkdtemp } from "node:fs/promises";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
@@ -30,7 +32,10 @@ async function withServer(options, run) {
     return await run(httpServer.address().port);
   } finally {
     httpServer.closeAllConnections();
-    await new Promise((resolve) => httpServer.close(resolve));
+    await Promise.race([
+      new Promise((resolve) => httpServer.close(resolve)),
+      new Promise((resolve) => setTimeout(resolve, 50)),
+    ]);
   }
 }
 
@@ -256,4 +261,147 @@ test("forwardRealtime uses the default base and an injected fetch", async () => 
   } finally {
     globalThis.fetch = previous;
   }
+});
+
+class ScriptedSocket extends Duplex {
+  constructor(reply) {
+    super();
+    this.reply = reply;
+    this.chunks = [];
+    this.replied = false;
+  }
+  _write(chunk, _enc, cb) {
+    this.chunks.push(Buffer.from(chunk));
+    if (!this.replied && this.text().includes("\r\n\r\n")) {
+      this.replied = true;
+      this.push(this.reply);
+    }
+    if (this.text().includes("\r\n\r\nC")) this.emit("client-byte");
+    cb();
+  }
+  _read() {}
+  text() {
+    return Buffer.concat(this.chunks).toString("utf8");
+  }
+}
+
+function rawUpgrade(port, requestPath, headers = {}) {
+  return new Promise((resolve, reject) => {
+      const socket = net.connect(port, "127.0.0.1", () => {
+      const headerMap = {
+        Host: `127.0.0.1:${port}`,
+        Upgrade: "websocket",
+        Connection: "Upgrade",
+        "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+        "Sec-WebSocket-Version": "13",
+        Authorization: `Bearer ${BRIDGE}`,
+        ...headers,
+      };
+      const lines = [
+        `GET ${requestPath} HTTP/1.1`,
+        ...Object.entries(headerMap).map(([name, value]) => `${name}: ${value}`),
+        "",
+        "",
+      ];
+      socket.write(lines.join("\r\n"));
+    });
+    const chunks = [];
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        socket.destroy();
+        reject(new Error("upgrade timed out"));
+      }
+    }, 2000);
+    socket.on("data", (chunk) => {
+      chunks.push(chunk);
+      const head = Buffer.concat(chunks);
+      const headersDone = head.includes("\r\n\r\n");
+      const sidebandByte = requestPath.startsWith("/v1/live/") && head.includes("\r\n\r\nU");
+      if (!settled && headersDone && (!requestPath.startsWith("/v1/live/") || sidebandByte)) {
+        settled = true;
+        clearTimeout(timer);
+        resolve({ socket, head });
+      }
+    });
+    socket.on("close", () => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        resolve({ socket, head: Buffer.concat(chunks), closed: true });
+      }
+    });
+    socket.on("error", (error) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      }
+    });
+  });
+}
+
+test("sideband upgrade is piped to api.x.ai with the grok bearer", async () => {
+  const upstreams = [];
+  const reply = Buffer.from(
+    "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\nU",
+  );
+  await withServer(
+    {
+      sidebandConnect() {
+        const upstream = new ScriptedSocket(reply);
+        upstreams.push(upstream);
+        return upstream;
+      },
+    },
+    async (port) => {
+      const live = await rawUpgrade(port, "/v1/live/call-1?x=1");
+      assert.equal(live.closed, undefined);
+      const text = live.head.toString("latin1");
+      assert.match(text, /^HTTP\/1\.1 101 /);
+      assert.equal(text.endsWith("\r\n\r\nU"), true);
+      const sent = upstreams[0].text();
+      assert.match(sent, /^GET \/v1\/live\/call-1\?x=1 HTTP\/1\.1/);
+      assert.match(sent, new RegExp(`Authorization: Bearer ${GROK}`));
+      assert.equal(sent.includes(BRIDGE), false);
+      assert.match(sent, /Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==/);
+      const clientByte = once(upstreams[0], "client-byte");
+      live.socket.write(Buffer.from("C"));
+      await clientByte;
+      assert.equal(upstreams[0].text().endsWith("\r\n\r\nC"), true);
+      live.socket.destroy();
+      upstreams[0].destroy();
+    },
+  );
+  assert.equal(upstreams.length, 1);
+});
+
+test("sideband upgrade does not dial on auth, origin, or other paths", async () => {
+  let dials = 0;
+  const connect = () => {
+    dials += 1;
+    return new ScriptedSocket(Buffer.from("HTTP/1.1 101 Switching Protocols\r\n\r\n"));
+  };
+  await withServer({ sidebandConnect: connect }, async (port) => {
+    const denied = await rawUpgrade(port, "/v1/realtime?call_id=nope", {
+      Authorization: "Bearer wrong",
+    });
+    assert.equal(denied.closed, true);
+    const browser = await rawUpgrade(port, "/v1/realtime?call_id=browser", {
+      Origin: "https://evil.example",
+    });
+    assert.equal(browser.closed, true);
+    const other = await rawUpgrade(port, "/v1/responses");
+    assert.equal(other.closed, true);
+  });
+  const home = await mkdtemp(path.join(tmpdir(), "codex-grok-sideband-"));
+  await withServer(
+    { sidebandConnect: connect, grokSession: undefined, grokHome: home },
+    async (port) => {
+      const missing = await rawUpgrade(port, "/v1/realtime?call_id=login");
+      assert.equal(missing.closed, true);
+    },
+  );
+  assert.equal(dials, 0);
 });

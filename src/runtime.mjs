@@ -43,6 +43,9 @@ export async function startRuntime(options = {}) {
     "-c",
     `model_providers.grok_build_cli.${key}=${tomlValue(value)}`,
   ]);
+  // Desktop WebRTC reads this for the sideband. Unset, Codex keeps
+  // https://api.openai.com/v1. The value is this bridge, not xAI.
+  args.push("-c", `experimental_realtime_ws_base_url=${tomlValue(provider.base_url)}`);
   return {
     server,
     token,
