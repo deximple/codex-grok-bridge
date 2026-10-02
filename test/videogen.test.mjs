@@ -44,6 +44,38 @@ test("a video tool call rejects a duration or aspect ratio the API will not acce
   assertNoBearer(image);
 });
 
+test("a video tool call can ask for 1080p and rejects an unknown resolution", async () => {
+  const bodies = [];
+  const fetchImpl = async (_url, init) => {
+    if (init.method === "POST") {
+      bodies.push(JSON.parse(init.body));
+      return new Response(JSON.stringify({ request_id: "req_res" }), { status: 202 });
+    }
+    return new Response(JSON.stringify({ status: "done", video: { url: VIDEO_URL } }), { status: 200 });
+  };
+  const ready = await videoToolOutput(
+    { arguments: JSON.stringify({ prompt: "a cat", resolution: "1080p" }) },
+    { token: TOKEN, fetchImpl, pause: async () => {} },
+  );
+  assert.match(ready, /vid\.example/);
+  assert.equal(bodies[0].resolution, "1080p");
+  assertNoBearer(ready);
+  let called = false;
+  const bad = await videoToolOutput(
+    { arguments: JSON.stringify({ prompt: "a cat", resolution: "4k" }) },
+    {
+      token: TOKEN,
+      fetchImpl() {
+        called = true;
+        throw new Error("no");
+      },
+    },
+  );
+  assert.equal(called, false);
+  assert.match(bad, /1080p/);
+  assertNoBearer(bad);
+});
+
 test("the video function is declared once and does not take a Codex tool name", () => {
   const { request } = toProxyRequest({
     input: [{ role: "user", content: "make a clip" }],

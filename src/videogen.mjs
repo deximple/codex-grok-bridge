@@ -34,6 +34,10 @@ export const GROK_VIDEO_TOOL = Object.freeze({
         type: "string",
         description: "One of 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3.",
       },
+      resolution: {
+        type: "string",
+        description: "Optional 480p, 720p, or 1080p. Omit for the server default.",
+      },
     },
     required: ["prompt"],
     additionalProperties: false,
@@ -59,6 +63,7 @@ function parseArgs(value) {
 }
 
 const ASPECT_RATIOS = new Set(["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"]);
+const VIDEO_RESOLUTIONS = new Set(["480p", "720p", "1080p"]);
 
 function videoDuration(value) {
   if (Number.isInteger(value)) return value;
@@ -83,6 +88,10 @@ function videoArgumentError(args) {
   if (ratio && !ASPECT_RATIOS.has(ratio)) {
     return "Video generation failed: aspect_ratio must be one of 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3.";
   }
+  const resolution = typeof args.resolution === "string" ? args.resolution.trim() : "";
+  if (resolution && !VIDEO_RESOLUTIONS.has(resolution)) {
+    return "Video generation failed: resolution must be 480p, 720p, or 1080p.";
+  }
   return "";
 }
 
@@ -95,6 +104,8 @@ function videoPayload(args) {
     payload.duration = Number(args.duration);
   if (typeof args.aspect_ratio === "string" && args.aspect_ratio.trim())
     payload.aspect_ratio = args.aspect_ratio.trim();
+  if (typeof args.resolution === "string" && VIDEO_RESOLUTIONS.has(args.resolution.trim()))
+    payload.resolution = args.resolution.trim();
   return payload;
 }
 
@@ -189,6 +200,7 @@ export async function videoToolOutput(call, options) {
       image_url: args.image_url,
       duration: args.duration,
       aspect_ratio: args.aspect_ratio,
+      resolution: args.resolution,
     });
     return scrub(`Video ready at ${url}`, token);
   } catch (error) {
