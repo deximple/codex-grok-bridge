@@ -863,6 +863,7 @@ export function startVoiceBridge({
   let current = socket;
   let opened = socket.readyState === 1;
   let responseActive = false;
+  let pendingCreate = false;
   let resumed = false;
   let sessionReady = false;
   const pendingAudio = [];
@@ -933,6 +934,15 @@ export function startVoiceBridge({
     } catch {
       return;
     }
+    const errorMessage = event?.error?.message ?? event?.message;
+    if (
+      event?.type === "error" &&
+      typeof errorMessage === "string" &&
+      errorMessage.startsWith("Conversation already has an active response in progress")
+    ) {
+      responseActive = true;
+      pendingCreate = true;
+    }
     if (event?.type === "conversation.created" && typeof event.conversation?.id === "string") {
       sidebandState.conversationId = event.conversation.id;
     }
@@ -986,6 +996,10 @@ export function startVoiceBridge({
       if (event.type === "response.done") {
         responseActive = false;
         state.dropping = false;
+        if (pendingCreate) {
+          pendingCreate = false;
+          send({ type: "response.create" });
+        }
         releaseHeld();
       }
     }

@@ -783,6 +783,41 @@ test("microphone audio held for the session ack keeps two seconds", () => {
   }
 });
 
+test("a voice response.create that races an active response is deferred", () => {
+  const sent = [];
+  const socket = {
+    readyState: 1,
+    send(data) {
+      sent.push(JSON.parse(String(data)));
+    },
+  };
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket,
+  });
+  try {
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    bridge.sendClient({ type: "response.create" });
+    assert.equal(sent.filter((event) => event.type === "response.create").length, 1);
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "error",
+        error: { message: "Conversation already has an active response in progress: resp_1" },
+      }),
+    );
+    bridge.sendClient({
+      type: "conversation.item.create",
+      item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text: "Later." }] },
+    });
+    assert.equal(sent.some((event) => event.item?.type === "force_message"), false);
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    assert.equal(sent.filter((event) => event.type === "response.create").length, 2);
+    assert.equal(sent.at(-1).item.type, "force_message");
+  } finally {
+    bridge.close();
+  }
+});
+
 test("voice audio accepts the documented delta and audio fields", () => {
   const pcm = Buffer.alloc(6).toString("base64");
   assert.equal(voiceAudioDelta({ type: "response.output_audio.delta", delta: pcm }), pcm);
