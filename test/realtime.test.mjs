@@ -784,7 +784,7 @@ test("microphone audio held for the session ack keeps two seconds", () => {
   }
 });
 
-test("a voice response.create that races an active response is deferred", () => {
+test("a spoken voice tool reply does not repeat a deferred response.create", () => {
   const sent = [];
   const socket = {
     readyState: 1,
