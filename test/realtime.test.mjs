@@ -462,6 +462,26 @@ test("voice audio uses append and output_audio.delta", () => {
   assert.equal(sent.at(-1).type, "input_audio_buffer.append");
 });
 
+test("a short voice reply is played when the turn ends", () => {
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: { readyState: 1, send() {} },
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  bridge.onUpstream(JSON.stringify({ type: "response.output_audio.delta", delta: Buffer.alloc(200).toString("base64") }));
+  assert.equal(track.rtp.length, 0);
+  bridge.onUpstream(JSON.stringify({ type: "response.output_audio.done" }));
+  assert.equal(track.rtp.length, 1);
+  assert.equal(track.rtp[0].header.payloadType, 111);
+});
+
 test("a dropped voice socket tells the desktop", () => {
   const seen = [];
   const socket = { readyState: 1, send() {} };

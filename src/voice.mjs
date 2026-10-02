@@ -390,6 +390,16 @@ export function playbackFromDelta(track, state, delta) {
   writeAudio(track, state, mulaw, mulaw.length);
 }
 
+function flushPlayback(track, state) {
+  if (state.kind !== "opus" || !state.opus || !state.pending?.length) return;
+  const frameBytes = OPUS_FRAME * 2;
+  const padded = Buffer.alloc(frameBytes);
+  state.pending.copy(padded);
+  state.pending = Buffer.alloc(0);
+  const encoded = Buffer.from(state.opus.encode(monoToStereo(padded), OPUS_FRAME));
+  writeAudio(track, state, encoded, OPUS_FRAME);
+}
+
 const CODEX_TOOL = {
   type: "function",
   name: "codex",
@@ -602,6 +612,13 @@ export function startVoiceBridge({
         // The peer may not be connected yet. Keep the socket.
       }
       return;
+    }
+    if (event?.type === "response.output_audio.done" || event?.type === "response.done") {
+      try {
+        flushPlayback(track, state);
+      } catch {
+        // A short tail is dropped. The call stays up.
+      }
     }
     const sideband = voiceSidebandEvent(event, sidebandState);
     if (sideband) onEvent?.(JSON.stringify(sideband));
