@@ -1073,6 +1073,43 @@ test("rewrites streamed function names back to Codex namespaces", () => {
   assert.equal(payload.item.input, "*** Begin Patch");
 });
 
+test("restores a custom tool result that only has the call id", () => {
+  const { tools, map } = flattenCodexTools([
+    {
+      type: "namespace",
+      name: "functions",
+      tools: [{ type: "custom", name: "apply_patch" }],
+    },
+  ]);
+  const state = { callIds: new Map(), itemIds: new Map() };
+  rewriteSseBlock(
+    `event: response.output_item.done\ndata: ${JSON.stringify({
+      type: "response.output_item.done",
+      item: {
+        type: "function_call",
+        name: tools[0].name,
+        arguments: JSON.stringify({ input: "patch" }),
+        call_id: "c1",
+      },
+    })}`,
+    map,
+    state,
+  );
+  const block = rewriteSseBlock(
+    `event: response.output_item.done\ndata: ${JSON.stringify({
+      type: "response.output_item.done",
+      item: { type: "function_call_output", call_id: "c1", output: "applied" },
+    })}`,
+    map,
+    state,
+  );
+  const payload = JSON.parse(block.split("data: ")[1]);
+  assert.equal(payload.item.type, "custom_tool_call_output");
+  assert.equal(payload.item.name, "apply_patch");
+  assert.equal(payload.item.namespace, "functions");
+  assert.equal(payload.item.output, "applied");
+});
+
 test("restores tool names inside a completed response", () => {
   const { tools, map } = flattenCodexTools([
     {

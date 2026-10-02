@@ -238,7 +238,8 @@ that overlap the parent turn.
 Ordinary function tools, namespaced function tools, and freeform custom tools
 are translated. A custom tool call that comes back under the Codex name is
 restored when that name belongs to one tool. The same name is restored on a
-streamed arguments event and inside the completed response output. A function result that arrives as a list of content parts is
+streamed arguments event and inside the completed response output. A custom
+tool result is restored too, including when it only carries the call id. A function result that arrives as a list of content parts is
 forwarded as text, and an image URL in that list is included. Command output
 in stdout, stderr, or an aggregated log stays in the history. A non-zero exit
 code stays with that output. File edits, MCP,
@@ -618,7 +619,8 @@ Codex `reasoning` 항목의 평문 요약은 상류로 전달합니다. 요약�
 
 일반 함수 도구, namespace 함수 도구, freeform 커스텀 도구를 변환합니다. 커스텀
 도구 호출이 Codex 이름으로 돌아와도, 그 이름이 도구 하나뿐이면 다시 맞춥니다.
-스트리밍된 인자 이벤트와 완료된 응답 목록의 이름도 같이 맞춥니다. 내용
+스트리밍된 인자 이벤트와 완료된 응답 목록의 이름도 같이 맞춥니다. 커스텀
+도구 결과도 맞추며, call id만 있어도 맞춥니다. 내용
 목록으로 온 함수 결과는 텍스트로 넘기며, 그 목록의 이미지 주소도 넣습니다. stdout,
 stderr, 합쳐진 명령 출력도 이력에 남습니다. 0이 아닌 종료 코드도 그 출력과
 함께 남습니다. 파일

@@ -823,12 +823,15 @@ function originForResponseName(map, name) {
 
 function rewriteResponseItem(node, map, state) {
   if (!node || typeof node !== "object") return;
-  const origin = originForResponseName(map, node.name);
+  const origin =
+    originForResponseName(map, node.name) ??
+    (typeof node.call_id === "string" ? state.callIds.get(node.call_id) : null);
   if (origin) {
     rememberProxyItem(node, origin, state);
     restoreOriginName(node, origin);
     if (origin.kind === "custom") {
       if (node.type === "function_call") node.type = "custom_tool_call";
+      if (node.type === "function_call_output") node.type = "custom_tool_call_output";
       if (node.type === "custom_tool_call") {
         if (node.input == null) node.input = decodeCustomInput(node.arguments);
         delete node.arguments;
