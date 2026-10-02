@@ -1073,6 +1073,47 @@ test("rewrites streamed function names back to Codex namespaces", () => {
   assert.equal(payload.item.input, "*** Begin Patch");
 });
 
+test("restores a custom tool call that used the Codex name", () => {
+  const { map } = flattenCodexTools([
+    {
+      type: "namespace",
+      name: "functions",
+      tools: [{ type: "custom", name: "apply_patch" }],
+    },
+  ]);
+  const block = rewriteSseBlock(
+    `event: response.output_item.done\ndata: ${JSON.stringify({
+      type: "response.output_item.done",
+      item: {
+        type: "function_call",
+        name: "apply_patch",
+        arguments: JSON.stringify({ input: "patch" }),
+        call_id: "c1",
+      },
+    })}`,
+    map,
+  );
+  const payload = JSON.parse(block.split("data: ")[1]);
+  assert.equal(payload.item.type, "custom_tool_call");
+  assert.equal(payload.item.namespace, "functions");
+  assert.equal(payload.item.name, "apply_patch");
+  assert.equal(payload.item.input, "patch");
+  const ambiguous = flattenCodexTools([
+    { type: "namespace", name: "a", tools: [{ type: "custom", name: "apply_patch" }] },
+    { type: "namespace", name: "b", tools: [{ type: "custom", name: "apply_patch" }] },
+  ]);
+  const untouched = rewriteSseBlock(
+    `event: response.output_item.done\ndata: ${JSON.stringify({
+      type: "response.output_item.done",
+      item: { type: "function_call", name: "apply_patch", arguments: "{}", call_id: "c2" },
+    })}`,
+    ambiguous.map,
+  );
+  const raw = JSON.parse(untouched.split("data: ")[1]);
+  assert.equal(raw.item.type, "function_call");
+  assert.equal(raw.item.name, "apply_patch");
+});
+
 test("rewrites Grok proxy custom tool calls back to Codex freeform input", () => {
   const patch = "*** Begin Patch\n*** Add File: bridge.txt\n+ok\n*** End Patch\n";
   const { tools, map } = flattenCodexTools([

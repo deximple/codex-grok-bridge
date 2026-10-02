@@ -809,10 +809,22 @@ function restoreOriginName(node, origin) {
   else delete node.namespace;
 }
 
+function originForResponseName(map, name) {
+  if (typeof name !== "string") return null;
+  if (map.has(name)) return map.get(name);
+  let found = null;
+  for (const origin of map.values()) {
+    if (origin.name !== name) continue;
+    if (found) return null;
+    found = origin;
+  }
+  return found;
+}
+
 function rewriteResponseItem(node, map, state) {
   if (!node || typeof node !== "object") return;
-  if (typeof node.name === "string" && map.has(node.name)) {
-    const origin = map.get(node.name);
+  const origin = originForResponseName(map, node.name);
+  if (origin) {
     rememberProxyItem(node, origin, state);
     restoreOriginName(node, origin);
     if (origin.kind === "custom") {
