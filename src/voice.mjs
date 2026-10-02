@@ -832,6 +832,10 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
           return;
         }
         const type = event?.type;
+        if (type === "session.close") {
+          queueMicrotask(() => close());
+          return;
+        }
         if (type === "session.context.append" || type === "delegation.context.append") {
           appendBurst.push(event);
           if (!appendTimer) {

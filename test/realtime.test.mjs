@@ -847,6 +847,53 @@ test("a Codex multipart call body is answered from its sdp part", async () => {
   }
 });
 
+test("a session.close frame hangs up the voice call", async () => {
+  const offerer = new RTCPeerConnection({
+    iceServers: [],
+    iceUseIpv4: true,
+    iceUseIpv6: false,
+    codecs: { audio: [useOPUS()] },
+  });
+  offerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+  await offerer.setLocalDescription(await offerer.createOffer());
+  let live;
+  let closed = 0;
+  try {
+    await withServer(
+      {
+        realtimeFetch: async () =>
+          new Response("no", { status: 403, headers: { "content-type": "text/plain" } }),
+        voiceWebSocket() {
+          return {
+            readyState: 1,
+            send() {},
+            close() {
+              closed += 1;
+            },
+          };
+        },
+      },
+      async (port) => {
+        const answered = await postRaw(port, "/v1/realtime/calls", offerer.localDescription.sdp);
+        assert.equal(answered.status, 201);
+        const id = answered.headers.location.split("/").pop();
+        live = await rawUpgrade(port, `/v1/live/${id}`, {}, false);
+        live.socket.write(maskedClientText(JSON.stringify({ type: "session.close" })));
+        const deadline = Date.now() + 500;
+        while (voiceCallCount() !== 0 && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        assert.equal(voiceCallCount(), 0);
+        assert.equal(closed, 1);
+      },
+    );
+  } finally {
+    live?.socket.destroy();
+    closeVoiceCalls();
+    await offerer.close();
+  }
+});
+
 test("closing the v3 sideband hangs up the voice peer", async () => {
   const offerer = new RTCPeerConnection({
     iceServers: [],
