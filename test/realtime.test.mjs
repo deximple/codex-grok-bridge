@@ -1285,9 +1285,16 @@ test("a resumed voice socket drops the previous interrupt", () => {
     },
     close() {},
   };
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
   let second;
   const bridge = startVoiceBridge({
-    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    track,
     socket: first,
     openSocket() {
       second = {
@@ -1321,6 +1328,13 @@ test("a resumed voice socket drops the previous interrupt", () => {
     assert.equal(second.sent.some((event) => event.item?.type === "force_message"), false);
     second.onmessage(JSON.stringify({ type: "session.updated", session: { id: "sess-2" } }));
     assert.equal(second.sent.some((event) => event.item?.type === "force_message"), true);
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        delta: Buffer.alloc(8).toString("base64"),
+      }),
+    );
+    assert.equal(track.rtp.length > 0, true);
     const creates = second.sent.filter((event) => event.type === "response.create").length;
     second.onmessage(JSON.stringify({ type: "response.done" }));
     assert.equal(second.sent.filter((event) => event.type === "response.create").length, creates);
