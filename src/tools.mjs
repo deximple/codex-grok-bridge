@@ -505,6 +505,12 @@ function droppedItemInputTexts(node) {
   }
   rememberArguments(texts, seen, node.arguments);
   rememberTools(texts, seen, node.tools);
+  const aggregated = readableString(node.aggregated_output) ?? readableString(node.formatted_output);
+  if (aggregated) rememberText(texts, seen, aggregated);
+  else {
+    rememberText(texts, seen, node.stdout);
+    rememberText(texts, seen, node.stderr);
+  }
   return texts;
 }
 

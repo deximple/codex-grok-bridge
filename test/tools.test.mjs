@@ -872,6 +872,27 @@ test("forwards readable text from Codex input items Grok would drop", () => {
     assert.equal(droppedEncoded.includes(secret), false);
 });
 
+test("command output fields stay in the history", () => {
+  const { request } = toProxyRequest({
+    input: [
+      {
+        type: "local_shell_call_output",
+        call_id: "lso-2",
+        stdout: "BRIDGE_OK\n",
+        stderr: "warn",
+        aggregated_output: "BRIDGE_OK\nwarn",
+      },
+    ],
+    tools: [],
+  });
+  assert.deepEqual(request.input[0].content.map((part) => part.text), ["BRIDGE_OK\nwarn"]);
+  const split = toProxyRequest({
+    input: [{ type: "local_shell_call_output", call_id: "lso-3", stdout: "out", stderr: "err" }],
+    tools: [],
+  });
+  assert.deepEqual(split.request.input[0].content.map((part) => part.text), ["out", "err"]);
+});
+
 test("an audio attachment does not stay in the request", () => {
   const { request } = toProxyRequest({
     input: [
