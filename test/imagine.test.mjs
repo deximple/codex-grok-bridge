@@ -60,7 +60,6 @@ test("generation rewrites Codex's image body onto the Imagine API", () => {
       model: IMAGINE_MODEL,
       prompt: "a red cube",
       n: 1,
-      resolution: "1k",
       response_format: "b64_json",
     },
   );
@@ -69,6 +68,7 @@ test("generation rewrites Codex's image body onto the Imagine API", () => {
   assert.equal(imagineGenerationBody({ prompt: "square", size: "1024x1024" }).aspect_ratio, "1:1");
   assert.equal(imagineGenerationBody({ prompt: "sharp", quality: "high" }).resolution, "2k");
   assert.equal(imagineGenerationBody({ prompt: "draft", quality: "low" }).resolution, "1k");
+  assert.equal(Object.hasOwn(imagineGenerationBody({ prompt: "auto", quality: "auto" }), "resolution"), false);
 });
 
 test("edits map image_url references and refuse OpenAI file ids", () => {

@@ -5,8 +5,9 @@
 // plus `size` / `quality` / `background`, and edits use `{image_url}` or
 // `{file_id}`. Imagine wants `grok-imagine-image-quality`, `response_format:
 // b64_json`, and `{url}` references. Codex `size` maps to `aspect_ratio`.
-// Codex `quality: high` maps to resolution `2k`. `quality` itself is not sent:
-// that field belongs to a different Imagine model.
+// Codex `quality: high` maps to resolution `2k`, and `low` to `1k`.
+// `auto` omits resolution so Imagine keeps its own default. `quality` itself
+// is not sent: that field belongs to a different Imagine model.
 
 export const DEFAULT_IMAGINE_API_BASE = "https://api.x.ai/v1";
 export const IMAGINE_MODEL = "grok-imagine-image-quality";
@@ -28,7 +29,6 @@ function basePayload(prompt) {
     model: IMAGINE_MODEL,
     prompt,
     n: 1,
-    resolution: "1k",
     response_format: "b64_json",
   };
 }
@@ -48,6 +48,8 @@ function applyImageOptions(payload, input) {
   const aspect = aspectFromSize(input?.size);
   if (aspect) payload.aspect_ratio = aspect;
   if (input?.quality === "high") payload.resolution = "2k";
+  else if (input?.quality === "low") payload.resolution = "1k";
+  else delete payload.resolution;
   return payload;
 }
 
