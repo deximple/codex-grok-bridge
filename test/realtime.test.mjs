@@ -584,6 +584,35 @@ test("a tool reply waits until playback finishes", async () => {
   }
 });
 
+test("audio after an interrupted voice reply waits for the next response", () => {
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket: { readyState: 1, send() {} },
+  });
+  try {
+    const pcm = Buffer.alloc(8).toString("base64");
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio.delta", delta: pcm }));
+    const played = track.rtp.length;
+    assert.equal(played > 0, true);
+    bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio.delta", delta: pcm }));
+    assert.equal(track.rtp.length, played);
+    bridge.onUpstream(JSON.stringify({ type: "response.created" }));
+    bridge.onUpstream(JSON.stringify({ type: "response.output_audio.delta", delta: pcm }));
+    assert.equal(track.rtp.length > played, true);
+  } finally {
+    bridge.close();
+  }
+});
+
 test("user speech stops queued voice playback", async () => {
   const track = {
     onReceiveRtp: { subscribe() {} },

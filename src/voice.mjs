@@ -1055,7 +1055,6 @@ export function startVoiceBridge({
       if (event.type === "response.done") {
         responseActive = false;
         awaitingCreated = false;
-        state.dropping = false;
         releaseHeld();
         if (pendingCreate && !responseActive) {
           pendingCreate = false;
