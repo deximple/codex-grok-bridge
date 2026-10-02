@@ -874,6 +874,34 @@ test("a desktop response.cancel stops queued playback", async () => {
   }
 });
 
+test("a desktop response.cancel keeps a tool reply held while the user is speaking", () => {
+  const sent = [];
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket: {
+      readyState: 1,
+      send(data) {
+        sent.push(JSON.parse(String(data)));
+      },
+    },
+  });
+  try {
+    bridge.onUpstream(JSON.stringify({ type: "response.created" }));
+    bridge.sendClient({
+      type: "conversation.item.create",
+      item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text: "Later." }] },
+    });
+    bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+    bridge.sendClient({ type: "response.cancel" });
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    assert.equal(sent.some((event) => event.item?.type === "force_message"), false);
+    bridge.onUpstream(JSON.stringify({ type: "input_audio_buffer.speech_stopped" }));
+    assert.equal(sent.some((event) => event.item?.type === "force_message"), true);
+  } finally {
+    bridge.close();
+  }
+});
+
 test("voice audio accepts the documented delta and audio fields", () => {
   const pcm = Buffer.alloc(6).toString("base64");
   assert.equal(voiceAudioDelta({ type: "response.output_audio.delta", delta: pcm }), pcm);

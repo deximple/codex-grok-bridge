@@ -1047,7 +1047,7 @@ export function startVoiceBridge({
       try {
         if (event?.type === "response.cancel") {
           pendingCreate = false;
-          interruptAssistant(false);
+          interruptAssistant(state.userSpeaking === true);
           send(event);
           return;
         }
