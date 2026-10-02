@@ -462,6 +462,25 @@ test("voice audio uses append and output_audio.delta", () => {
   assert.equal(sent.at(-1).type, "input_audio_buffer.append");
 });
 
+test("a dropped voice socket tells the desktop", () => {
+  const seen = [];
+  const socket = { readyState: 1, send() {} };
+  const state = { closing: false };
+  startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} } },
+    socket,
+    onEvent(text) {
+      seen.push(JSON.parse(text));
+    },
+    voiceState: state,
+  });
+  socket.onclose();
+  assert.equal(seen.at(-1).error.message, "Voice connection closed.");
+  state.closing = true;
+  socket.onclose();
+  assert.equal(seen.length, 1);
+});
+
 test("an opus-only offer is answered instead of returned as the xAI rejection", async () => {
   const offerer = new RTCPeerConnection({
     iceServers: [],

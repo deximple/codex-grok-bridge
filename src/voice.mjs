@@ -609,6 +609,10 @@ export function startVoiceBridge({
   if (typeof track.onReceiveRtp?.subscribe === "function") track.onReceiveRtp.subscribe(onRtp);
   socket.onopen = flush;
   socket.onmessage = (event) => onUpstream(event?.data ?? event);
+  socket.onclose = () => {
+    if (sidebandState.closing) return;
+    onEvent?.(JSON.stringify({ type: "error", error: { message: "Voice connection closed." } }));
+  };
   send(sessionUpdate(instructions));
   for (const item of initialItems) send(item);
   if (opened) flush();
@@ -640,6 +644,7 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
   const close = () => {
     if (closed) return;
     closed = true;
+    voiceState.closing = true;
     active.delete(session);
     if (session.id) sessionsById.delete(session.id);
     try {
