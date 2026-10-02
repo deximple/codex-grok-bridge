@@ -36,6 +36,8 @@ import {
   sidebandFrames,
   announceSession,
   ackFillerFromCallBody,
+  developerTextFromCallBody,
+  initialItemsFromCallBody,
 } from "../src/voice.mjs";
 
 const BRIDGE = "bridge-token";
@@ -1641,6 +1643,64 @@ test("an opus-only offer is answered instead of returned as the xAI rejection", 
   } finally {
     closeVoiceCalls();
     await offerer.close();
+  }
+});
+
+test("developer voice history stays in the session instructions", () => {
+  const body = [
+    "--bound",
+    'Content-Disposition: form-data; name="session"',
+    "",
+    JSON.stringify({
+      instructions: "Use the repo.",
+      initial_items: [
+        {
+          type: "message",
+          role: "developer",
+          content: [{ type: "input_text", text: "Repo root is /tmp/work." }],
+        },
+        { type: "message", role: "user", content: [{ type: "input_text", text: "Earlier turn." }] },
+        { type: "message", role: "assistant", content: [{ type: "output_text", text: "Noted." }] },
+      ],
+    }),
+    "--bound--",
+    "",
+  ].join("\r\n");
+  const type = "multipart/form-data; boundary=bound";
+  assert.equal(developerTextFromCallBody(body, type), "Repo root is /tmp/work.");
+  const items = initialItemsFromCallBody(body, type);
+  assert.deepEqual(
+    items.map((event) => event.item.role),
+    ["user", "assistant"],
+  );
+  const sent = [];
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket: {
+      readyState: 1,
+      send(data) {
+        sent.push(JSON.parse(String(data)));
+      },
+      close() {},
+    },
+    instructions: "Use the repo.",
+    developerContext: "Repo root is /tmp/work.",
+    initialItems: items,
+  });
+  try {
+    assert.match(sent[0].session.instructions, /Use the repo\./);
+    assert.match(sent[0].session.instructions, /Repo root is \/tmp\/work\./);
+    assert.equal(sent[1].item.role, "user");
+    assert.equal(sent[1].item.content[0].text, "Earlier turn.");
+    assert.equal(sent[2].item.role, "assistant");
+    const updated = voiceClientEvents(
+      { type: "session.update", session: { instructions: "From the desktop." } },
+      { developerContext: "Repo root is /tmp/work." },
+    );
+    assert.match(updated[0].session.instructions, /From the desktop\./);
+    assert.match(updated[0].session.instructions, /Repo root is \/tmp\/work\./);
+  } finally {
+    bridge.close();
   }
 });
 

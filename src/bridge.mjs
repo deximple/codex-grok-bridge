@@ -14,6 +14,7 @@ import { forwardImagine } from "./imagine.mjs";
 import { attachSidebandUpgrade, forwardRealtime } from "./realtime.mjs";
 import {
   answerVoiceCall,
+  developerTextFromCallBody,
   initialItemsFromCallBody,
   instructionsFromCallBody,
   ackFillerFromCallBody,
@@ -164,6 +165,7 @@ async function relayRealtime(req, res, json, upstreamPath, options) {
         offer: offerFromCallBody(body, req.headers["content-type"]),
         instructions: instructionsFromCallBody(body, req.headers["content-type"]),
         ackFiller: ackFillerFromCallBody(body, req.headers["content-type"]),
+        developerContext: developerTextFromCallBody(body, req.headers["content-type"]),
         initialItems: initialItemsFromCallBody(body, req.headers["content-type"]),
         token: session.token,
         webSocketFactory: options.voiceWebSocket,

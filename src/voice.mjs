@@ -133,6 +133,7 @@ export function initialItemsFromCallBody(body, contentType) {
       .join("")
       .trim();
     if (!text) continue;
+    if (item.role === "developer") continue;
     const assistant = item.role === "assistant";
     seeded.push({
       type: "conversation.item.create",
@@ -144,6 +145,21 @@ export function initialItemsFromCallBody(body, contentType) {
     });
   }
   return seeded;
+}
+
+export function developerTextFromCallBody(body, contentType) {
+  const items = sessionObject(body, contentType)?.initial_items;
+  if (!Array.isArray(items)) return "";
+  const parts = [];
+  for (const item of items) {
+    if (item?.role !== "developer" || item.type !== "message" || !Array.isArray(item.content)) continue;
+    const text = item.content
+      .map((part) => (typeof part?.text === "string" ? part.text : ""))
+      .join("")
+      .trim();
+    if (text) parts.push(text);
+  }
+  return parts.join("\n\n");
 }
 
 export function remoteAudioTracks(pc) {
@@ -549,8 +565,10 @@ const CODEX_TOOL = {
 const ACK_FILLER =
   "When you call the codex tool, say one short sentence first so the user hears that work has started.";
 
-function sessionUpdate(instructions, ackFiller = false) {
-  const base = typeof instructions === "string" && instructions.trim() ? instructions.trim() : "Say ready.";
+function sessionUpdate(instructions, ackFiller = false, developerContext = "") {
+  let base = typeof instructions === "string" && instructions.trim() ? instructions.trim() : "Say ready.";
+  const context = typeof developerContext === "string" ? developerContext.trim() : "";
+  if (context && !base.includes(context)) base = `${base}\n\n${context}`;
   const text = ackFiller && !base.includes(ACK_FILLER) ? `${base}\n\n${ACK_FILLER}` : base;
   return {
     type: "session.update",
@@ -634,7 +652,9 @@ export function voiceClientEvents(event, state = {}) {
   }
   if (type === "session.update") {
     const instructions = typeof event.session?.instructions === "string" ? event.session.instructions.trim() : "";
-    return instructions ? [sessionUpdate(instructions, state.ackFiller === true)] : [];
+    return instructions
+      ? [sessionUpdate(instructions, state.ackFiller === true, state.developerContext)]
+      : [];
   }
   if (type === "session.context.append" || type === "delegation.context.append") {
     const text = textFromContent(event.content);
@@ -878,6 +898,7 @@ export function startVoiceBridge({
   onEvent,
   instructions,
   ackFiller = false,
+  developerContext = "",
   initialItems = [],
   voiceState,
   receiveTracks = [],
@@ -896,6 +917,7 @@ export function startVoiceBridge({
   const queued = [];
   const held = [];
   const sidebandState = voiceState ?? { inputTranscript: "", pendingCalls: new Set() };
+  if (developerContext && !sidebandState.developerContext) sidebandState.developerContext = developerContext;
   let current = socket;
   let opened = socket.readyState === 1;
   let responseActive = false;
@@ -1100,7 +1122,7 @@ export function startVoiceBridge({
         sessionReady = false;
         armReadyTimer();
         bindSocket(current);
-        send(sessionUpdate(instructions, ackFiller));
+        send(sessionUpdate(instructions, ackFiller, developerContext));
         held.push(...pendingHeld);
         return;
       } catch {
@@ -1116,7 +1138,7 @@ export function startVoiceBridge({
     next.onerror = () => {};
   };
   bindSocket(socket);
-  send(sessionUpdate(instructions, ackFiller));
+  send(sessionUpdate(instructions, ackFiller, developerContext));
   for (const item of initialItems) send(item);
   if (opened) flush();
   return {
@@ -1163,7 +1185,15 @@ export function openVoiceSocket(url, token) {
   });
 }
 
-export async function answerVoiceCall({ offer, token, webSocketFactory, instructions, ackFiller = false, initialItems }) {
+export async function answerVoiceCall({
+  offer,
+  token,
+  webSocketFactory,
+  instructions,
+  ackFiller = false,
+  developerContext = "",
+  initialItems,
+}) {
   const pc = new RTCPeerConnection(peerConfig());
   const track = new MediaStreamTrack({ kind: "audio" });
   let socket;
@@ -1188,7 +1218,7 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
     pc.close().catch(() => {});
   };
   const pendingEvents = [];
-  const voiceState = { inputTranscript: "", pendingCalls: new Set(), ackFiller };
+  const voiceState = { inputTranscript: "", pendingCalls: new Set(), ackFiller, developerContext };
   const appendBurst = [];
   const flushAppends = () => {
     appendTimer = null;
@@ -1284,6 +1314,7 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
       onEvent: writeSideband,
       instructions,
       ackFiller,
+      developerContext,
       initialItems,
       voiceState,
       receiveTracks,
