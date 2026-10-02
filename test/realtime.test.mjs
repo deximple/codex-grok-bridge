@@ -1251,6 +1251,9 @@ test("played voice audio reaches the offering peer", async () => {
 
 test("desktop v3 sideband context becomes an xAI voice item", () => {
   assert.deepEqual(voiceClientEvents({ type: "response.cancel" }), [{ type: "response.cancel" }]);
+  assert.deepEqual(voiceClientEvents({ type: "input_audio.append", audio: "AQID" }), [
+    { type: "input_audio_buffer.append", audio: "AQID" },
+  ]);
   assert.deepEqual(voiceClientEvents({ type: "session.close" }), []);
   assert.deepEqual(
     voiceClientEvents({

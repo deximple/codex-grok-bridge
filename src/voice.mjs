@@ -560,6 +560,9 @@ export function voiceClientEvents(event, state = {}) {
   if (type === "response.create" || type === "response.cancel" || type === "conversation.item.create") {
     return [event];
   }
+  if (type === "input_audio.append" && typeof event.audio === "string" && event.audio) {
+    return [{ type: "input_audio_buffer.append", audio: event.audio }];
+  }
   if (type === "session.update") {
     const instructions = typeof event.session?.instructions === "string" ? event.session.instructions.trim() : "";
     return instructions ? [sessionUpdate(instructions)] : [];
