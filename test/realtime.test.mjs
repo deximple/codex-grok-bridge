@@ -9,7 +9,8 @@ import path from "node:path";
 import test from "node:test";
 
 import { createBridgeServer } from "../src/bridge.mjs";
-import { MediaStreamTrack, RTCPeerConnection, RTCRtpCodecParameters } from "werift";
+import OpusScript from "opusscript";
+import { MediaStreamTrack, RTCPeerConnection, RTCRtpCodecParameters, useOPUS } from "werift";
 import { DEFAULT_REALTIME_API_BASE, forwardRealtime } from "../src/realtime.mjs";
 import {
   appendFromRtp,
@@ -450,6 +451,82 @@ test("voice audio uses append and output_audio.delta", () => {
   assert.equal(track.rtp.length, 1);
   appendFromRtp((event) => sent.push(event), Buffer.from([0x00]));
   assert.equal(sent.at(-1).type, "input_audio_buffer.append");
+});
+
+test("an opus-only offer is answered instead of returned as the xAI rejection", async () => {
+  const offerer = new RTCPeerConnection({
+    iceServers: [],
+    iceUseIpv4: true,
+    iceUseIpv6: false,
+    codecs: { audio: [useOPUS()] },
+  });
+  offerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+  await offerer.setLocalDescription(await offerer.createOffer());
+  try {
+    await withServer(
+      {
+        realtimeFetch: async () =>
+          new Response("no", { status: 403, headers: { "content-type": "text/plain" } }),
+        voiceWebSocket() {
+          return { readyState: 1, send() {}, close() {} };
+        },
+      },
+      async (port) => {
+        const answered = await postRaw(port, "/v1/realtime/calls", offerer.localDescription.sdp);
+        assert.equal(answered.status, 201);
+        const sdp = answered.body.toString("utf8");
+        assert.equal(sdp.startsWith("v=0"), true);
+        assert.match(sdp, /a=rtpmap:\d+ opus\/48000/i);
+        assert.equal(sdp.includes("a=fingerprint:"), true);
+        assert.equal(sdp.includes("no"), false);
+      },
+    );
+  } finally {
+    closeVoiceCalls();
+    await offerer.close();
+  }
+});
+
+test("opus rtp is appended as pcm and playback is opus", () => {
+  const encoder = new OpusScript(48000, 2, OpusScript.Application.AUDIO);
+  const encoded = encoder.encode(Buffer.alloc(960 * 4), 960);
+  const sent = [];
+  const track = {
+    onReceiveRtp: { subscribe() {} },
+    rtp: [],
+    writeRtp(packet) {
+      this.rtp.push(packet);
+    },
+  };
+  const socket = {
+    readyState: 1,
+    send(data) {
+      sent.push(JSON.parse(String(data)));
+    },
+  };
+  const bridge = startVoiceBridge({
+    track,
+    socket,
+    codec: { kind: "opus", payloadType: 111 },
+  });
+  try {
+    bridge.onRtp({ header: { payloadType: 111 }, payload: encoded });
+    const appended = sent.find((event) => event.type === "input_audio_buffer.append");
+    assert.ok(appended);
+    assert.ok(Buffer.from(appended.audio, "base64").length > 0);
+    bridge.onUpstream(
+      JSON.stringify({
+        type: "response.output_audio.delta",
+        delta: Buffer.alloc(960 * 2).toString("base64"),
+      }),
+    );
+    assert.equal(track.rtp.length, 1);
+    assert.equal(track.rtp[0].header.payloadType, 111);
+    assert.ok(track.rtp[0].payload.length > 0);
+  } finally {
+    bridge.close();
+    encoder.delete?.();
+  }
 });
 
 test("a locally answered sideband stays on the bridge", async () => {

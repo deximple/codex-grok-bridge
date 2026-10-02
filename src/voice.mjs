@@ -1,10 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
+import OpusScript from "opusscript";
 import {
   MediaStreamTrack,
   RTCPeerConnection,
-  RTCRtpCodecParameters,
   RtpHeader,
   RtpPacket,
+  useOPUS,
+  usePCMU,
 } from "werift";
 
 export const VOICE_SOCKET_URL = "wss://api.x.ai/v1/realtime?model=grok-voice-latest";
@@ -12,12 +14,7 @@ export const VOICE_SOCKET_URL = "wss://api.x.ai/v1/realtime?model=grok-voice-lat
 const localCalls = new Set();
 const active = new Set();
 
-const pcmu = new RTCRtpCodecParameters({
-  mimeType: "audio/PCMU",
-  clockRate: 8000,
-  channels: 1,
-  payloadType: 0,
-});
+const OPUS_FRAME = 960;
 
 function peerConfig() {
   return {
@@ -25,8 +22,41 @@ function peerConfig() {
     iceUseIpv4: true,
     iceUseIpv6: false,
     iceUseTcp: false,
-    codecs: { audio: [pcmu] },
+    codecs: { audio: [useOPUS(), usePCMU()] },
   };
+}
+
+export function audioCodecFromSdp(sdp) {
+  const opus = String(sdp ?? "").match(/a=rtpmap:(\d+) opus\/48000/i);
+  if (opus) return { kind: "opus", payloadType: Number(opus[1]) };
+  return { kind: "pcmu", payloadType: 0 };
+}
+
+function createOpus() {
+  return new OpusScript(48000, 2, OpusScript.Application.AUDIO);
+}
+
+function opusPayloadToMono(decoder, payload) {
+  const decoded = Buffer.from(decoder.decode(Buffer.from(payload)));
+  const frames = Math.floor(decoded.length / 4);
+  const mono = Buffer.alloc(frames * 2);
+  for (let i = 0; i < frames; i += 1) {
+    const left = decoded.readInt16LE(i * 4);
+    const right = decoded.readInt16LE(i * 4 + 2);
+    mono.writeInt16LE((left + right) >> 1, i * 2);
+  }
+  return mono;
+}
+
+function monoToStereo(pcm) {
+  const samples = Math.floor(pcm.length / 2);
+  const stereo = Buffer.alloc(samples * 4);
+  for (let i = 0; i < samples; i += 1) {
+    const sample = pcm.readInt16LE(i * 2);
+    stereo.writeInt16LE(sample, i * 4);
+    stereo.writeInt16LE(sample, i * 4 + 2);
+  }
+  return stereo;
 }
 
 export function rememberLocalCall(id = `local-${randomUUID()}`) {
@@ -91,29 +121,50 @@ export function pcm16ToMulaw(pcm) {
   return out;
 }
 
-export function appendFromRtp(send, payload) {
+export function appendFromRtp(send, payload, codec = { kind: "pcmu", payloadType: 0 }, decoder) {
+  const pcm =
+    codec.kind === "opus" && decoder
+      ? opusPayloadToMono(decoder, payload)
+      : mulawToPcm16(payload);
+  if (pcm.length === 0) return;
   send({
     type: "input_audio_buffer.append",
-    audio: mulawToPcm16(payload).toString("base64"),
+    audio: pcm.toString("base64"),
   });
 }
 
-export function playbackFromDelta(track, state, delta) {
-  const mulaw = pcm16ToMulaw(Buffer.from(String(delta ?? ""), "base64"));
-  if (mulaw.length === 0) return;
+function writeAudio(track, state, payload, clockStep) {
+  if (payload.length === 0) return;
   state.sequence = (state.sequence + 1) & 0xffff;
-  state.timestamp = (state.timestamp + mulaw.length) >>> 0;
+  state.timestamp = (state.timestamp + clockStep) >>> 0;
   track.writeRtp(
     new RtpPacket(
       new RtpHeader({
-        payloadType: 0,
+        payloadType: state.payloadType,
         sequenceNumber: state.sequence,
         timestamp: state.timestamp,
         ssrc: state.ssrc,
       }),
-      mulaw,
+      payload,
     ),
   );
+}
+
+export function playbackFromDelta(track, state, delta) {
+  const pcm = Buffer.from(String(delta ?? ""), "base64");
+  if (state.kind === "opus" && state.opus) {
+    state.pending = Buffer.concat([state.pending ?? Buffer.alloc(0), pcm]);
+    const frameBytes = OPUS_FRAME * 2;
+    while (state.pending.length >= frameBytes) {
+      const frame = state.pending.subarray(0, frameBytes);
+      state.pending = state.pending.subarray(frameBytes);
+      const encoded = Buffer.from(state.opus.encode(monoToStereo(frame), OPUS_FRAME));
+      writeAudio(track, state, encoded, OPUS_FRAME);
+    }
+    return;
+  }
+  const mulaw = pcm16ToMulaw(pcm);
+  writeAudio(track, state, mulaw, mulaw.length);
 }
 
 function sessionUpdate() {
@@ -127,8 +178,17 @@ function sessionUpdate() {
   };
 }
 
-export function startVoiceBridge({ track, socket }) {
-  const state = { sequence: 0, timestamp: 0, ssrc: 1 };
+export function startVoiceBridge({ track, socket, codec = { kind: "pcmu", payloadType: 0 } }) {
+  const opus = codec.kind === "opus" ? createOpus() : null;
+  const state = {
+    sequence: 0,
+    timestamp: 0,
+    ssrc: 1,
+    kind: codec.kind,
+    payloadType: codec.payloadType,
+    opus,
+    pending: Buffer.alloc(0),
+  };
   const queued = [];
   let opened = socket.readyState === 1;
   const send = (event) => {
@@ -143,7 +203,21 @@ export function startVoiceBridge({ track, socket }) {
     opened = true;
     for (const text of queued.splice(0)) socket.send(text);
   };
-  const onRtp = (rtp) => appendFromRtp(send, rtp?.payload ?? rtp);
+  const onRtp = (rtp) => {
+    const payload = rtp?.payload ?? rtp;
+    const payloadType = rtp?.header?.payloadType;
+    const incoming =
+      payloadType === 0
+        ? { kind: "pcmu", payloadType: 0 }
+        : payloadType == null
+          ? codec
+          : { kind: "opus", payloadType };
+    try {
+      appendFromRtp(send, payload, incoming, opus);
+    } catch {
+      // A bad frame is dropped. The call stays up.
+    }
+  };
   const onUpstream = (raw) => {
     let event;
     try {
@@ -163,7 +237,17 @@ export function startVoiceBridge({ track, socket }) {
   socket.onmessage = (event) => onUpstream(event?.data ?? event);
   send(sessionUpdate());
   if (opened) flush();
-  return { onRtp, onUpstream };
+  return {
+    onRtp,
+    onUpstream,
+    close() {
+      try {
+        opus?.delete?.();
+      } catch {
+        // The decoder is already gone.
+      }
+    },
+  };
 }
 
 function openVoiceSocket(_url, token) {
@@ -176,9 +260,11 @@ export async function answerVoiceCall({ offer, token, webSocketFactory }) {
   const pc = new RTCPeerConnection(peerConfig());
   const track = new MediaStreamTrack({ kind: "audio" });
   let socket;
+  let bridge;
   const close = () => {
     active.delete(session);
     try {
+      bridge?.close();
       socket?.close();
     } catch {
       // Already closed.
@@ -197,7 +283,7 @@ export async function answerVoiceCall({ offer, token, webSocketFactory }) {
     const id = rememberLocalCall();
     socket = (webSocketFactory ?? openVoiceSocket)(VOICE_SOCKET_URL, token);
     socket.onerror = () => {};
-    startVoiceBridge({ track, socket });
+    bridge = startVoiceBridge({ track, socket, codec: audioCodecFromSdp(sdp) });
     active.add(session);
     return { sdp, location: `/v1/realtime/calls/${id}`, close };
   } catch (error) {
