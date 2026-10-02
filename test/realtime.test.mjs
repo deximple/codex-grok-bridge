@@ -22,6 +22,7 @@ import {
   voiceAudioDelta,
   voiceSocketUrl,
   openVoiceSocket,
+  MIC_HOLD_FRAMES,
   rememberLocalCall,
   remoteAudioTracks,
   startVoiceBridge,
@@ -753,6 +754,28 @@ test("a tool reply waits until the voice response is done", () => {
     bridge.onUpstream(JSON.stringify({ type: "response.done" }));
     const items = sent.map((event) => event.item?.type).filter(Boolean);
     assert.deepEqual(items, ["function_call_output", "force_message"]);
+  } finally {
+    bridge.close();
+  }
+});
+
+test("microphone audio held for the session ack keeps two seconds", () => {
+  const sent = [];
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket: {
+      readyState: 1,
+      send(data) {
+        sent.push(JSON.parse(String(data)));
+      },
+    },
+  });
+  try {
+    const frames = MIC_HOLD_FRAMES - 10;
+    for (let i = 0; i < frames; i += 1) bridge.onRtp({ payload: Buffer.from([i & 0xff]) });
+    assert.equal(sent.some((event) => event.type === "input_audio_buffer.append"), false);
+    bridge.onUpstream(JSON.stringify({ type: "session.updated", session: { id: "sess-1" } }));
+    assert.equal(sent.filter((event) => event.type === "input_audio_buffer.append").length, frames);
   } finally {
     bridge.close();
   }

@@ -648,6 +648,8 @@ export function voiceClientEvents(event, state = {}) {
 // Desktop streams a codex reply in pieces about 200 ms apart. Hold them until
 // the stream pauses, then close the tool and speak the whole reply once.
 export const DELEGATION_SPEECH_WAIT_MS = 350;
+export const MIC_HOLD_MS = 2000;
+export const MIC_HOLD_FRAMES = MIC_HOLD_MS / 20;
 
 export function queueDelegationSpeech(state, event) {
   if (event?.type !== "delegation.context.append") return false;
@@ -827,7 +829,7 @@ export function startVoiceBridge({
   const send = (event) => {
     if (!sessionReady && event?.type === "input_audio_buffer.append") {
       pendingAudio.push(event);
-      if (pendingAudio.length > 50) pendingAudio.shift();
+      if (pendingAudio.length > MIC_HOLD_FRAMES) pendingAudio.shift();
       return;
     }
     const text = JSON.stringify(event);
@@ -840,7 +842,7 @@ export function startVoiceBridge({
   let readyTimer = null;
   const armReadyTimer = () => {
     if (readyTimer) clearTimeout(readyTimer);
-    readyTimer = setTimeout(() => markSessionReady(), 2000);
+    readyTimer = setTimeout(() => markSessionReady(), MIC_HOLD_MS);
     readyTimer.unref();
   };
   const markSessionReady = () => {
