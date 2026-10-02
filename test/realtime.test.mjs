@@ -652,6 +652,40 @@ test("voice sideband relays control events and answers pings", async () => {
   }
 });
 
+test("an offer with a data channel keeps that channel in the answer", async () => {
+  const offerer = new RTCPeerConnection({
+    iceServers: [],
+    iceUseIpv4: true,
+    iceUseIpv6: false,
+    codecs: { audio: [useOPUS()] },
+  });
+  offerer.addTrack(new MediaStreamTrack({ kind: "audio" }));
+  offerer.createDataChannel("oai-events");
+  await offerer.setLocalDescription(await offerer.createOffer());
+  try {
+    await withServer(
+      {
+        realtimeFetch: async () =>
+          new Response("no", { status: 403, headers: { "content-type": "text/plain" } }),
+        voiceWebSocket() {
+          return { readyState: 1, send() {}, close() {} };
+        },
+      },
+      async (port) => {
+        const answered = await postRaw(port, "/v1/live", offerer.localDescription.sdp);
+        const sdp = answered.body.toString("utf8");
+        assert.equal(answered.status, 201);
+        assert.equal(sdp.includes("m=audio"), true);
+        assert.equal(sdp.includes("m=application"), true);
+        assert.equal(sdp.includes("a=sctp-port:"), true);
+      },
+    );
+  } finally {
+    closeVoiceCalls();
+    await offerer.close();
+  }
+});
+
 test("opus rtp is appended as pcm and playback is opus", () => {
   const encoder = new OpusScript(48000, 2, OpusScript.Application.AUDIO);
   const encoded = encoder.encode(Buffer.alloc(960 * 4), 960);
