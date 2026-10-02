@@ -58,6 +58,28 @@ function parseArgs(value) {
   }
 }
 
+const ASPECT_RATIOS = new Set(["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"]);
+
+function videoDuration(value) {
+  if (Number.isInteger(value)) return value;
+  if (typeof value === "string" && /^\d+$/.test(value)) return Number(value);
+  return null;
+}
+
+function videoArgumentError(args) {
+  if (args.duration != null && args.duration !== "") {
+    const duration = videoDuration(args.duration);
+    if (duration == null || duration < 1 || duration > 15) {
+      return "Video generation failed: duration must be an integer from 1 to 15.";
+    }
+  }
+  const ratio = typeof args.aspect_ratio === "string" ? args.aspect_ratio.trim() : "";
+  if (ratio && !ASPECT_RATIOS.has(ratio)) {
+    return "Video generation failed: aspect_ratio must be one of 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3.";
+  }
+  return "";
+}
+
 function videoPayload(args) {
   const payload = { model: VIDEO_MODEL, prompt: args.prompt };
   if (typeof args.image_url === "string" && args.image_url.trim())
@@ -149,6 +171,8 @@ export async function videoToolOutput(call, options) {
     const args = parseArgs(call?.arguments);
     const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
     if (!prompt) return "Video generation failed: a prompt is required.";
+    const invalid = videoArgumentError(args);
+    if (invalid) return invalid;
     const url = await generateVideo({
       token: options.token,
       fetchImpl: options.fetchImpl,
@@ -163,8 +187,7 @@ export async function videoToolOutput(call, options) {
     return scrub(`Video ready at ${url}`, token);
   } catch (error) {
     const status = Number(error?.status) || 0;
-    if (status === 401 || status === 403)
-      return `Video generation failed (${status}).`;
+    if (status >= 400 && status < 500) return `Video generation failed (${status}).`;
     if (error?.moderation)
       return "Video generation finished, but moderation withheld the URL.";
     return "Video generation failed.";

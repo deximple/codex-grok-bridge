@@ -17,6 +17,27 @@ function assertNoBearer(text) {
   assert.equal(String(text).includes(TOKEN), false, "bearer was printed");
 }
 
+test("a video tool call rejects a duration or aspect ratio the API will not accept", async () => {
+  let called = false;
+  const fetchImpl = () => {
+    called = true;
+    throw new Error("no");
+  };
+  const duration = await videoToolOutput(
+    { arguments: JSON.stringify({ prompt: "a cat", duration: 30 }) },
+    { token: TOKEN, fetchImpl },
+  );
+  const ratio = await videoToolOutput(
+    { arguments: JSON.stringify({ prompt: "a cat", aspect_ratio: "2:1" }) },
+    { token: TOKEN, fetchImpl },
+  );
+  assert.equal(called, false);
+  assert.match(duration, /1 to 15/);
+  assert.match(ratio, /16:9/);
+  assertNoBearer(duration);
+  assertNoBearer(ratio);
+});
+
 test("the video function is declared once and does not take a Codex tool name", () => {
   const { request } = toProxyRequest({
     input: [{ role: "user", content: "make a clip" }],
