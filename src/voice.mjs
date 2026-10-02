@@ -30,7 +30,8 @@ function peerConfig() {
 
 // Codex voice-host rejects an answer with more than 32 candidate lines and
 // waits until the offered oai-events channel opens. A public srflx address
-// is not the local bridge, so the desktop only sees host candidates.
+// is not the local bridge. Trailing "generation" and "ufrag" tokens are not
+// part of the candidate the helper parses, so they are removed.
 function hostAnswerSdp(sdp) {
   const lines = String(sdp ?? "").split("\r\n");
   const hosts = [];
@@ -48,7 +49,12 @@ function hostAnswerSdp(sdp) {
       .slice(0, 24),
   );
   return lines
-    .filter((line, index) => !line.startsWith("a=candidate:") || picked.has(index))
+    .map((line, index) => {
+      if (!picked.has(index)) return line;
+      const canonical = line.match(/^(a=candidate:\S+ \d+ \S+ \d+ \S+ \d+ typ host)\b/);
+      return canonical ? canonical[1] : line;
+    })
+    .filter((line, index) => !lines[index].startsWith("a=candidate:") || picked.has(index))
     .join("\r\n");
 }
 

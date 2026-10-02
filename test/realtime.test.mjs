@@ -702,6 +702,8 @@ test("an offer with a data channel keeps that channel in the answer", async () =
         assert.equal(sdp.includes("a=sctp-port:"), true);
         assert.equal(sdp.includes(" 127.0.0.1 "), true);
         assert.equal(sdp.includes(" typ srflx"), false);
+        assert.equal(sdp.includes(" generation "), false);
+        assert.equal(sdp.includes(" ufrag "), false);
         assert.equal((sdp.match(/^a=candidate:/gm) ?? []).length <= 24, true);
       },
     );
