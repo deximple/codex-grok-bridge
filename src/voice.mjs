@@ -13,6 +13,7 @@ export const VOICE_SOCKET_URL = "wss://api.x.ai/v1/realtime?model=grok-voice-lat
 
 const localCalls = new Set();
 const active = new Set();
+const sessionsById = new Map();
 
 const OPUS_FRAME = 960;
 
@@ -84,15 +85,19 @@ export function rememberLocalCall(id = randomUUID()) {
   return id;
 }
 
-export function isLocalVoiceSideband(url) {
+function callIdIn(url) {
   const text = String(url ?? "");
   for (const id of localCalls) {
-    if (text.includes(id)) return true;
+    if (text.includes(id)) return id;
   }
-  return false;
+  return null;
 }
 
-export function acceptLocalSideband(socket, key) {
+export function isLocalVoiceSideband(url) {
+  return callIdIn(url) != null;
+}
+
+export function acceptLocalSideband(socket, key, url) {
   const accept = createHash("sha1")
     .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
     .digest("base64");
@@ -102,9 +107,30 @@ export function acceptLocalSideband(socket, key) {
       "Connection: Upgrade\r\n" +
       `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
   );
+  const id = callIdIn(url);
+  const hangup = () => sessionsById.get(id)?.close();
   socket.on("data", () => {});
   socket.on("error", () => {});
+  socket.on("close", hangup);
+  socket.on("end", hangup);
   socket.resume();
+}
+
+function waitForHostCandidate(pc) {
+  const sdp = () => pc.localDescription?.sdp ?? "";
+  if (sdp().includes("a=candidate:")) return Promise.resolve(sdp());
+  return new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      resolve(sdp());
+    };
+    const timer = setTimeout(finish, 500);
+    if (typeof pc.iceGatheringStateChange?.subscribe === "function") {
+      pc.iceGatheringStateChange.subscribe((state) => {
+        if (state === "complete" || sdp().includes("a=candidate:")) finish();
+      });
+    }
+  });
 }
 
 const MULAW_BIAS = 0x84;
@@ -309,8 +335,12 @@ export async function answerVoiceCall({ offer, token, webSocketFactory }) {
   const track = new MediaStreamTrack({ kind: "audio" });
   let socket;
   let bridge;
+  let closed = false;
   const close = () => {
+    if (closed) return;
+    closed = true;
     active.delete(session);
+    if (session.id) sessionsById.delete(session.id);
     try {
       bridge?.close();
       socket?.close();
@@ -319,16 +349,19 @@ export async function answerVoiceCall({ offer, token, webSocketFactory }) {
     }
     pc.close().catch(() => {});
   };
-  const session = { close };
+  const session = { close, id: null };
   try {
     pc.addTrack(track);
     await pc.setRemoteDescription({ type: "offer", sdp: offer });
     await pc.setLocalDescription(await pc.createAnswer());
-    const sdp = pc.localDescription?.sdp ?? "";
+    let sdp = pc.localDescription?.sdp ?? "";
     if (!sdp.startsWith("v=0") || !sdp.includes("a=fingerprint:")) {
       throw new Error("incomplete answer");
     }
+    sdp = await waitForHostCandidate(pc);
     const id = rememberLocalCall();
+    session.id = id;
+    sessionsById.set(id, session);
     socket = (webSocketFactory ?? openVoiceSocket)(VOICE_SOCKET_URL, token);
     socket.onerror = () => {};
     bridge = startVoiceBridge({ track, socket, codec: audioCodecFromSdp(sdp) });
@@ -342,4 +375,8 @@ export async function answerVoiceCall({ offer, token, webSocketFactory }) {
 
 export function closeVoiceCalls() {
   for (const session of [...active]) session.close();
+}
+
+export function voiceCallCount() {
+  return active.size;
 }

@@ -146,7 +146,7 @@ async function pipeSidebandUpgrade(req, socket, head, options) {
   const key = headerText(req.headers["sec-websocket-key"]);
   if (isLocalVoiceSideband(url)) {
     if (!key) return fail(socket);
-    acceptLocalSideband(socket, key);
+    acceptLocalSideband(socket, key, url);
     return;
   }
   const version =
