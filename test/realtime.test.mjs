@@ -415,6 +415,7 @@ test("a rejected xAI offer is answered by werift and bridged to the voice socket
         const sent = sockets[0].sent.map((line) => JSON.parse(line));
         assert.equal(sent[0].type, "session.update");
         assert.equal(sent[0].session.voice, "eve");
+        assert.equal(sent[0].session.tools[0].name, "codex");
         assert.equal(sent[0].session.audio.input.format.rate, 24000);
         assert.equal(sent[0].session.audio.input.transcription.model, "grok-transcribe");
         assert.equal(sent[0].session.audio.output.format.type, "audio/pcm");
@@ -806,6 +807,36 @@ test("desktop v3 sideband context becomes an xAI voice item", () => {
   assert.equal(updated[0].session.instructions, "From the desktop.");
   assert.equal(updated[0].session.voice, "eve");
   assert.equal(updated[0].session.audio.input.format.rate, 24000);
+  const state = { pendingCalls: new Set(["call-1"]) };
+  assert.deepEqual(voiceSidebandEvent({
+    type: "response.function_call_arguments.done",
+    name: "codex",
+    call_id: "call-1",
+    arguments: JSON.stringify({ request: "Rename the helper." }),
+  }, state), {
+    type: "delegation.created",
+    item: {
+      type: "delegation",
+      target: "client",
+      id: "call-1",
+      content: [{ type: "input_text", text: "Rename the helper." }],
+    },
+  });
+  assert.equal(voiceSidebandEvent({
+    type: "response.function_call_arguments.done",
+    name: "web_search",
+    call_id: "other",
+    arguments: "{}",
+  }, state), null);
+  const spoken = voiceClientEvents({
+    type: "delegation.context.append",
+    delegation_item_id: "call-1",
+    content: [{ type: "input_text", text: "Renamed it." }],
+  }, state);
+  assert.equal(spoken[0].item.type, "force_message");
+  assert.equal(spoken[1].item.type, "function_call_output");
+  assert.equal(spoken[1].item.call_id, "call-1");
+  assert.equal(state.pendingCalls.has("call-1"), false);
 });
 
 test("xAI voice events become the desktop v3 sideband events", () => {

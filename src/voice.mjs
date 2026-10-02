@@ -357,6 +357,20 @@ export function playbackFromDelta(track, state, delta) {
   writeAudio(track, state, mulaw, mulaw.length);
 }
 
+const CODEX_TOOL = {
+  type: "function",
+  name: "codex",
+  description:
+    "Ask the Codex coding agent to carry out work in the user's workspace. Use this when the user asks to read, edit, run, or inspect the project. Do not use it for ordinary conversation.",
+  parameters: {
+    type: "object",
+    properties: {
+      request: { type: "string", description: "What the user wants done, in their words." },
+    },
+    required: ["request"],
+  },
+};
+
 function sessionUpdate(instructions) {
   const text = typeof instructions === "string" && instructions.trim() ? instructions.trim() : "Say ready.";
   return {
@@ -365,6 +379,7 @@ function sessionUpdate(instructions) {
       voice: "eve",
       instructions: text,
       turn_detection: { type: "server_vad" },
+      tools: [CODEX_TOOL],
       audio: {
         input: {
           format: { type: "audio/pcm", rate: XAI_PCM_RATE },
@@ -386,7 +401,18 @@ function textFromContent(content) {
 
 // v3 puts instructions in the call's session part and later sends frameless
 // appends. xAI accepts session.update, conversation.item.create, and force_message.
-export function voiceClientEvents(event) {
+function codexRequest(argumentsText) {
+  if (typeof argumentsText !== "string" || !argumentsText.trim()) return "";
+  try {
+    const args = JSON.parse(argumentsText);
+    if (typeof args?.request === "string" && args.request.trim()) return args.request.trim();
+  } catch {
+    // The model sometimes sends plain text instead of JSON.
+  }
+  return argumentsText.trim();
+}
+
+export function voiceClientEvents(event, state = {}) {
   const type = event?.type;
   if (type === "response.create" || type === "response.cancel" || type === "conversation.item.create") {
     return [event];
@@ -406,12 +432,21 @@ export function voiceClientEvents(event) {
         },
       ];
     }
-    return [
+    const events = [
       {
         type: "conversation.item.create",
         item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text }] },
       },
     ];
+    const callId = event.delegation_item_id;
+    if (typeof callId === "string" && state.pendingCalls?.has(callId)) {
+      state.pendingCalls.delete(callId);
+      events.push({
+        type: "conversation.item.create",
+        item: { type: "function_call_output", call_id: callId, output: JSON.stringify(text) },
+      });
+    }
+    return events;
   }
   return [];
 }
@@ -451,6 +486,21 @@ export function voiceSidebandEvent(event, state) {
     if (typeof event.session.instructions === "string") session.instructions = event.session.instructions;
     return { type: "session.updated", session };
   }
+  if (type === "response.function_call_arguments.done" && event.name === "codex" && typeof event.call_id === "string") {
+    const request = codexRequest(event.arguments);
+    if (!request) return null;
+    if (!state.pendingCalls) state.pendingCalls = new Set();
+    state.pendingCalls.add(event.call_id);
+    return {
+      type: "delegation.created",
+      item: {
+        type: "delegation",
+        target: "client",
+        id: event.call_id,
+        content: [{ type: "input_text", text: request }],
+      },
+    };
+  }
   if (type === "error") return event;
   return null;
 }
@@ -461,6 +511,7 @@ export function startVoiceBridge({
   codec = { kind: "pcmu", payloadType: 0 },
   onEvent,
   instructions,
+  voiceState,
 }) {
   const opus = codec.kind === "opus" ? createOpus() : null;
   const state = {
@@ -473,7 +524,7 @@ export function startVoiceBridge({
     pending: Buffer.alloc(0),
   };
   const queued = [];
-  const sidebandState = { inputTranscript: "" };
+  const sidebandState = voiceState ?? { inputTranscript: "", pendingCalls: new Set() };
   let opened = socket.readyState === 1;
   const send = (event) => {
     const text = JSON.stringify(event);
@@ -564,6 +615,7 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
     pc.close().catch(() => {});
   };
   const pendingEvents = [];
+  const voiceState = { inputTranscript: "", pendingCalls: new Set() };
   let sidebandSocket = null;
   const session = {
     close,
@@ -577,7 +629,7 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
         } catch {
           return;
         }
-        for (const outbound of voiceClientEvents(event)) {
+        for (const outbound of voiceClientEvents(event, voiceState)) {
           try {
             socket?.send(JSON.stringify(outbound));
           } catch {
@@ -612,6 +664,7 @@ export async function answerVoiceCall({ offer, token, webSocketFactory, instruct
       codec: audioCodecFromSdp(sdp),
       onEvent: noteEvent,
       instructions,
+      voiceState,
     });
     active.add(session);
     return { sdp, location: `/v1/realtime/calls/${id}`, close };
