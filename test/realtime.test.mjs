@@ -529,6 +529,39 @@ test("a sideband request waits until the voice socket is open", () => {
   }
 });
 
+test("a tool reply waits until the voice response is done", () => {
+  const sent = [];
+  const socket = {
+    readyState: 1,
+    send(data) {
+      sent.push(JSON.parse(String(data)));
+    },
+  };
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket,
+  });
+  try {
+    bridge.onUpstream(JSON.stringify({ type: "response.created" }));
+    bridge.sendClient({
+      type: "conversation.item.create",
+      item: { type: "function_call_output", call_id: "call-1", output: JSON.stringify("done") },
+    });
+    bridge.sendClient({
+      type: "conversation.item.create",
+      item: { type: "force_message", role: "assistant", content: [{ type: "output_text", text: "Done." }] },
+    });
+    bridge.sendClient({ type: "response.cancel" });
+    assert.equal(sent.some((event) => event.item?.type === "force_message"), false);
+    assert.equal(sent.some((event) => event.type === "response.cancel"), true);
+    bridge.onUpstream(JSON.stringify({ type: "response.done" }));
+    const items = sent.map((event) => event.item?.type).filter(Boolean);
+    assert.deepEqual(items, ["function_call_output", "force_message"]);
+  } finally {
+    bridge.close();
+  }
+});
+
 test("voice audio uses append and output_audio.delta", () => {
   const sent = [];
   const track = {

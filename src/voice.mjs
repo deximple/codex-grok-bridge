@@ -626,8 +626,10 @@ export function startVoiceBridge({
     pending: Buffer.alloc(0),
   };
   const queued = [];
+  const held = [];
   const sidebandState = voiceState ?? { inputTranscript: "", pendingCalls: new Set() };
   let opened = socket.readyState === 1;
+  let responseActive = false;
   const send = (event) => {
     const text = JSON.stringify(event);
     if (!opened) {
@@ -635,6 +637,17 @@ export function startVoiceBridge({
       return;
     }
     socket.send(text);
+  };
+  const holdsForIdleResponse = (event) => {
+    const item = event?.item;
+    return (
+      event?.type === "conversation.item.create" &&
+      (item?.type === "force_message" || item?.type === "function_call_output")
+    );
+  };
+  const releaseHeld = () => {
+    responseActive = false;
+    for (const event of held.splice(0)) send(event);
   };
   const flush = () => {
     opened = true;
@@ -670,6 +683,7 @@ export function startVoiceBridge({
       }
       return;
     }
+    if (event?.type === "response.created") responseActive = true;
     if (event?.type === "response.output_audio.done" || event?.type === "response.done") {
       try {
         flushPlayback(track, state);
@@ -677,6 +691,7 @@ export function startVoiceBridge({
         // A short tail is dropped. The call stays up.
       }
       state.talking = false;
+      if (event.type === "response.done") releaseHeld();
     }
     const sideband = voiceSidebandEvent(event, sidebandState);
     if (sideband) onEvent?.(JSON.stringify(sideband));
@@ -697,6 +712,10 @@ export function startVoiceBridge({
     onUpstream,
     sendClient(event) {
       try {
+        if (responseActive && holdsForIdleResponse(event)) {
+          held.push(event);
+          return;
+        }
         send(event);
       } catch {
         // The xAI socket may already be closed.
