@@ -945,6 +945,33 @@ test("a function result made of content parts is forwarded as text", () => {
   assert.equal(request.input[0].call_id, "c1");
   assert.equal(request.input[0].output, "BRIDGE_OK\nhttps://example.test/a.png");
   assert.equal(JSON.stringify(request.input).includes("secret-encrypted"), false);
+  assert.equal(request.input.length, 1);
+});
+
+test("an inline image in a function result is attached after the tool output", () => {
+  const png = "data:image/png;base64,iVBORw0KGgo=";
+  const { request } = toProxyRequest({
+    input: [
+      {
+        type: "function_call_output",
+        call_id: "c1",
+        output: [
+          { type: "input_text", text: "see" },
+          { type: "input_image", image_url: { url: png, detail: "high" } },
+        ],
+      },
+    ],
+    tools: [],
+  });
+  assert.equal(request.input[0].type, "function_call_output");
+  assert.equal(request.input[0].call_id, "c1");
+  assert.equal(request.input[0].output, "see\n[An image from this tool result follows.]");
+  assert.equal(request.input[0].output.includes("iVBORw0KGgo"), false);
+  assert.deepEqual(request.input[1], {
+    type: "message",
+    role: "user",
+    content: [{ type: "input_image", image_url: png, detail: "high" }],
+  });
 });
 
 test("readable salvage leaves items Grok already accepts structured", () => {

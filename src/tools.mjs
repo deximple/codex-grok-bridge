@@ -529,9 +529,12 @@ function droppedItemInputTexts(node) {
   return texts;
 }
 
-function functionOutputText(output) {
-  if (typeof output === "string") return output;
+const INLINE_IMAGE = /^data:image\/(?:png|jpeg|webp);base64,/i;
+
+function functionOutputParts(output) {
+  if (typeof output === "string") return { text: output, images: [] };
   const parts = [];
+  const images = [];
   const push = (value) => {
     if (typeof value === "string" && value.trim()) parts.push(value.trim());
   };
@@ -549,12 +552,30 @@ function functionOutputText(output) {
     push(value.stdout);
     push(value.stderr);
     const image = value.image_url;
-    if (typeof image === "string") push(image);
-    else if (image && typeof image === "object") push(image.url);
+    const url =
+      typeof image === "string"
+        ? image
+        : image && typeof image === "object" && typeof image.url === "string"
+          ? image.url
+          : "";
+    if (url && INLINE_IMAGE.test(url)) {
+      const part = { type: "input_image", image_url: url };
+      const detail =
+        typeof value.detail === "string"
+          ? value.detail
+          : image && typeof image === "object" && typeof image.detail === "string"
+            ? image.detail
+            : "";
+      if (detail) part.detail = detail;
+      images.push(part);
+      push("[An image from this tool result follows.]");
+    } else if (url) {
+      push(url);
+    }
     if (Array.isArray(value.content)) visit(value.content);
   };
   visit(output);
-  return parts.join("\n");
+  return { text: parts.join("\n"), images };
 }
 
 function userInputTextMessage(texts) {
@@ -567,11 +588,13 @@ function userInputTextMessage(texts) {
 
 function toProxyInputNode(node, map, state, salvage = false) {
   if (!node || typeof node !== "object") return node;
-  if (Array.isArray(node)) {
+    if (Array.isArray(node)) {
     const items = [];
     for (const item of node) {
       const next = toProxyInputNode(item, map, state);
-      if (next !== DROP) items.push(next);
+      if (next === DROP) continue;
+      if (Array.isArray(next)) items.push(...next);
+      else items.push(next);
     }
     return items;
   }
@@ -671,11 +694,27 @@ function toProxyInputNode(node, map, state, salvage = false) {
   }
 
   // Codex sends a string or a list of content parts. Grok accepts the string.
-  if (next.type === "function_call_output" && typeof next.output !== "string")
-    next.output = functionOutputText(next.output);
+  // An inline image in that list is attached after the tool result so the
+  // model can see it; a remote URL stays as text and is not fetched.
+  let attachedImages = [];
+  if (next.type === "function_call_output" && typeof next.output !== "string") {
+    const parts = functionOutputParts(next.output);
+    next.output = parts.text;
+    attachedImages = parts.images;
+  }
 
   const whitelisted = whitelistInputNode(next);
-  if (!salvage || isForwardedItem(whitelisted)) return whitelisted;
+  if (!salvage || isForwardedItem(whitelisted)) {
+    if (!attachedImages.length) return whitelisted;
+    return [
+      whitelisted,
+      whitelistInputNode({
+        type: "message",
+        role: "user",
+        content: attachedImages,
+      }),
+    ];
+  }
   // Grok rejects these Codex item types. Keep the readable text as a user
   // message, the same shape as a compaction summary. An item with nothing
   // left but an encrypted blob, image bytes, or ids is dropped.
@@ -697,15 +736,21 @@ function isForwardedItem(item) {
 function projectInput(input, map) {
   if (!Array.isArray(input)) {
     const items = toProxyInputNode(input, map, { callIds: new Map() }, true);
-    return { items, pairs: [] };
+    return { items: Array.isArray(items) ? items : items === DROP ? [] : [items], pairs: [] };
   }
   const state = { callIds: new Map() };
   const pairs = [];
   for (const item of input) {
     const fingerprint = logicalFingerprint(item);
-    const next = toProxyInputNode(item, map, state, true);
-    if (!isForwardedItem(next)) continue;
-    pairs.push({ fingerprint, item: next });
+    const produced = toProxyInputNode(item, map, state, true);
+    const list = Array.isArray(produced) ? produced : [produced];
+    list.forEach((next, index) => {
+      if (!isForwardedItem(next)) return;
+      pairs.push({
+        fingerprint: index === 0 ? fingerprint : logicalFingerprint(next),
+        item: next,
+      });
+    });
   }
   return { items: pairs.map((pair) => pair.item), pairs };
 }
