@@ -1343,6 +1343,43 @@ test("a resumed voice socket drops the previous interrupt", () => {
   }
 });
 
+test("a resumed voice socket sends the new session update first", () => {
+  const first = {
+    readyState: 0,
+    sent: [],
+    send(data) {
+      this.sent.push(JSON.parse(String(data)));
+    },
+    close() {},
+  };
+  let second;
+  const bridge = startVoiceBridge({
+    track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
+    socket: first,
+    openSocket() {
+      second = {
+        readyState: 0,
+        sent: [],
+        send(data) {
+          this.sent.push(JSON.parse(String(data)));
+        },
+        close() {},
+      };
+      return second;
+    },
+  });
+  try {
+    first.onmessage(JSON.stringify({ type: "conversation.created", conversation: { id: "conv-1" } }));
+    first.onclose();
+    assert.equal(second.sent.length, 0);
+    second.onopen();
+    assert.equal(second.sent.filter((event) => event.type === "session.update").length, 1);
+    assert.equal(second.sent[0].type, "session.update");
+  } finally {
+    bridge.close();
+  }
+});
+
 test("a dropped voice socket tells the desktop", () => {
   const seen = [];
   const socket = { readyState: 1, send() {} };

@@ -1031,6 +1031,7 @@ export function startVoiceBridge({
         state.truncated = false;
         state.playedMs = 0;
         state.audioItemId = undefined;
+        queued.length = 0;
         current = openSocket(sidebandState.conversationId);
         opened = current.readyState === 1;
         sessionReady = false;
