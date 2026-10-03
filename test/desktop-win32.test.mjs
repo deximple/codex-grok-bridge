@@ -73,6 +73,8 @@ test("the win32 installer writes LocalAppData and refuses WindowsApps", async ()
     await stat(path.join(app, "scripts/codex-wrapper.mjs"));
     await stat(path.join(app, "src/models.mjs"));
     await stat(path.join(app, "src/paths.mjs"));
+    await stat(path.join(app, "node_modules/opusscript/package.json"));
+    await stat(path.join(app, "node_modules/werift/package.json"));
     const launcherText = await readFile(launcher, "utf8");
     assert.match(launcherText, /launch-desktop\.mjs/);
     assert.match(launcherText, /@echo off/);
