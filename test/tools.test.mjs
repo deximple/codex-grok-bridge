@@ -190,6 +190,83 @@ test("strips oneOf from an object-typed parameter root", () => {
   assert.deepEqual(automation.parameters.required, ["id"]);
 });
 
+test("inlines local $defs refs before a tool schema is sent", () => {
+  const parameters = {
+    properties: {
+      idempotency_key: { $ref: "#/$defs/PageCreationIdempotencyKey" },
+    },
+    $defs: {
+      PageCreationIdempotencyKey: { type: "string" },
+    },
+  };
+  const nested = {
+    type: "object",
+    properties: {
+      parent: { $ref: "#/$defs/Parent" },
+    },
+    $defs: {
+      Parent: {
+        type: "object",
+        properties: {
+          child: { $ref: "#/definitions/Child" },
+        },
+      },
+    },
+    definitions: {
+      Child: { $ref: "#/definitions/PageCreationIdempotencyKey" },
+      PageCreationIdempotencyKey: { type: "string" },
+    },
+  };
+  const original = structuredClone(parameters);
+  const { request } = toProxyRequest({
+    input: [],
+    tools: [
+      { type: "function", name: "create_page", parameters },
+      { type: "function", name: "create_nested", parameters: nested },
+    ],
+  });
+  assert.deepEqual(parameters, original);
+
+  const page = request.tools.find((tool) =>
+    String(tool.name).endsWith("_create_page"),
+  );
+  assert.deepEqual(page.parameters.properties.idempotency_key, {
+    type: "string",
+  });
+  assert.equal(JSON.stringify(page.parameters).includes("$ref"), false);
+  assert.equal(page.parameters.$defs, undefined);
+  assert.equal(page.parameters.definitions, undefined);
+
+  const parent = request.tools.find((tool) =>
+    String(tool.name).endsWith("_create_nested"),
+  );
+  assert.deepEqual(parent.parameters.properties.parent, {
+    type: "object",
+    properties: { child: { type: "string" } },
+  });
+  assert.equal(JSON.stringify(parent.parameters).includes("$ref"), false);
+  assert.equal(parent.parameters.$defs, undefined);
+  assert.equal(parent.parameters.definitions, undefined);
+
+  assert.throws(() =>
+    toProxyRequest({
+      input: [],
+      tools: [
+        {
+          type: "function",
+          name: "create_broken",
+          parameters: {
+            type: "object",
+            properties: {
+              idempotency_key: { $ref: "#/$defs/Missing" },
+            },
+          },
+        },
+      ],
+    }),
+  );
+});
+
 test("union required treats a missing variant required as empty and keeps the root", () => {
   const { request } = toProxyRequest({
     input: [],
