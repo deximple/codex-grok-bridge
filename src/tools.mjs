@@ -163,22 +163,100 @@ function emitObjectParameters(source, overrides = {}) {
   return next;
 }
 
+function decodeJsonPointerToken(token) {
+  return token.replace(/~1/g, "/").replace(/~0/g, "~");
+}
+
+// `#/$defs/Name` and `#/definitions/Name` are document-local. Grok rejects
+// those pointers, so the copy sent upstream has the target schema inlined.
+function definitionPointer(ref) {
+  if (typeof ref !== "string" || !ref.startsWith("#/")) return null;
+  const tokens = ref.slice(2).split("/").map(decodeJsonPointerToken);
+  if (tokens.length < 2) return null;
+  if (tokens[0] !== "$defs" && tokens[0] !== "definitions") return null;
+  return tokens;
+}
+
+function readPointer(root, tokens) {
+  let node = root;
+  for (const token of tokens) {
+    if (Array.isArray(node)) {
+      if (!/^(0|[1-9]\d*)$/.test(token)) return undefined;
+      node = node[Number(token)];
+    } else if (
+      plainObject(node) &&
+      Object.prototype.hasOwnProperty.call(node, token)
+    ) {
+      node = node[token];
+    } else {
+      return undefined;
+    }
+  }
+  return node;
+}
+
+function inlineLocalSchemaRefs(schema) {
+  function resolve(ref, trail) {
+    const tokens = definitionPointer(ref);
+    if (!tokens || trail.includes(ref))
+      throw new Error(`Unresolvable schema $ref: ${ref}`);
+    const target = readPointer(schema, tokens);
+    if (target === undefined)
+      throw new Error(`Unresolvable schema $ref: ${ref}`);
+    return walk(structuredClone(target), trail.concat(ref));
+  }
+
+  function walk(node, trail) {
+    if (Array.isArray(node)) return node.map((item) => walk(item, trail));
+    if (!plainObject(node)) return node;
+    if (Object.prototype.hasOwnProperty.call(node, "$ref")) {
+      if (typeof node.$ref !== "string")
+        throw new Error("Unresolvable schema $ref");
+      const resolved = resolve(node.$ref, trail);
+      const rest = {};
+      for (const [key, value] of Object.entries(node)) {
+        if (key !== "$ref") rest[key] = value;
+      }
+      if (Object.keys(rest).length === 0) return resolved;
+      if (!plainObject(resolved))
+        throw new Error(`Unresolvable schema $ref: ${node.$ref}`);
+      return walk({ ...resolved, ...rest }, trail);
+    }
+    const next = {};
+    for (const [key, value] of Object.entries(node)) {
+      if (key === "$defs" || key === "definitions") continue;
+      next[key] = walk(value, trail);
+    }
+    return next;
+  }
+
+  return walk(schema, []);
+}
+
+function emitsObjectParameters(schema) {
+  return (
+    schema.type === "object" ||
+    (schema.type == null && plainObject(schema.properties))
+  );
+}
+
 function usableParameters(parameters) {
   if (!parameters || typeof parameters !== "object" || Array.isArray(parameters))
     return OBJECT_SCHEMA;
+  parameters = inlineLocalSchemaRefs(parameters);
   const variants = Array.isArray(parameters.oneOf)
     ? parameters.oneOf
     : Array.isArray(parameters.anyOf)
       ? parameters.anyOf
       : null;
   if (!variants) {
-    return parameters.type === "object"
+    return emitsObjectParameters(parameters)
       ? emitObjectParameters(parameters)
       : OBJECT_SCHEMA;
   }
   const fragments = variants.filter(isObjectFragment);
   if (fragments.length === 0) {
-    return parameters.type === "object"
+    return emitsObjectParameters(parameters)
       ? emitObjectParameters(parameters)
       : OBJECT_SCHEMA;
   }
