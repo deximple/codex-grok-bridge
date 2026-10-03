@@ -254,17 +254,12 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 `,
   );
   await chmod(stub, 0o755);
-  let codexBinary = stub;
-  if (process.platform === "win32") {
-    codexBinary = path.join(home, "codex-stub.cmd");
-    await writeFile(codexBinary, `"${process.execPath}" "${stub}" %*`);
-  }
   const server = spawn(process.execPath, [wrapper, "app-server"], {
     stdio: ["pipe", "pipe", "pipe"],
     env: {
       ...process.env,
       CODEX_HOME: home,
-      CODEX_BINARY: codexBinary,
+      CODEX_BINARY: stub,
       GROK_BRIDGE_DIAGNOSTICS: "off",
       STUB_READY: ready,
       STUB_LOG: log,

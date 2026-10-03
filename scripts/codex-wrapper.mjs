@@ -9,14 +9,19 @@ import { codexHomeFromEnv, migrateResumePath, migrateSessionRollouts } from "../
 
 const binary = resolveCodexBinary();
 const args = process.argv.slice(2);
+function spawnResolved(file, fileArgs, options) {
+  if (file.endsWith(".mjs"))
+    return spawn(process.execPath, [file, ...fileArgs], options);
+  return spawn(file, fileArgs, options);
+}
 if (!args.includes("app-server")) {
-  const child = spawn(binary, args, { stdio: "inherit" });
+  const child = spawnResolved(binary, args, { stdio: "inherit" });
   child.on("exit", (code) => process.exit(code ?? 1));
 } else {
   const runtime = await startRuntime();
   const router = new Router(runtime.catalogPath);
   await migrateSessionRollouts(codexHomeFromEnv());
-  const child = spawn(binary, [...args, ...runtime.args], {
+  const child = spawnResolved(binary, [...args, ...runtime.args], {
     stdio: ["pipe", "pipe", "inherit"],
     env: { ...process.env, CODEX_GROK_BRIDGE_TOKEN: runtime.token },
   });
