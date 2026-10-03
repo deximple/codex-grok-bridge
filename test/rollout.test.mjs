@@ -39,9 +39,14 @@ const message = {
 
 const messageLine = JSON.stringify(message);
 const brokenLine = 'not-json {"encrypted_content":"cipher-blob"}';
+const grokMetaLine = JSON.stringify({
+  timestamp: "2026-01-01T00:00:00.000Z",
+  type: "session_meta",
+  payload: { id: "thread-fixture", model_provider: "grok_build_cli", model: "grok-4.7" },
+});
 
 function dirtyText() {
-  return `${JSON.stringify(reasoning)}\n${messageLine}\n${brokenLine}\n`;
+  return `${grokMetaLine}\n${JSON.stringify(reasoning)}\n${messageLine}\n${brokenLine}\n`;
 }
 
 const cleanText =
@@ -56,9 +61,10 @@ test("a fixture rollout loses ciphertext fields and keeps summary and message te
     assert.equal(await migrateRolloutFile(file), true);
     const text = await readFile(file, "utf8");
     const lines = text.split("\n");
-    assert.equal(lines[1], messageLine);
-    assert.equal(lines[2], brokenLine);
-    const stored = JSON.parse(lines[0]);
+    assert.equal(lines[0], grokMetaLine);
+    assert.equal(lines[2], messageLine);
+    assert.equal(lines[3], brokenLine);
+    const stored = JSON.parse(lines[1]);
     assert.deepEqual(stored, {
       timestamp: "2026-01-01T00:00:00.000Z",
       type: "response_item",
@@ -70,9 +76,9 @@ test("a fixture rollout loses ciphertext fields and keeps summary and message te
         internal_chat_message_metadata_passthrough: { turn_id: "t1" },
       },
     });
-    assert.equal(lines[0].includes("cipher-blob"), false);
-    assert.equal(lines[0].includes("cipher-args"), false);
-    assert.equal(lines[0].includes("cipher-part"), false);
+    assert.equal(lines[1].includes("cipher-blob"), false);
+    assert.equal(lines[1].includes("cipher-args"), false);
+    assert.equal(lines[1].includes("cipher-part"), false);
     const once = await readFile(file);
     assert.equal(await migrateRolloutFile(file), false);
     assert.deepEqual(await readFile(file), once);
@@ -99,6 +105,99 @@ test("a fixture rollout with no ciphertext stays byte-identical", async () => {
   }
 });
 
+test("OpenAI session_meta keeps encrypted_content and Grok session_meta strips it", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "codex-rollout-provider-"));
+  const openaiFile = path.join(home, "sessions", "rollout-openai.jsonl");
+  const grokFile = path.join(home, "sessions", "rollout-grok.jsonl");
+  const openaiText = [
+    JSON.stringify({
+      type: "session_meta",
+      payload: { id: "oa", model_provider: "openai", model: "gpt-5" },
+    }),
+    JSON.stringify({
+      type: "response_item",
+      payload: {
+        type: "reasoning",
+        summary: [{ type: "summary_text", text: "plain-summary" }],
+        encrypted_content: "openai-cipher",
+      },
+    }),
+    "",
+  ].join("\n");
+  const switchedText = [
+    JSON.stringify({
+      type: "session_meta",
+      payload: { id: "oa", model_provider: "openai", model: "gpt-5" },
+    }),
+    JSON.stringify({
+      type: "response_item",
+      payload: {
+        type: "reasoning",
+        summary: [{ type: "summary_text", text: "plain-summary" }],
+        encrypted_content: "openai-cipher",
+      },
+    }),
+    JSON.stringify({
+      type: "turn_context",
+      payload: { model: "grok-4.7", model_provider: "grok_build_cli" },
+    }),
+    JSON.stringify({
+      type: "response_item",
+      payload: {
+        type: "reasoning",
+        summary: [{ type: "summary_text", text: "later-summary" }],
+        encrypted_content: "cipher-blob",
+      },
+    }),
+    "",
+  ].join("\n");
+  const grokText = [
+    JSON.stringify({
+      type: "session_meta",
+      payload: { id: "gk", model_provider: "grok_build_cli", model: "grok-4.7" },
+    }),
+    JSON.stringify({
+      type: "response_item",
+      payload: {
+        type: "reasoning",
+        summary: [{ type: "summary_text", text: "plain-summary" }],
+        encrypted_content: "cipher-blob",
+        encrypted_function_args: "cipher-args",
+      },
+    }),
+    "",
+  ].join("\n");
+  const switchedFile = path.join(home, "sessions", "rollout-switched.jsonl");
+  await mkdir(path.dirname(openaiFile), { recursive: true });
+  await writeFile(openaiFile, openaiText, { mode: 0o600 });
+  await writeFile(grokFile, grokText, { mode: 0o600 });
+  await writeFile(switchedFile, switchedText, { mode: 0o600 });
+  try {
+    assert.equal(await migrateRolloutFile(openaiFile), false);
+    assert.equal(await readFile(openaiFile, "utf8"), openaiText);
+    const switchedLines = (await readFile(switchedFile, "utf8")).split("\n");
+    assert.equal(await migrateRolloutFile(switchedFile), true);
+    const switchedAfter = (await readFile(switchedFile, "utf8")).split("\n");
+    assert.equal(switchedAfter[0], switchedLines[0]);
+    assert.equal(switchedAfter[1], switchedLines[1]);
+    assert.equal(JSON.parse(switchedAfter[1]).payload.encrypted_content, "openai-cipher");
+    assert.equal(JSON.parse(switchedAfter[3]).payload.encrypted_content, undefined);
+    assert.equal(JSON.parse(switchedAfter[3]).payload.summary[0].text, "later-summary");
+    assert.equal(await migrateRolloutFile(grokFile), true);
+    const grokLines = (await readFile(grokFile, "utf8")).split("\n");
+    assert.equal(grokLines[0], grokText.split("\n")[0]);
+    const grokItem = JSON.parse(grokLines[1]);
+    assert.equal(grokItem.payload.encrypted_content, undefined);
+    assert.equal(grokItem.payload.encrypted_function_args, undefined);
+    assert.equal(grokItem.payload.summary[0].text, "plain-summary");
+    const grokBytes = await readFile(grokFile);
+    assert.equal(await migrateRolloutFile(grokFile), false);
+    assert.deepEqual(await readFile(grokFile), grokBytes);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("session walk skips auth.json and .grok and rewrites rollout files", async () => {
   const home = await mkdtemp(path.join(tmpdir(), "codex-rollout-walk-"));
   const rollout = path.join(home, "sessions", "2026", "10", "03", "rollout-old.jsonl");
@@ -116,9 +215,9 @@ test("session walk skips auth.json and .grok and rewrites rollout files", async 
   try {
     await migrateSessionRollouts(home);
     const walked = (await readFile(rollout, "utf8")).split("\n");
-    assert.equal(walked[0].includes("cipher-blob"), false);
-    assert.equal(walked[0].includes("plain-summary"), true);
-    assert.equal(walked[2], brokenLine);
+    assert.equal(walked[1].includes("cipher-blob"), false);
+    assert.equal(walked[1].includes("plain-summary"), true);
+    assert.equal(walked[3], brokenLine);
     assert.equal(await readFile(auth, "utf8"), authText);
     assert.equal(await readFile(grok, "utf8"), authText);
     assert.equal(await readFile(nested, "utf8"), dirtyText());
@@ -140,7 +239,7 @@ test("wrapper strips rollouts before spawn and before resume or fork write", asy
   const ready = path.join(home, "ready");
   const log = path.join(home, "stdin.log");
   await mkdir(dir, { recursive: true });
-  const stored = `${JSON.stringify(reasoning)}\n${messageLine}\n`;
+  const stored = `${grokMetaLine}\n${JSON.stringify(reasoning)}\n${messageLine}\n`;
   await writeFile(early, stored, { mode: 0o600 });
   await writeFile(clean, cleanText, { mode: 0o600 });
   await writeFile(
@@ -155,12 +254,17 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 `,
   );
   await chmod(stub, 0o755);
+  let codexBinary = stub;
+  if (process.platform === "win32") {
+    codexBinary = path.join(home, "codex-stub.cmd");
+    await writeFile(codexBinary, `"${process.execPath}" "${stub}" %*`);
+  }
   const server = spawn(process.execPath, [wrapper, "app-server"], {
     stdio: ["pipe", "pipe", "pipe"],
     env: {
       ...process.env,
       CODEX_HOME: home,
-      CODEX_BINARY: stub,
+      CODEX_BINARY: codexBinary,
       GROK_BRIDGE_DIAGNOSTICS: "off",
       STUB_READY: ready,
       STUB_LOG: log,
