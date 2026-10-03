@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.8.1 — 2026-10-03
+
+- Grok reasoning ciphertext is removed from the stream back to Codex, so a later switch to an OpenAI model does not try to decrypt a Grok reasoning blob. This was already on main after 1.8.0 and was not in the 1.8.0 npm tarball.
+- The Linux and Windows installers install `opusscript@0.1.1` and `werift@0.24.4` into the bridge directory.
+- App-server startup survives a missing voice package. `opusscript` and `werift` load with dynamic import, so a missing module does not exit before Codex reads organization settings.
+- Local JSON Schema `$ref` values (`#/$defs` and `#/definitions`) are inlined before tool parameters are sent to Grok.
+
 ## 1.8.0 — 2026-10-02
 
 - When xAI rejects a Codex voice offer on `POST /v1/realtime/calls` or `POST /v1/live`, the bridge reads the SDP part of the multipart body, whether the parts use CRLF or LF, and answers locally with werift. Opus is used when that is the offered codec. Audio is bridged to the xAI voice socket. The sideband for that answered call stays on the bridge. An offer the local peer cannot answer stays the upstream response. An offer xAI accepts is still forwarded. Codex cloud tasks are not in this package.
