@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { startRuntime } from "../src/runtime.mjs";
 import { Router } from "../src/router.mjs";
 import { resolveCodexBinary } from "../src/paths.mjs";
+import { codexHomeFromEnv, migrateResumePath, migrateSessionRollouts } from "../src/rollout.mjs";
 
 const binary = resolveCodexBinary();
 const args = process.argv.slice(2);
@@ -14,6 +15,7 @@ if (!args.includes("app-server")) {
 } else {
   const runtime = await startRuntime();
   const router = new Router(runtime.catalogPath);
+  await migrateSessionRollouts(codexHomeFromEnv());
   const child = spawn(binary, [...args, ...runtime.args], {
     stdio: ["pipe", "pipe", "inherit"],
     env: { ...process.env, CODEX_GROK_BRIDGE_TOKEN: runtime.token },
@@ -23,7 +25,10 @@ if (!args.includes("app-server")) {
   const pending = new Map();
   const timedOut = new Set();
   const queues = new Map();
-  const write = (message) => child.stdin.write(JSON.stringify(router.outgoing(message)) + "\n");
+  const write = async (message) => {
+    await migrateResumePath(message);
+    child.stdin.write(JSON.stringify(router.outgoing(message)) + "\n");
+  };
   const rpc = (method, params) => new Promise((resolve, reject) => {
     const id = `grok-bridge-${randomUUID()}`;
     const timer = setTimeout(() => {
@@ -36,7 +41,12 @@ if (!args.includes("app-server")) {
       clearTimeout(timer);
       message.error ? reject(new Error(message.error.message)) : resolve(message.result);
     });
-    write({ id, method, params });
+    write({ id, method, params }).catch((error) => {
+      clearTimeout(timer);
+      pending.delete(id);
+      router.pending.delete(id);
+      reject(error);
+    });
   });
   const input = createInterface({ input: process.stdin });
   input.on("line", (line) => {
@@ -49,19 +59,17 @@ if (!args.includes("app-server")) {
     }
     const threadId = message.method && message.params?.threadId;
     if (!threadId) {
-      try {
-        write(message);
-      } catch {
+      write(message).catch(() => {
         process.stderr.write("Grok wrapper: app-server is not writable\n");
         if (message.id !== undefined)
           send({ id: message.id, error: { code: -32603, message: "app-server is not writable" } });
-      }
+      });
       return;
     }
     const next = (queues.get(threadId) ?? Promise.resolve())
       .then(async () => {
         await router.prepare(message, rpc);
-        write(message);
+        await write(message);
       })
       .catch((error) => {
         if (message.id !== undefined)

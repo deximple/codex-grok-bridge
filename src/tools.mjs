@@ -959,7 +959,7 @@ function originForResponseName(map, name) {
 
 // Grok ciphertext is not an OpenAI reasoning blob. If Codex stores it, a later
 // switch to an OpenAI model fails with "could not be decrypted or parsed".
-function stripEncryptedReasoning(node) {
+export function stripEncryptedReasoning(node) {
   if (!node || typeof node !== "object") return;
   if (Array.isArray(node)) {
     for (let i = node.length - 1; i >= 0; i -= 1) {
