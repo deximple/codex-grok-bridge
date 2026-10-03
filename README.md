@@ -42,6 +42,13 @@ the bridge runs. See Release history.
 
 What each recent version added. Older cuts are in `CHANGELOG.md`.
 
+### 1.8.1 — 2026-10-03
+
+- Grok reasoning ciphertext is removed from the stream back to Codex, so a later switch to an OpenAI model does not try to decrypt a Grok reasoning blob. This was already on main after 1.8.0 and was not in the 1.8.0 npm tarball.
+- The Linux and Windows installers install `opusscript@0.1.1` and `werift@0.24.4` into the bridge directory.
+- App-server startup survives a missing voice package. `opusscript` and `werift` load with dynamic import, so a missing module does not exit before Codex reads organization settings.
+- Local JSON Schema `$ref` values (`#/$defs` and `#/definitions`) are inlined before tool parameters are sent to Grok.
+
 ### 1.8.0 — 2026-10-02
 
 - When xAI rejects a Codex voice offer, the bridge reads the SDP part of the multipart body (CRLF or LF) and answers locally with werift, including Opus when that is the offered codec. Audio is bridged to the xAI voice socket, and that call's sideband stays on the bridge. An offer xAI accepts is still forwarded. Codex cloud tasks are not in this package.
@@ -454,6 +461,13 @@ Codex `web_search`는 브리지가 실행하는 함수가 아니라 xAI 서버 �
 ## 릴리스 기록
 
 최근 버전이 더한 것입니다. 그 이전은 `CHANGELOG.md`에 있습니다.
+
+### 1.8.1 — 2026-10-03
+
+- Grok reasoning 암호문을 Codex로 돌아가는 스트림에서 빼서, 나중에 OpenAI 모델로 바꿔도 Grok reasoning blob을 복호화하려 하지 않습니다. 이 변경은 1.8.0 이후 main에 있었고 1.8.0 npm 패키지에는 없었습니다.
+- Linux와 Windows 설치 스크립트가 `opusscript@0.1.1`과 `werift@0.24.4`를 브리지 디렉터리에 설치합니다.
+- 음성 패키지가 없어도 앱 서버가 뜹니다. `opusscript`와 `werift`는 dynamic import로 불러서, 모듈이 없어도 Codex가 organization settings를 읽기 전에 프로세스가 나가지 않습니다.
+- 로컬 JSON Schema `$ref`(`#/$defs`, `#/definitions`)는 도구 파라미터를 Grok에 보내기 전에 풀어 넣습니다.
 
 ### 1.8.0 — 2026-10-02
 
