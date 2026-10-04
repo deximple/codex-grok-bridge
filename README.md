@@ -1,5 +1,18 @@
 # codex-grok-bridge
 
+The Codex weekly limit is spent. Grok is still there.
+The harness stays. Only the model changes.
+
+When the limit stops you, switch the model to Grok 4.7 and continue the same thread.
+Tools, sandbox, MCP, and the thread stay with Codex. Inference uses the Grok subscription.
+No API key. One `grok login`. The second subscription after the weekly allowance is gone.
+
+The stock app stays untouched. Another window opens.
+On the rest of a week blocked on GPT, switch to Grok and keep committing in the same repo.
+Same repo, same permissions, different model. From then on you spend the Grok subscription allowance.
+Don't buy credits. Use the SuperGrok you already have, inside Codex.
+Inference goes to xAI. Tools, permissions, and threads stay with Codex.
+
 Run **Grok 4.7 as the model inside Codex**. Codex still owns tools, permissions,
 history and MCP. `grok-4.6` stays on the model list so existing threads still
 resolve. Inference uses the installed `grok` CLI login session — not an
@@ -437,6 +450,19 @@ responses. Codex’s and Grok’s own retention policies still apply.
 ---
 
 # 한국어
+
+Codex 위클리는 끝났고, Grok은 남아 있다.
+하네스는 그대로 두고, 머리만 바꾼다.
+
+한도가 막히면 모델을 Grok 4.7로 바꿔 같은 스레드를 이어갑니다.
+도구, 샌드박스, MCP, 스레드는 Codex가 그대로 둡니다. 추론만 Grok 구독입니다.
+API 키는 없습니다. `grok login` 한 번이면 됩니다. 위클리가 빈 뒤의 두 번째 구독입니다.
+
+앱은 건드리지 않습니다. 창만 하나 더 엽니다.
+GPT로 막힌 주의 나머지 날은, Grok으로 바꿔 같은 레포에서 커밋을 이어갑니다.
+같은 레포, 같은 권한, 다른 모델. 그때부터는 Grok 구독 한도를 씁니다.
+크레딧을 사지 않습니다. 남아 있는 SuperGrok을 Codex 안에서 씁니다.
+추론은 xAI로 가고, 도구와 권한과 스레드는 Codex에 남습니다.
 
 ## 이게 뭔가
 
