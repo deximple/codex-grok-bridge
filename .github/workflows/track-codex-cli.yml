@@ -1,0 +1,80 @@
+name: Track Codex CLI
+
+on:
+  schedule:
+    # Weekly, Monday 15:00 UTC.
+    - cron: "0 15 * * 1"
+  workflow_dispatch:
+
+# Push a branch and open a pull request. Do not publish npm, retag, or merge.
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: track-codex-cli
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Compare tracked Codex CLI with the latest stable release
+        id: compare
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/track-codex-cli.mjs --write-if-newer --notes-out /tmp/codex-cli-pr-body.md
+
+      - name: Open a pull request for a newer Codex CLI
+        if: steps.compare.outputs.update == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST: ${{ steps.compare.outputs.latest }}
+          PACKAGE_VERSION: ${{ steps.compare.outputs.package_version }}
+        run: |
+          set -euo pipefail
+          files=(
+            .github/codex-cli.json
+            package.json
+            package-lock.json
+            CHANGELOG.md
+            README.md
+          )
+          rm -rf /tmp/track-files
+          mkdir -p /tmp/track-files
+          for f in "${files[@]}"; do
+            mkdir -p "/tmp/track-files/$(dirname "$f")"
+            cp "$f" "/tmp/track-files/$f"
+          done
+          git checkout -- "${files[@]}"
+          branch="automation/track-codex-cli-${LATEST}"
+          git fetch origin "${branch}" || true
+          if git show-ref --verify --quiet "refs/remotes/origin/${branch}"; then
+            git checkout -B "${branch}" "origin/${branch}"
+          else
+            git checkout -B "${branch}"
+          fi
+          for f in "${files[@]}"; do
+            mkdir -p "$(dirname "$f")"
+            cp "/tmp/track-files/$f" "$f"
+          done
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet -- "${files[@]}"; then
+            git add "${files[@]}"
+            git commit -m "Track Codex CLI ${LATEST} as ${PACKAGE_VERSION}"
+            git push origin "${branch}"
+          fi
+          title="Track Codex CLI ${LATEST}"
+          existing="$(gh pr list --head "${branch}" --base main --state open --json number --jq 'if length == 0 then "" else .[0].number | tostring end')"
+          if [ -n "${existing}" ]; then
+            gh pr edit "${existing}" --title "${title}" --body-file /tmp/codex-cli-pr-body.md
+          else
+            gh pr create --base main --head "${branch}" --title "${title}" --body-file /tmp/codex-cli-pr-body.md
+          fi
