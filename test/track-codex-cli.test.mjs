@@ -12,8 +12,10 @@ import {
   planUpdate,
   pullRequestBody,
   readPin,
+  releaseNotes,
   releaseNotesExcerpt,
   writePin,
+  applyTrackBump,
 } from "../scripts/track-codex-cli.mjs";
 
 const release = (tag, extra = {}) => ({
@@ -91,6 +93,7 @@ test("pull request body links the upstream release and stops before assets", () 
   const body = pullRequestBody({
     tracked: "0.153.4",
     npmLatest: "0.160.1",
+    packageVersion: "1.8.2",
     latest: {
       version: "0.160.1",
       releaseUrl: "https://github.com/openai/codex/releases/tag/rust-v0.160.1",
@@ -99,9 +102,46 @@ test("pull request body links the upstream release and stops before assets", () 
   });
   assert.match(body, /https:\/\/github.com\/openai\/codex\/releases\/tag\/rust-v0\.160\.1/);
   assert.match(body, /0\.153\.4/);
+  assert.match(body, /bumps codex-grok-bridge to `1\.8\.2`/);
   assert.match(body, /does not publish to npm/);
+  assert.match(body, /does not publish to npm, create a git tag, or merge/);
   assert.equal(body.includes("| huge |"), false);
   assert.equal(releaseNotesExcerpt(`${"x".repeat(4100)}\n## Assets\nbinary`).includes("binary"), false);
+});
+
+test("a Codex bump prepends notes and leaves the previous release untouched", () => {
+  const bumped = applyTrackBump({
+    packageJson: '{"name":"codex-grok-bridge","version": "1.8.2"}\n',
+    packageLock: '{\n  "name": "codex-grok-bridge",\n  "version": "1.8.2",\n  "packages": {\n    "": {\n      "version": "1.8.2"\n    }\n  },\n  "deps": {\n    "@noble/curves": "^1.8.1"\n  }\n}\n',
+    changelog: "# Changelog\n\n## 1.8.2 — 2026-10-06\n\n- Kept.\n",
+    readme: [
+      "What each recent version added. Older cuts are in `CHANGELOG.md`.",
+      "",
+      "### 1.8.2 — 2026-10-06",
+      "",
+      "- Kept.",
+      "",
+      "최근 버전이 더한 것입니다. 그 이전은 `CHANGELOG.md`에 있습니다.",
+      "",
+      "### 1.8.2 — 2026-10-06",
+      "",
+      "- 유지.",
+      "",
+    ].join("\n"),
+    codexVersion: "0.161.0",
+    releaseUrl: "https://github.com/openai/codex/releases/tag/rust-v0.161.0",
+    date: "2026-10-13",
+  });
+  assert.equal(bumped.version, "1.8.3");
+  assert.match(bumped.packageJson, /"version": "1.8.3"/);
+  assert.match(bumped.packageLock, /"@noble\/curves": "\^1\.8\.1"/);
+  assert.equal(bumped.packageLock.split('"version": "1.8.3"').length - 1, 2);
+  assert.match(bumped.changelog, /^# Changelog\n\n## 1\.8\.3 — 2026-10-13\n\n- Tracked Codex CLI is 0\.161\.0/);
+  assert.match(bumped.changelog, /## 1\.8\.2 — 2026-10-06\n\n- Kept\./);
+  assert.match(bumped.readme, /### 1\.8\.3 — 2026-10-13\n\n- Tracked Codex CLI is 0\.161\.0/);
+  assert.match(bumped.readme, /### 1\.8\.3 — 2026-10-13\n\n- 추적하는 Codex CLI는 0\.161\.0입니다/);
+  assert.match(bumped.readme, /### 1\.8\.2 — 2026-10-06\n\n- Kept\./);
+  assert.match(bumped.readme, /- 유지\./);
 });
 
 test("loadLatest reads npm latest and GitHub stable releases", async () => {
@@ -128,11 +168,33 @@ test("loadLatest reads npm latest and GitHub stable releases", async () => {
 
 test("workflow compares the pin and does not publish, tag, or merge", () => {
   const text = readFileSync(new URL("../.github/workflows/track-codex-cli.yml", import.meta.url), "utf8");
+  const tracker = readFileSync(new URL("../scripts/track-codex-cli.mjs", import.meta.url), "utf8");
   assert.match(text, /workflow_dispatch:/);
   assert.match(text, /cron: "0 15 \* \* 1"/);
   assert.match(text, /\.github\/codex-cli\.json/);
+  assert.match(text, /package\.json/);
+  assert.match(text, /CHANGELOG\.md/);
+  assert.match(text, /README\.md/);
   assert.match(text, /scripts\/track-codex-cli\.mjs --write-if-newer/);
   assert.equal(text.includes("npm publish"), false);
   assert.equal(text.includes("gh pr merge"), false);
   assert.equal(text.includes("git tag"), false);
+  assert.equal(tracker.includes("npm publish"), false);
+});
+
+test("1.8.2 notes match the tracker text and keep 1.8.1", () => {
+  const notes = releaseNotes({
+    version: "1.8.2",
+    date: "2026-10-06",
+    codexVersion: "0.160.1",
+    releaseUrl: "https://github.com/openai/codex/releases/tag/rust-v0.160.1",
+  });
+  const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
+  const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+  assert.ok(changelog.startsWith(`# Changelog\n\n${notes.changelog}`));
+  assert.match(changelog, /## 1\.8\.1 — 2026-10-03\n\n- Grok reasoning ciphertext is removed/);
+  assert.ok(readme.includes(notes.readmeEn));
+  assert.ok(readme.includes(notes.readmeKo));
+  assert.match(readme, /### 1\.8\.1 — 2026-10-03\n\n- Grok reasoning ciphertext is removed/);
+  assert.match(readme, /### 1\.8\.1 — 2026-10-03\n\n- Grok reasoning 암호문/);
 });

@@ -36,10 +36,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           LATEST: ${{ steps.compare.outputs.latest }}
+          PACKAGE_VERSION: ${{ steps.compare.outputs.package_version }}
         run: |
           set -euo pipefail
-          cp .github/codex-cli.json /tmp/codex-cli.json
-          git checkout -- .github/codex-cli.json
+          files=(
+            .github/codex-cli.json
+            package.json
+            package-lock.json
+            CHANGELOG.md
+            README.md
+          )
+          rm -rf /tmp/track-files
+          mkdir -p /tmp/track-files
+          for f in "${files[@]}"; do
+            mkdir -p "/tmp/track-files/$(dirname "$f")"
+            cp "$f" "/tmp/track-files/$f"
+          done
+          git checkout -- "${files[@]}"
           branch="automation/track-codex-cli-${LATEST}"
           git fetch origin "${branch}" || true
           if git show-ref --verify --quiet "refs/remotes/origin/${branch}"; then
@@ -47,12 +60,15 @@ jobs:
           else
             git checkout -B "${branch}"
           fi
-          cp /tmp/codex-cli.json .github/codex-cli.json
+          for f in "${files[@]}"; do
+            mkdir -p "$(dirname "$f")"
+            cp "/tmp/track-files/$f" "$f"
+          done
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if ! git diff --quiet -- .github/codex-cli.json; then
-            git add .github/codex-cli.json
-            git commit -m "Track Codex CLI ${LATEST}"
+          if ! git diff --quiet -- "${files[@]}"; then
+            git add "${files[@]}"
+            git commit -m "Track Codex CLI ${LATEST} as ${PACKAGE_VERSION}"
             git push origin "${branch}"
           fi
           title="Track Codex CLI ${LATEST}"

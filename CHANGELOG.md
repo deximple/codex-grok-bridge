@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.8.2 — 2026-10-06
+
+- Tracked Codex CLI is 0.160.1 (https://github.com/openai/codex/releases/tag/rust-v0.160.1). No protocol change.
+
 ## 1.8.1 — 2026-10-03
 
 - Grok reasoning ciphertext is removed from the stream back to Codex, so a later switch to an OpenAI model does not try to decrypt a Grok reasoning blob. This was already on main after 1.8.0 and was not in the 1.8.0 npm tarball.
