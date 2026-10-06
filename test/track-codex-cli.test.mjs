@@ -189,8 +189,9 @@ test("1.8.2 notes match the tracker text and keep 1.8.1", () => {
     codexVersion: "0.160.1",
     releaseUrl: "https://github.com/openai/codex/releases/tag/rust-v0.160.1",
   });
-  const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
-  const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+  const lf = (text) => text.replaceAll("\r\n", "\n");
+  const changelog = lf(readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8"));
+  const readme = lf(readFileSync(new URL("../README.md", import.meta.url), "utf8"));
   assert.ok(changelog.startsWith(`# Changelog\n\n${notes.changelog}`));
   assert.match(changelog, /## 1\.8\.1 — 2026-10-03\n\n- Grok reasoning ciphertext is removed/);
   assert.ok(readme.includes(notes.readmeEn));
