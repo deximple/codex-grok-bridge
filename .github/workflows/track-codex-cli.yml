@@ -1,4 +1,4 @@
-name: Track Codex CLI
+name: Track Codex and Grok CLIs
 
 on:
   schedule:
@@ -25,22 +25,23 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Compare tracked Codex CLI with the latest stable release
+      - name: Compare tracked CLIs with the latest stable releases
         id: compare
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: node scripts/track-codex-cli.mjs --write-if-newer --notes-out /tmp/codex-cli-pr-body.md
+        run: node scripts/track-codex-cli.mjs --write-if-newer --notes-out /tmp/cli-pr-body.md
 
-      - name: Open a pull request for a newer Codex CLI
+      - name: Open a pull request when either CLI is newer
         if: steps.compare.outputs.update == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          LATEST: ${{ steps.compare.outputs.latest }}
+          TITLE: ${{ steps.compare.outputs.title }}
           PACKAGE_VERSION: ${{ steps.compare.outputs.package_version }}
         run: |
           set -euo pipefail
           files=(
             .github/codex-cli.json
+            .github/grok-cli.json
             package.json
             package-lock.json
             CHANGELOG.md
@@ -53,7 +54,7 @@ jobs:
             cp "$f" "/tmp/track-files/$f"
           done
           git checkout -- "${files[@]}"
-          branch="automation/track-codex-cli-${LATEST}"
+          branch="automation/track-cli-${PACKAGE_VERSION}"
           git fetch origin "${branch}" || true
           if git show-ref --verify --quiet "refs/remotes/origin/${branch}"; then
             git checkout -B "${branch}" "origin/${branch}"
@@ -68,13 +69,12 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if ! git diff --quiet -- "${files[@]}"; then
             git add "${files[@]}"
-            git commit -m "Track Codex CLI ${LATEST} as ${PACKAGE_VERSION}"
+            git commit -m "${TITLE}"
             git push origin "${branch}"
           fi
-          title="Track Codex CLI ${LATEST}"
           existing="$(gh pr list --head "${branch}" --base main --state open --json number --jq 'if length == 0 then "" else .[0].number | tostring end')"
           if [ -n "${existing}" ]; then
-            gh pr edit "${existing}" --title "${title}" --body-file /tmp/codex-cli-pr-body.md
+            gh pr edit "${existing}" --title "${TITLE}" --body-file /tmp/cli-pr-body.md
           else
-            gh pr create --base main --head "${branch}" --title "${title}" --body-file /tmp/codex-cli-pr-body.md
+            gh pr create --base main --head "${branch}" --title "${TITLE}" --body-file /tmp/cli-pr-body.md
           fi

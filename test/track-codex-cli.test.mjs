@@ -16,6 +16,11 @@ import {
   releaseNotesExcerpt,
   writePin,
   applyTrackBump,
+  loadGrokLatest,
+  parseChannelVersion,
+  planCliUpdates,
+  GROK_CHANGELOG_URL,
+  GROK_STABLE_URLS,
 } from "../scripts/track-codex-cli.mjs";
 
 const release = (tag, extra = {}) => ({
@@ -172,6 +177,8 @@ test("workflow compares the pin and does not publish, tag, or merge", () => {
   assert.match(text, /workflow_dispatch:/);
   assert.match(text, /cron: "0 15 \* \* 1"/);
   assert.match(text, /\.github\/codex-cli\.json/);
+  assert.match(text, /\.github\/grok-cli\.json/);
+  assert.equal(text.match(/cron: "0 15 \* \* 1"/g).length, 1);
   assert.match(text, /package\.json/);
   assert.match(text, /CHANGELOG\.md/);
   assert.match(text, /README\.md/);
@@ -180,6 +187,7 @@ test("workflow compares the pin and does not publish, tag, or merge", () => {
   assert.equal(text.includes("gh pr merge"), false);
   assert.equal(text.includes("git tag"), false);
   assert.equal(tracker.includes("npm publish"), false);
+  assert.equal(tracker.includes("gh pr merge"), false);
 });
 
 test("1.8.2 notes match the tracker text and keep 1.8.1", () => {
@@ -192,10 +200,123 @@ test("1.8.2 notes match the tracker text and keep 1.8.1", () => {
   const lf = (text) => text.replaceAll("\r\n", "\n");
   const changelog = lf(readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8"));
   const readme = lf(readFileSync(new URL("../README.md", import.meta.url), "utf8"));
-  assert.ok(changelog.startsWith(`# Changelog\n\n${notes.changelog}`));
+  assert.ok(changelog.includes(notes.changelog));
   assert.match(changelog, /## 1\.8\.1 — 2026-10-03\n\n- Grok reasoning ciphertext is removed/);
   assert.ok(readme.includes(notes.readmeEn));
   assert.ok(readme.includes(notes.readmeKo));
   assert.match(readme, /### 1\.8\.1 — 2026-10-03\n\n- Grok reasoning ciphertext is removed/);
   assert.match(readme, /### 1\.8\.1 — 2026-10-03\n\n- Grok reasoning 암호문/);
+});
+
+test("the stable Grok channel is an X.Y.Z line", () => {
+  assert.equal(parseChannelVersion("1.0.46\n"), "1.0.46");
+  assert.equal(parseChannelVersion("1.0.46\r\nextra"), "1.0.46");
+  assert.equal(parseChannelVersion("1.0.47-alpha.1\n"), null);
+  assert.equal(parseChannelVersion(""), null);
+});
+
+test("loadGrokLatest uses the installer stable channel and falls back", async () => {
+  const primary = await loadGrokLatest({
+    fetchImpl: async (url) => {
+      assert.equal(url, GROK_STABLE_URLS[0]);
+      return { ok: true, text: async () => "1.0.46\n" };
+    },
+  });
+  assert.deepEqual(primary, {
+    version: "1.0.46",
+    releaseUrl: GROK_CHANGELOG_URL,
+    channelUrl: GROK_STABLE_URLS[0],
+  });
+  const calls = [];
+  const fallback = await loadGrokLatest({
+    fetchImpl: async (url) => {
+      calls.push(url);
+      if (url === GROK_STABLE_URLS[0]) return { ok: false, status: 503, text: async () => "" };
+      return { ok: true, text: async () => "1.0.46" };
+    },
+  });
+  assert.equal(fallback.version, "1.0.46");
+  assert.deepEqual(calls, GROK_STABLE_URLS);
+});
+
+test("one plan updates only the newer pin", () => {
+  const codex = {
+    version: "0.160.1",
+    releaseUrl: "https://github.com/openai/codex/releases/tag/rust-v0.160.1",
+  };
+  const same = planCliUpdates({
+    codexTracked: "0.160.1",
+    codexLatest: codex,
+    grokTracked: "1.0.46",
+    grokLatest: { version: "1.0.46", releaseUrl: GROK_CHANGELOG_URL },
+  });
+  assert.equal(same.update, false);
+  const grokOnly = planCliUpdates({
+    codexTracked: "0.160.1",
+    codexLatest: codex,
+    grokTracked: "1.0.25",
+    grokLatest: { version: "1.0.46", releaseUrl: GROK_CHANGELOG_URL },
+  });
+  assert.equal(grokOnly.update, true);
+  assert.equal(grokOnly.codex.update, false);
+  assert.equal(grokOnly.grok.pin.version, "1.0.46");
+});
+
+test("a Grok bump prepends notes and leaves the Codex release untouched", () => {
+  const bumped = applyTrackBump({
+    packageJson: '{"name":"codex-grok-bridge","version": "1.8.2"}\n',
+    packageLock: '{\n  "name": "codex-grok-bridge",\n  "version": "1.8.2",\n  "packages": {\n    "": {\n      "version": "1.8.2"\n    }\n  },\n  "deps": {\n    "@noble/curves": "^1.8.1"\n  }\n}\n',
+    changelog: "# Changelog\n\n## 1.8.2 — 2026-10-06\n\n- Tracked Codex CLI is 0.160.1 (https://github.com/openai/codex/releases/tag/rust-v0.160.1). No protocol change.\n",
+    readme: [
+      "What each recent version added. Older cuts are in `CHANGELOG.md`.",
+      "",
+      "### 1.8.2 — 2026-10-06",
+      "",
+      "- Tracked Codex CLI is 0.160.1 (https://github.com/openai/codex/releases/tag/rust-v0.160.1). No protocol change.",
+      "",
+      "최근 버전이 더한 것입니다. 그 이전은 `CHANGELOG.md`에 있습니다.",
+      "",
+      "### 1.8.2 — 2026-10-06",
+      "",
+      "- 추적하는 Codex CLI는 0.160.1입니다 (https://github.com/openai/codex/releases/tag/rust-v0.160.1). 프로토콜 변경은 없습니다.",
+      "",
+    ].join("\n"),
+    grokVersion: "1.0.46",
+    grokReleaseUrl: GROK_CHANGELOG_URL,
+    date: "2026-10-06",
+  });
+  assert.equal(bumped.version, "1.8.3");
+  assert.match(bumped.changelog, /^# Changelog\n\n## 1\.8\.3 — 2026-10-06\n\n- Tracked Grok CLI is 1\.0\.46/);
+  assert.match(bumped.changelog, /## 1\.8\.2 — 2026-10-06\n\n- Tracked Codex CLI is 0\.160\.1/);
+  assert.match(bumped.readme, /### 1\.8\.3 — 2026-10-06\n\n- 추적하는 Grok CLI는 1\.0\.46입니다/);
+});
+
+test("1.8.3 notes match the tracker text and keep 1.8.2", () => {
+  const notes = releaseNotes({
+    version: "1.8.3",
+    date: "2026-10-06",
+    grokVersion: "1.0.46",
+    grokReleaseUrl: GROK_CHANGELOG_URL,
+  });
+  const lf = (text) => text.replaceAll("\r\n", "\n");
+  const changelog = lf(readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8"));
+  const readme = lf(readFileSync(new URL("../README.md", import.meta.url), "utf8"));
+  const pin = JSON.parse(readFileSync(new URL("../.github/grok-cli.json", import.meta.url), "utf8"));
+  assert.deepEqual(pin, { version: "1.0.46", releaseUrl: GROK_CHANGELOG_URL });
+  assert.ok(changelog.startsWith(`# Changelog\n\n${notes.changelog}`));
+  assert.match(changelog, /## 1\.8\.2 — 2026-10-06\n\n- Tracked Codex CLI is 0\.160\.1/);
+  assert.ok(readme.includes(notes.readmeEn));
+  assert.ok(readme.includes(notes.readmeKo));
+  const body = pullRequestBody({
+    packageVersion: "1.8.3",
+    grok: {
+      update: true,
+      tracked: "1.0.25",
+      latest: { version: "1.0.46", releaseUrl: GROK_CHANGELOG_URL, channelUrl: GROK_STABLE_URLS[0] },
+    },
+  });
+  assert.match(body, /1\.0\.25/);
+  assert.match(body, /https:\/\/x\.ai\/cli\/stable/);
+  assert.match(body, /does not publish to npm, create a git tag, or merge/);
+  assert.equal(body.includes("npm publish"), false);
 });

@@ -288,5 +288,5 @@ test("the published package allows npm install on darwin, linux, and win32", () 
     readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"),
   );
   assert.deepEqual(pkg.os, ["darwin", "linux", "win32"]);
-  assert.equal(pkg.version, "1.8.2");
+  assert.equal(pkg.version, "1.8.3");
 });

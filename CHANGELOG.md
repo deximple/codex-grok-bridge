@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.8.3 — 2026-10-06
+
+- Tracked Grok CLI is 1.0.46 (https://x.ai/build/changelog). No bridge change.
+
 ## 1.8.2 — 2026-10-06
 
 - Tracked Codex CLI is 0.160.1 (https://github.com/openai/codex/releases/tag/rust-v0.160.1). No protocol change.
