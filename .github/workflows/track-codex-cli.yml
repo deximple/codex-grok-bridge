@@ -34,7 +34,7 @@ jobs:
       - name: Open a pull request when either CLI is newer
         if: steps.compare.outputs.update == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.CI_PAT || github.token }}
           TITLE: ${{ steps.compare.outputs.title }}
           PACKAGE_VERSION: ${{ steps.compare.outputs.package_version }}
         run: |
@@ -72,9 +72,30 @@ jobs:
             git commit -m "${TITLE}"
             git push origin "${branch}"
           fi
-          existing="$(gh pr list --head "${branch}" --base main --state open --json number --jq 'if length == 0 then "" else .[0].number | tostring end')"
+
+          existing="$(gh pr list --head "${branch}" --base main --state open --json number --jq 'if length == 0 then "" else .[0].number | tostring end' || true)"
           if [ -n "${existing}" ]; then
-            gh pr edit "${existing}" --title "${TITLE}" --body-file /tmp/cli-pr-body.md
+            if ! gh pr edit "${existing}" --title "${TITLE}" --body-file /tmp/cli-pr-body.md; then
+              echo "::warning::gh pr edit failed; the branch was pushed, but PR update is blocked by repository policy."
+              echo "::warning::Review branch: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/tree/${branch}"
+              {
+                echo "## Update ready"
+                echo "- Branch: ${branch}"
+                echo "- Review URL: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/tree/${branch}"
+                echo "- PR update was blocked by GitHub policy, but the branch was pushed successfully."
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
           else
-            gh pr create --base main --head "${branch}" --title "${TITLE}" --body-file /tmp/cli-pr-body.md
+            if ! gh pr create --base main --head "${branch}" --title "${TITLE}" --body-file /tmp/cli-pr-body.md; then
+              echo "::warning::gh pr create failed because this repository or organization blocks Actions from creating pull requests."
+              echo "::warning::The update branch '${branch}' was pushed successfully. Review it here: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/tree/${branch}"
+              {
+                echo "## Update ready"
+                echo "- Branch: ${branch}"
+                echo "- Review URL: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/tree/${branch}"
+                echo "- PR creation was blocked by GitHub policy, so the branch was pushed without opening a PR."
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
           fi
