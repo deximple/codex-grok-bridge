@@ -55,6 +55,11 @@ the bridge runs. See Release history.
 
 What each recent version added. Older cuts are in `CHANGELOG.md`.
 
+### 1.8.4 — 2026-10-25
+
+- Tracked Codex CLI is 0.164.0 (https://github.com/openai/codex/releases/tag/rust-v0.164.0). No protocol change.
+- Tracked Grok CLI is 1.0.70 (https://x.ai/build/changelog). No bridge change.
+
 ### 1.8.3 — 2026-10-06
 
 - Tracked Grok CLI is 1.0.46 (https://x.ai/build/changelog). No bridge change.
@@ -495,6 +500,11 @@ Codex `web_search`는 브리지가 실행하는 함수가 아니라 xAI 서버 �
 ## 릴리스 기록
 
 최근 버전이 더한 것입니다. 그 이전은 `CHANGELOG.md`에 있습니다.
+
+### 1.8.4 — 2026-10-25
+
+- 추적하는 Codex CLI는 0.164.0입니다 (https://github.com/openai/codex/releases/tag/rust-v0.164.0). 프로토콜 변경은 없습니다.
+- 추적하는 Grok CLI는 1.0.70입니다 (https://x.ai/build/changelog). 브리지 변경은 없습니다.
 
 ### 1.8.3 — 2026-10-06
 

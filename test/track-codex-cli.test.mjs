@@ -301,9 +301,7 @@ test("1.8.3 notes match the tracker text and keep 1.8.2", () => {
   const lf = (text) => text.replaceAll("\r\n", "\n");
   const changelog = lf(readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8"));
   const readme = lf(readFileSync(new URL("../README.md", import.meta.url), "utf8"));
-  const pin = JSON.parse(readFileSync(new URL("../.github/grok-cli.json", import.meta.url), "utf8"));
-  assert.deepEqual(pin, { version: "1.0.46", releaseUrl: GROK_CHANGELOG_URL });
-  assert.ok(changelog.startsWith(`# Changelog\n\n${notes.changelog}`));
+  assert.ok(changelog.includes(notes.changelog));
   assert.match(changelog, /## 1\.8\.2 — 2026-10-06\n\n- Tracked Codex CLI is 0\.160\.1/);
   assert.ok(readme.includes(notes.readmeEn));
   assert.ok(readme.includes(notes.readmeKo));
@@ -319,4 +317,29 @@ test("1.8.3 notes match the tracker text and keep 1.8.2", () => {
   assert.match(body, /https:\/\/x\.ai\/cli\/stable/);
   assert.match(body, /does not publish to npm, create a git tag, or merge/);
   assert.equal(body.includes("npm publish"), false);
+});
+
+test("1.8.4 notes match the tracker text and keep 1.8.3", () => {
+  const notes = releaseNotes({
+    version: "1.8.4",
+    date: "2026-10-25",
+    codexVersion: "0.164.0",
+    releaseUrl: "https://github.com/openai/codex/releases/tag/rust-v0.164.0",
+    grokVersion: "1.0.70",
+    grokReleaseUrl: GROK_CHANGELOG_URL,
+  });
+  const lf = (text) => text.replaceAll("\r\n", "\n");
+  const changelog = lf(readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8"));
+  const readme = lf(readFileSync(new URL("../README.md", import.meta.url), "utf8"));
+  const codexPin = JSON.parse(readFileSync(new URL("../.github/codex-cli.json", import.meta.url), "utf8"));
+  const grokPin = JSON.parse(readFileSync(new URL("../.github/grok-cli.json", import.meta.url), "utf8"));
+  assert.deepEqual(codexPin, {
+    version: "0.164.0",
+    releaseUrl: "https://github.com/openai/codex/releases/tag/rust-v0.164.0",
+  });
+  assert.deepEqual(grokPin, { version: "1.0.70", releaseUrl: GROK_CHANGELOG_URL });
+  assert.ok(changelog.startsWith(`# Changelog\n\n${notes.changelog}`));
+  assert.match(changelog, /## 1\.8\.3 — 2026-10-06\n\n- Tracked Grok CLI is 1\.0\.46/);
+  assert.ok(readme.includes(notes.readmeEn));
+  assert.ok(readme.includes(notes.readmeKo));
 });
