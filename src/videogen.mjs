@@ -360,27 +360,65 @@ function doneItems(parts) {
   return items;
 }
 
+const videoHandoffs = new Map();
+
+function functionCallItem(item) {
+  return {
+    type: "function_call",
+    name: item.name,
+    call_id: item.call_id,
+    arguments:
+      typeof item.arguments === "string" ? item.arguments : JSON.stringify(item.arguments ?? {}),
+  };
+}
+
+export function ordinaryFunctionCalls(parts) {
+  return doneItems(parts)
+    .filter((item) => item?.type === "function_call" && item.name !== GROK_VIDEO_TOOL_NAME)
+    .map(functionCallItem);
+}
+
+export function clearVideoHandoffs() {
+  videoHandoffs.clear();
+}
+
+export function noteVideoHandoff(threadId, handoff) {
+  videoHandoffs.set(threadId || "default", handoff);
+}
+
+export function applyVideoHandoff(threadId, input) {
+  const pending = videoHandoffs.get(threadId || "default");
+  if (!pending || !Array.isArray(input) || !pending.waiting?.length) return input;
+  const outputs = new Set(
+    input
+      .filter((item) => item?.type === "function_call_output" && item.call_id)
+      .map((item) => item.call_id),
+  );
+  if (!pending.waiting.every((id) => outputs.has(id))) return input;
+  videoHandoffs.delete(threadId || "default");
+  const items = (pending.videos ?? []).flatMap((video) => [
+    functionCallItem(video),
+    {
+      type: "function_call_output",
+      name: video.name,
+      call_id: video.call_id,
+      output: video.output,
+    },
+  ]);
+  const at = input.findIndex(
+    (item) => item?.type === "function_call" && pending.waiting.includes(item.call_id),
+  );
+  if (at < 0) return [...items, ...input];
+  return [...input.slice(0, at), ...items, ...input.slice(at)];
+}
+
 export function retainedInputItems(parts) {
   const items = [];
   for (const item of doneItems(parts)) {
-    if (item?.type === "function_call" && item.name === GROK_VIDEO_TOOL_NAME) continue;
-    if (item?.type === "function_call") {
-      items.push({
-        type: "function_call",
-        name: item.name,
-        call_id: item.call_id,
-        arguments:
-          typeof item.arguments === "string"
-            ? item.arguments
-            : JSON.stringify(item.arguments ?? {}),
-      });
-      continue;
-    }
-    if (item?.type === "reasoning" || item?.type === "message") {
-      const copy = structuredClone(item);
-      stripCiphertext(copy);
-      items.push(copy);
-    }
+    if (item?.type !== "reasoning" && item?.type !== "message") continue;
+    const copy = structuredClone(item);
+    stripCiphertext(copy);
+    items.push(copy);
   }
   return items;
 }

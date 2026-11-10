@@ -55,6 +55,11 @@ the bridge runs. See Release history.
 
 What each recent version added. Older cuts are in `CHANGELOG.md`.
 
+### 1.8.6 — 2026-11-10
+
+- Two app-server wrappers that share `CODEX_HOME` keep a live owner on the provider baseline. Startup recovery and exit restore no longer treat another running wrapper's marker as a crash, so the configured provider returns to its original value only after the last wrapper exits.
+- A video response that also contains an ordinary Codex tool call is handed to Codex first. The video result is sent upstream only after that tool's output arrives, instead of being submitted beside an unanswered function call.
+
 ### 1.8.5 — 2026-11-10
 
 - Codex CLI 0.166 and newer reject a turn when the thread's provider differs from the app-server's configured provider. The desktop wrapper sets `model_provider` for that process, updates the saved thread provider, and archives then unarchives the loaded thread so Codex reloads it, before `thread/resume`. A new Grok turn and an openai ↔ `grok_build_cli` switch both pass `verify-app-server`. The previous `model_provider` value is restored when the wrapper exits.
@@ -158,7 +163,7 @@ starts, and tears the provider down with that process.
 ```sh
 git clone https://github.com/deximple/codex-grok-bridge.git
 cd codex-grok-bridge
-npm test                        # 315 tests, no network, no inference
+npm test                        # 317 tests, no network, no inference
 node scripts/codex-grok.mjs
 ```
 
@@ -425,7 +430,7 @@ Start here when something breaks. Do not open `~/.grok/auth.json` or
 ## Verify
 
 ```sh
-npm test                    # 315 tests, no remote inference
+npm test                    # 317 tests, no remote inference
 npm run test:coverage       # 80% line / branch / function gate
 npm run verify:app-server   # real app-server routing; also runs against an installed bundle
 npm audit --omit=dev
@@ -519,6 +524,11 @@ Codex `web_search`는 브리지가 실행하는 함수가 아니라 xAI 서버 �
 ## 릴리스 기록
 
 최근 버전이 더한 것입니다. 그 이전은 `CHANGELOG.md`에 있습니다.
+
+### 1.8.6 — 2026-11-10
+
+- `CODEX_HOME`을 같이 쓰는 앱 서버 래퍼 둘은 제공자 기준값에 살아있는 소유자를 남깁니다. 시작 복구와 종료 복원은 다른 래퍼가 쓰는 마커를 비정상 종료로 보지 않으므로, 설정된 제공자는 마지막 래퍼가 끝난 뒤에만 원래 값으로 돌아갑니다.
+- 영상 응답에 Codex 도구 호출이 같이 있으면 그 호출을 먼저 Codex에 넘깁니다. 영상 결과는 그 도구 출력이 도착한 뒤에만 상류로 보내고, 답이 없는 함수 호출 옆에 붙이지 않습니다.
 
 ### 1.8.5 — 2026-11-10
 
@@ -622,7 +632,7 @@ codex-grok exec --skip-git-repo-check --sandbox workspace-write '작업 내용'
 ```sh
 git clone https://github.com/deximple/codex-grok-bridge.git
 cd codex-grok-bridge
-npm test                        # 315건, 네트워크·추론 없음
+npm test                        # 317건, 네트워크·추론 없음
 node scripts/codex-grok.mjs
 ```
 
@@ -873,7 +883,7 @@ URL과 저장한 파일 경로를 함께 넣습니다. 다운로드가 실패하
 ## 검증
 
 ```sh
-npm test                    # 315건, 외부 추론 없음
+npm test                    # 317건, 외부 추론 없음
 npm run test:coverage       # line/branch/function 80% 게이트
 npm run verify:app-server   # 실제 app-server 라우팅. 설치된 앱 번들에서도 실행
 npm audit --omit=dev

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { symlink, mkdtemp, readFile, writeFile, lstat, rm } from "node:fs/promises";
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -13,15 +13,21 @@ import {
   alignConfiguredProvider,
   applyModelProvider,
   captureProviderBaseline,
+  providerMarkerPath,
   readModelProvider,
   renderModelProvider,
   restoreProviderBaseline,
   rewriteSavedModelProvider,
+  setOwnerAliveForTests,
 } from "../src/provider-align.mjs";
 import { migrateRolloutFile, rewriteRolloutText } from "../src/rollout.mjs";
 import { toProxyRequest } from "../src/tools.mjs";
 import {
   addUsage,
+  applyVideoHandoff,
+  clearVideoHandoffs,
+  noteVideoHandoff,
+  ordinaryFunctionCalls,
   retainedInputItems,
   stripVideoToolEvents,
 } from "../src/videogen.mjs";
@@ -144,8 +150,52 @@ test("provider config and saved thread provider can be switched without dropping
   await rm(dir, { recursive: true, force: true });
 });
 
-test("video follow-up keeps the other tool call and drops the bridge tool at the limit", () => {
+test("two live wrappers do not consume each other's provider baseline", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "bridge-owners-"));
+  const config = path.join(dir, "config.toml");
+  writeFileSync(config, 'model_provider = "openai"\n');
+  const ownerA = { pid: 1001, token: "owner-a" };
+  const ownerB = { pid: 1002, token: "owner-b" };
+  setOwnerAliveForTests(() => true);
+  try {
+    captureProviderBaseline(dir, ownerA);
+    assert.equal(alignConfiguredProvider(dir, "grok_build_cli"), true);
+    captureProviderBaseline(dir, ownerB);
+    assert.equal(readModelProvider(readFileSync(config, "utf8")), "grok_build_cli");
+    assert.equal(restoreProviderBaseline(dir, ownerA), true);
+    assert.equal(readModelProvider(readFileSync(config, "utf8")), "grok_build_cli");
+    assert.equal(existsSync(providerMarkerPath(dir)), true);
+    assert.equal(alignConfiguredProvider(dir, "grok_build_cli"), false);
+    assert.equal(restoreProviderBaseline(dir, ownerB), true);
+    assert.equal(readModelProvider(readFileSync(config, "utf8")), "openai");
+    assert.equal(existsSync(providerMarkerPath(dir)), false);
+
+    setOwnerAliveForTests(() => false);
+    captureProviderBaseline(dir, ownerA);
+    alignConfiguredProvider(dir, "grok_build_cli");
+    captureProviderBaseline(dir, ownerB);
+    assert.equal(readModelProvider(readFileSync(config, "utf8")), "openai");
+    restoreProviderBaseline(dir, ownerB);
+    assert.equal(existsSync(providerMarkerPath(dir)), false);
+
+    setOwnerAliveForTests(null);
+    writeFileSync(config, 'model_provider = "openai"\n');
+    captureProviderBaseline(dir, { pid: 2147483647, token: "dead" });
+    assert.equal(alignConfiguredProvider(dir, "grok_build_cli"), true);
+    captureProviderBaseline(dir, { pid: process.pid, token: "replacement" });
+    assert.equal(readModelProvider(readFileSync(config, "utf8")), "openai");
+  } finally {
+    setOwnerAliveForTests(null);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("video follow-up hands an ordinary tool call to Codex before using its result", () => {
   const parts = [
+    `event: response.output_item.done\ndata: ${JSON.stringify({
+      type: "response.output_item.done",
+      item: { type: "message", role: "assistant", content: [{ type: "output_text", text: "working" }] },
+    })}`,
     `event: response.output_item.done\ndata: ${JSON.stringify({
       type: "response.output_item.done",
       item: { type: "function_call", name: "shell", call_id: "c1", arguments: "{\"cmd\":\"ls\"}" },
@@ -165,9 +215,32 @@ test("video follow-up keeps the other tool call and drops the bridge tool at the
       },
     })}`,
   ];
+  clearVideoHandoffs();
   const kept = retainedInputItems(parts);
-  assert.equal(kept.some((item) => item.name === "shell"), true);
-  assert.equal(kept.some((item) => item.name === "grok_bridge_generate_video"), false);
+  assert.equal(kept.some((item) => item.type === "function_call"), false);
+  assert.equal(kept.some((item) => item.type === "message"), true);
+  const ordinary = ordinaryFunctionCalls(parts);
+  assert.deepEqual(ordinary.map((item) => item.call_id), ["c1"]);
+  const waiting = [{ type: "function_call", name: "shell", call_id: "c1", arguments: "{\"cmd\":\"ls\"}" }];
+  noteVideoHandoff("thread-video", {
+    waiting: ["c1"],
+    videos: [{ name: "grok_bridge_generate_video", call_id: "c2", arguments: "{}", output: "saved" }],
+  });
+  assert.equal(applyVideoHandoff("thread-video", waiting), waiting);
+  const ready = applyVideoHandoff("thread-video", [
+    ...waiting,
+    { type: "function_call_output", call_id: "c1", output: "ok" },
+  ]);
+  assert.deepEqual(
+    ready.map((item) => item.call_id),
+    ["c2", "c2", "c1", "c1"],
+  );
+  assert.equal(
+    applyVideoHandoff("thread-video", [
+      { type: "function_call_output", call_id: "c1", output: "ok" },
+    ]).some((item) => item.call_id === "c2"),
+    false,
+  );
   const stripped = stripVideoToolEvents(parts).join("\n");
   assert.equal(stripped.includes("grok_bridge_generate_video"), false);
   assert.equal(stripped.includes("shell") || stripped.includes("message"), true);

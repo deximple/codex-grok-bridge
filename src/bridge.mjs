@@ -11,6 +11,9 @@ import {
 import { emitProxySse, readRelayProxySse } from "./proxy.mjs";
 import {
   addUsage,
+  applyVideoHandoff,
+  noteVideoHandoff,
+  ordinaryFunctionCalls,
   retainedInputItems,
   stampUsage,
   stripVideoToolEvents,
@@ -45,7 +48,11 @@ export { MODEL_INFO };
 const VIDEO_FOLLOW_UPS = 2;
 
 async function relayWithVideo(options, output, map, usageBox, onClientByte) {
-  let body = options.body;
+  const handoffKey = options.sessionId || options.convId || "default";
+  let body = {
+    ...options.body,
+    input: applyVideoHandoff(handoffKey, options.body?.input),
+  };
   let totalUsage = {};
   for (let step = 0; step <= VIDEO_FOLLOW_UPS; step += 1) {
     const parts = await readRelayProxySse({ ...options, body }, output);
@@ -60,25 +67,48 @@ async function relayWithVideo(options, output, map, usageBox, onClientByte) {
     // The videos API poll can sit for minutes. Keepalive is safe here: this
     // upstream reply is finished, and nothing has been written to Codex yet.
     onClientByte();
-    const additions = [...retainedInputItems(parts)];
+    const videos = [];
     for (const call of calls) {
-      const toolOutput = await videoToolOutput(call, options.video);
-      additions.push(
+      videos.push({
+        name: call.name,
+        call_id: call.call_id,
+        arguments: call.arguments,
+        output: await videoToolOutput(call, options.video),
+      });
+    }
+    const ordinary = ordinaryFunctionCalls(parts);
+    if (ordinary.length) {
+      noteVideoHandoff(handoffKey, {
+        waiting: ordinary.map((call) => call.call_id).filter(Boolean),
+        videos,
+      });
+      await emitProxySse(
+        stampUsage(stripVideoToolEvents(parts), totalUsage),
+        output,
+        map,
+        usageBox,
+        onClientByte,
+      );
+      return;
+    }
+    const additions = [
+      ...retainedInputItems(parts),
+      ...videos.flatMap((video) => [
         {
           type: "function_call",
-          name: call.name,
-          call_id: call.call_id,
-          arguments: call.arguments,
+          name: video.name,
+          call_id: video.call_id,
+          arguments: video.arguments,
         },
         {
           type: "function_call_output",
-          name: call.name,
-          call_id: call.call_id,
-          output: toolOutput,
+          name: video.name,
+          call_id: video.call_id,
+          output: video.output,
         },
-      );
-    }
-    body = { ...body, input: [...body.input, ...additions] };
+      ]),
+    ];
+    body = { ...body, input: [...(body.input ?? []), ...additions] };
   }
 }
 
