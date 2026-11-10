@@ -1,7 +1,9 @@
 name: Publish
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -15,10 +17,12 @@ concurrency:
 
 jobs:
   publish:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
@@ -26,8 +30,18 @@ jobs:
           node-version: "22"
           registry-url: https://registry.npmjs.org
 
+      - name: Require a successful CI run for this commit
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          conclusion="$(gh run list --workflow CI --commit "$sha" --json conclusion,status --jq '[.[] | select(.status=="completed")][0].conclusion')"
+          test "$conclusion" = "success"
+
       - name: Install
-        run: npm install --no-audit --no-fund
+        run: npm ci
 
       - name: Publish the missing npm package or GitHub Release
         env:

@@ -15,15 +15,18 @@ export const DEFAULT_IMAGE_DIR = path.join(
   ".local/share/codex-grok-bridge/generated-images",
 );
 
-const SIGNATURES = [
-  [Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), "png"],
-  [Buffer.from([255, 216, 255]), "jpg"],
-  [Buffer.from("RIFF", "ascii"), "webp"],
-];
+const PNG_MAGIC = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
 function extensionFor(bytes) {
-  for (const [magic, extension] of SIGNATURES)
-    if (bytes.subarray(0, magic.length).equals(magic)) return extension;
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(PNG_MAGIC)) return "png";
+  if (bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255)
+    return "jpg";
+  if (
+    bytes.length >= 12 &&
+    bytes.toString("ascii", 0, 4) === "RIFF" &&
+    bytes.toString("ascii", 8, 12) === "WEBP"
+  )
+    return "webp";
   return "bin";
 }
 
@@ -62,7 +65,7 @@ export function saveGeneratedImage(item, options = {}) {
  * colour type: 4 is greyscale+alpha, 6 is RGBA.
  */
 export function hasAlphaChannel(bytes) {
-  const isPng = bytes.subarray(0, 8).equals(SIGNATURES[0][0]);
+  const isPng = bytes.length >= 8 && bytes.subarray(0, 8).equals(PNG_MAGIC);
   if (!isPng || bytes.length < 26) return false;
   const colorType = bytes[25];
   return colorType === 4 || colorType === 6;

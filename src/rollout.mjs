@@ -1,4 +1,5 @@
-import { readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { lstat, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -19,7 +20,35 @@ function recordedProvider(record) {
   const modelProvider = typeof record.model_provider === "string" ? record.model_provider : "";
   const model = typeof record.model === "string" ? record.model : "";
   if (modelProvider === "grok_build_cli" || model.startsWith("grok-")) return "grok_build_cli";
+  if (model && !model.startsWith("grok-")) return modelProvider || "non_grok";
   return modelProvider || null;
+}
+
+// Codex 0.166+ resume checks the first session_meta provider. A model-only
+// line is not enough to leave Grok, so a later GPT line names a non-Grok provider.
+export function rewriteRolloutProviderText(text, provider, model) {
+  if (typeof text !== "string" || !provider) return text;
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!lines[i]) continue;
+    let value;
+    try {
+      value = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    if (value?.type !== "session_meta" || !value.payload || typeof value.payload !== "object")
+      continue;
+    const sameProvider = value.payload.model_provider === provider;
+    const sameModel = model == null || value.payload.model === model;
+    if (sameProvider && sameModel) return text;
+    const copy = structuredClone(value);
+    copy.payload.model_provider = provider;
+    if (model != null) copy.payload.model = model;
+    lines[i] = JSON.stringify(copy);
+    return lines.join("\n");
+  }
+  return text;
 }
 
 // session_meta sets the provider from model_provider. A later line that names
@@ -73,17 +102,19 @@ export function rewriteRolloutText(text) {
 
 export async function migrateRolloutFile(file) {
   if (typeof file !== "string" || !file || isSkippedHistoryPath(file)) return false;
-  let first;
+  let info;
   try {
-    first = await readFile(file);
+    info = await lstat(file);
   } catch (error) {
     if (error.code === "ENOENT") return false;
     throw error;
   }
+  if (!info.isFile()) return false;
+  const first = await readFile(file);
   const next = rewriteRolloutText(first.toString("utf8"));
   if (next === first.toString("utf8")) return false;
-  const mode = (await stat(file)).mode & 0o777;
-  const tmp = `${file}.${process.pid}.tmp`;
+  const mode = info.mode & 0o777;
+  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(tmp, next, { mode });
   const again = await readFile(file);
   if (!again.equals(first)) {

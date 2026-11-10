@@ -5,6 +5,7 @@ import path from "node:path";
 import { once } from "node:events";
 import { createBridgeServer } from "./bridge.mjs";
 import { catalogModelInfos } from "./models.mjs";
+import { closeVoiceCalls } from "./voice.mjs";
 
 export async function startRuntime(options = {}) {
   const token = randomBytes(32).toString("hex");
@@ -52,6 +53,7 @@ export async function startRuntime(options = {}) {
     catalogPath,
     args,
     async close() {
+      closeVoiceCalls();
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
       await rm(dir, { recursive: true, force: true });

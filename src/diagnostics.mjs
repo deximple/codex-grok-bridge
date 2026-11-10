@@ -11,7 +11,7 @@ export const MAX_LOG_BYTES = 4 * 1024 * 1024;
 // Values that must never reach disk, matched structurally rather than by name,
 // because the field a token arrives in is not stable.
 const SECRET_PATTERNS = [
-  [/Bearer\s+[A-Za-z0-9._~+/-]+=*/g, "Bearer [redacted]"],
+  [/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [redacted]"],
   [/eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+/g, "[jwt]"],
   [/sk-[A-Za-z0-9_-]{16,}/g, "[key]"],
   [/xai-[A-Za-z0-9_-]{16,}/g, "[key]"],

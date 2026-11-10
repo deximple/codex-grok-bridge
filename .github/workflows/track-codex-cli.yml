@@ -20,6 +20,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.CI_PAT || github.token }}
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -29,7 +32,34 @@ jobs:
         id: compare
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: node scripts/track-codex-cli.mjs --write-if-newer --notes-out /tmp/cli-pr-body.md
+        run: node scripts/track-codex-cli.mjs
+
+      - name: Verify app-server against the Codex CLI before pinning it
+        if: steps.compare.outputs.update == 'true' && steps.compare.outputs.codex_update == 'true'
+        env:
+          CODEX_VERSION: ${{ steps.compare.outputs.latest }}
+        run: |
+          set -euo pipefail
+          dir="$(mktemp -d)"
+          npm pack "@openai/codex@${CODEX_VERSION}-linux-x64" --pack-destination "$dir"
+          tar -xzf "$dir"/openai-codex-*.tgz -C "$dir"
+          bin="$(find "$dir" -type f -path '*/bin/codex' | head -1)"
+          test -n "$bin"
+          chmod +x "$bin"
+          CODEX_BINARY="$bin" node scripts/verify-app-server.mjs
+
+      - name: Record the pin after verification
+        if: steps.compare.outputs.update == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CODEX_UPDATE: ${{ steps.compare.outputs.codex_update }}
+        run: |
+          set -euo pipefail
+          args=(--write-if-newer --notes-out /tmp/cli-pr-body.md)
+          if [ "$CODEX_UPDATE" = "true" ]; then
+            args+=(--protocol-verified)
+          fi
+          node scripts/track-codex-cli.mjs "${args[@]}"
 
       - name: Open a pull request when either CLI is newer
         if: steps.compare.outputs.update == 'true'
@@ -54,13 +84,9 @@ jobs:
             cp "$f" "/tmp/track-files/$f"
           done
           git checkout -- "${files[@]}"
+          git fetch origin main
           branch="automation/track-cli-${PACKAGE_VERSION}"
-          git fetch origin "${branch}" || true
-          if git show-ref --verify --quiet "refs/remotes/origin/${branch}"; then
-            git checkout -B "${branch}" "origin/${branch}"
-          else
-            git checkout -B "${branch}"
-          fi
+          git checkout -B "${branch}" origin/main
           for f in "${files[@]}"; do
             mkdir -p "$(dirname "$f")"
             cp "/tmp/track-files/$f" "$f"
@@ -70,32 +96,12 @@ jobs:
           if ! git diff --quiet -- "${files[@]}"; then
             git add "${files[@]}"
             git commit -m "${TITLE}"
-            git push origin "${branch}"
+            git push --force-with-lease origin "${branch}"
           fi
 
-          existing="$(gh pr list --head "${branch}" --base main --state open --json number --jq 'if length == 0 then "" else .[0].number | tostring end' || true)"
+          existing="$(gh pr list --head "${branch}" --base main --state open --json number --jq 'if length == 0 then "" else .[0].number | tostring end')"
           if [ -n "${existing}" ]; then
-            if ! gh pr edit "${existing}" --title "${TITLE}" --body-file /tmp/cli-pr-body.md; then
-              echo "::warning::gh pr edit failed; the branch was pushed, but PR update is blocked by repository policy."
-              echo "::warning::Review branch: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/tree/${branch}"
-              {
-                echo "## Update ready"
-                echo "- Branch: ${branch}"
-                echo "- Review URL: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/tree/${branch}"
-                echo "- PR update was blocked by GitHub policy, but the branch was pushed successfully."
-              } >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
+            gh pr edit "${existing}" --title "${TITLE}" --body-file /tmp/cli-pr-body.md
           else
-            if ! gh pr create --base main --head "${branch}" --title "${TITLE}" --body-file /tmp/cli-pr-body.md; then
-              echo "::warning::gh pr create failed because this repository or organization blocks Actions from creating pull requests."
-              echo "::warning::The update branch '${branch}' was pushed successfully. Review it here: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/tree/${branch}"
-              {
-                echo "## Update ready"
-                echo "- Branch: ${branch}"
-                echo "- Review URL: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/tree/${branch}"
-                echo "- PR creation was blocked by GitHub policy, so the branch was pushed without opening a PR."
-              } >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
+            gh pr create --base main --head "${branch}" --title "${TITLE}" --body-file /tmp/cli-pr-body.md
           fi

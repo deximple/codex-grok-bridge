@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -20,7 +20,12 @@ mkdirSync(userData, { recursive: true, mode: 0o700 });
 mkdirSync(path.dirname(logFile), { recursive: true, mode: 0o700 });
 
 function log(message) {
-  appendFileSync(logFile, `${new Date().toISOString()} ${message}\n`);
+  try {
+    if (statSync(logFile).size > 1024 * 1024) renameSync(logFile, `${logFile}.1`);
+  } catch {
+    // The first line creates the file.
+  }
+  appendFileSync(logFile, `${new Date().toISOString()} ${message}\n`, { mode: 0o600 });
 }
 
 function grokPidWin32() {
@@ -53,7 +58,7 @@ function queryWin32Processes() {
     [
       "-NoProfile",
       "-Command",
-      `Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like ${JSON.stringify(`*--user-data-dir=${userData}*`)} } | Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress`,
+      `Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and $_.CommandLine.Contains(${JSON.stringify(`--user-data-dir=${userData}`)}) } | Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress`,
     ],
     { encoding: "utf8", windowsHide: true, timeout: 15000 },
   );
@@ -142,25 +147,17 @@ function startLinux(wrapper) {
 }
 
 function startDarwin(wrapper) {
-  log(`start wrapper=${wrapper}`);
-  const child = spawn(
-    "/usr/bin/open",
-    [
-      "-n",
-      "--env",
-      `CODEX_CLI_PATH=${wrapper}`,
-      "--env",
-      "CODEX_APP_SERVER_FORCE_CLI=1",
-      "--env",
-      `PATH=${path.dirname(process.execPath)}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin`,
-      "--env",
-      `CODEX_ELECTRON_USER_DATA_PATH=${userData}`,
-      "/Applications/Codex.app",
-      "--args",
-      `--user-data-dir=${userData}`,
-    ],
-    { stdio: "inherit" },
-  );
+  const app = resolveDesktopApp();
+  const env = desktopLaunchEnv({
+    wrapper,
+    userData,
+    pathPrefix: `${path.dirname(process.execPath)}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin`,
+  });
+  const args = ["-n"];
+  for (const [key, value] of Object.entries(env)) args.push("--env", `${key}=${value}`);
+  args.push(app, "--args", ...desktopLaunchArgs(userData));
+  log(`start darwin app=${app} wrapper=${wrapper}`);
+  const child = spawn("/usr/bin/open", args, { stdio: "inherit" });
   child.on("exit", (code) => {
     log(`open exit=${code}`);
     const pid = grokPid();

@@ -26,8 +26,8 @@ published package — `package.json` `files` is an explicit whitelist.
 - Immutable data: return new objects rather than mutating arguments.
 - Small, focused modules — 200–400 lines is typical, 800 is the ceiling.
 - Handle errors explicitly and classify them; never widen the generic bucket.
-- No runtime dependencies. The package ships with an empty dependency tree on
-  purpose, so the bundle can be copied into an app without `node_modules`.
+- Runtime dependencies are `opusscript` and `werift`, loaded only for local
+  voice. The rest of the bridge starts when those packages are missing.
 - Do not put `*.test.mjs` files or a `test/` directory anywhere under `docs/` —
   `node --test` picks them up and they end up in `npm test`.
 

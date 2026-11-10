@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.8.5 — 2026-11-10
+
+- Codex CLI 0.166 and newer reject a turn when the thread's provider differs from the app-server's configured provider. The desktop wrapper sets `model_provider` for that process, updates the saved thread provider, and archives then unarchives the loaded thread so Codex reloads it, before `thread/resume`. A new Grok turn and an openai ↔ `grok_build_cli` switch both pass `verify-app-server`. The previous `model_provider` value is restored when the wrapper exits.
+- Tracked Codex CLI is 0.167.0 (https://github.com/openai/codex/releases/tag/rust-v0.167.0). verify-app-server passed.
+- Tracked Grok CLI is 1.0.77 (https://x.ai/build/changelog). No bridge change.
+- A voice sideband frame of 64 KiB or more uses the WebSocket 64-bit length. The DNS cache key includes `options.all`. A stalled upstream socket is destroyed after 120s with `ETIMEDOUT`.
+- One MCP tool with a cyclic or external `$ref` no longer fails the whole turn. `o3`, `o4-mini`, and `codex-*` switch back to OpenAI from a Grok thread. Video follow-ups keep sibling tool calls, hide `grok_bridge_generate_video` after the step limit, add usage across steps, and time out each videos HTTP call.
+- HTTP 401/403, 400/422, and 429/5xx are `auth`, `payload`, and `upstream_status`. Proxy errors redact the login token. A rollout line with `model: gpt-*` and no provider leaves Grok. Migration does not follow a symlink and uses a per-call temp file.
+- Resume strips stored Grok ciphertext. That rewrite shipped in 1.8.2 and was missing from the notes.
+- The Windows installer writes UTF-8 paths. The macOS launcher keeps the user `PATH` and quotes the node path. `npm run verify:app-server` is included in the published package.
+
 ## 1.8.4 — 2026-10-25
 
 - Tracked Codex CLI is 0.164.0 (https://github.com/openai/codex/releases/tag/rust-v0.164.0). No protocol change.

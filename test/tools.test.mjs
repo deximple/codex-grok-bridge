@@ -248,23 +248,26 @@ test("inlines local $defs refs before a tool schema is sent", () => {
   assert.equal(parent.parameters.$defs, undefined);
   assert.equal(parent.parameters.definitions, undefined);
 
-  assert.throws(() =>
-    toProxyRequest({
-      input: [],
-      tools: [
-        {
-          type: "function",
-          name: "create_broken",
-          parameters: {
-            type: "object",
-            properties: {
-              idempotency_key: { $ref: "#/$defs/Missing" },
-            },
+  const broken = toProxyRequest({
+    input: [],
+    tools: [
+      {
+        type: "function",
+        name: "create_broken",
+        parameters: {
+          type: "object",
+          properties: {
+            idempotency_key: { $ref: "#/$defs/Missing" },
           },
         },
-      ],
-    }),
+      },
+    ],
+  });
+  const brokenTool = broken.request.tools.find((tool) =>
+    String(tool.name).endsWith("_create_broken"),
   );
+  assert.deepEqual(brokenTool.parameters.properties.idempotency_key, {});
+  assert.equal(broken.request.model, "grok-4.7");
 });
 
 test("union required treats a missing variant required as empty and keeps the root", () => {

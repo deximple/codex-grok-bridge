@@ -9,7 +9,15 @@ import {
   runGrok,
 } from "./cli-inference.mjs";
 import { emitProxySse, readRelayProxySse } from "./proxy.mjs";
-import { videoCallsFromParts, videoToolOutput } from "./videogen.mjs";
+import {
+  addUsage,
+  retainedInputItems,
+  stampUsage,
+  stripVideoToolEvents,
+  usageFromParts,
+  videoCallsFromParts,
+  videoToolOutput,
+} from "./videogen.mjs";
 import { forwardImagine } from "./imagine.mjs";
 import { attachSidebandUpgrade, forwardRealtime } from "./realtime.mjs";
 import {
@@ -38,18 +46,21 @@ const VIDEO_FOLLOW_UPS = 2;
 
 async function relayWithVideo(options, output, map, usageBox, onClientByte) {
   let body = options.body;
+  let totalUsage = {};
   for (let step = 0; step <= VIDEO_FOLLOW_UPS; step += 1) {
     const parts = await readRelayProxySse({ ...options, body }, output);
+    totalUsage = addUsage(totalUsage, usageFromParts(parts));
     const calls =
       process.env.GROK_BRIDGE_VIDEO_GEN === "off" ? [] : videoCallsFromParts(parts);
     if (!calls.length || step === VIDEO_FOLLOW_UPS) {
-      await emitProxySse(parts, output, map, usageBox, onClientByte);
+      const visible = calls.length ? stripVideoToolEvents(parts) : parts;
+      await emitProxySse(stampUsage(visible, totalUsage), output, map, usageBox, onClientByte);
       return;
     }
     // The videos API poll can sit for minutes. Keepalive is safe here: this
     // upstream reply is finished, and nothing has been written to Codex yet.
     onClientByte();
-    const additions = [];
+    const additions = [...retainedInputItems(parts)];
     for (const call of calls) {
       const toolOutput = await videoToolOutput(call, options.video);
       additions.push(
@@ -312,6 +323,7 @@ export function createBridgeServer(options = {}) {
     let acquired = false;
     let queuedMs = 0;
     let cacheUsage = null;
+    const usageBox = {};
     try {
       await slots.acquire(controller.signal);
       acquired = true;
@@ -363,7 +375,6 @@ export function createBridgeServer(options = {}) {
         const { request, map, projected } = toProxyRequest(sanitizeImages(body));
         if (convId) request.prompt_cache_key = convId;
         request.input = prefixes.reuse(convId, projected);
-        const usageBox = {};
         try {
           await relayWithVideo(
             {
@@ -403,7 +414,8 @@ export function createBridgeServer(options = {}) {
         }
       }
       diagnostics.record({
-        event: "turn_ok",
+        event: usageBox.upstreamFailed ? "turn_failed" : "turn_ok",
+        ...(usageBox.upstreamFailed ? { kind: "upstream_status" } : {}),
         ...shape,
         ...(cacheUsage ?? {}),
         queuedMs,

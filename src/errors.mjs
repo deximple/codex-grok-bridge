@@ -29,6 +29,7 @@ const MESSAGES = Object.freeze({
     "Grok closed the connection before finishing. Retry.",
   [BRIDGE_ERROR.UPSTREAM_PROTOCOL]:
     "Grok sent a malformed response. Retry.",
+  [BRIDGE_ERROR.UPSTREAM_STATUS]: "Grok returned an error status. Retry.",
   [BRIDGE_ERROR.PAYLOAD]: "Grok rejected the request payload",
   [BRIDGE_ERROR.INTERNAL]: "Grok bridge failed to process the turn",
 });
@@ -62,6 +63,11 @@ function* chain(error, depth = 0) {
 export function classifyBridgeError(error, context = {}) {
   for (const link of chain(error)) {
     const code = typeof link.code === "string" ? link.code : "";
+    if (link.name === "GrokAuthError") return BRIDGE_ERROR.AUTH;
+    const status = Number(link.status);
+    if (status === 401 || status === 403) return BRIDGE_ERROR.AUTH;
+    if (status === 400 || status === 422) return BRIDGE_ERROR.PAYLOAD;
+    if (status === 429 || (status >= 500 && status <= 599)) return BRIDGE_ERROR.UPSTREAM_STATUS;
     if (link.name === "AbortError" || ABORT_CODES.has(code)) {
       // The bridge aborts the upstream only when the client hangs up, so an
       // abort-shaped error means the client left. If the bridge ever aborts for

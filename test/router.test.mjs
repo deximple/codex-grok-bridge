@@ -149,6 +149,8 @@ function switchSteps(before, model = GROK, provider = PROVIDER, after = {}) {
   return [
     ["thread/resume", lookup, before],
     ["thread/unsubscribe", { threadId: "t1" }, {}],
+    ["thread/archive", { threadId: "t1" }, {}],
+    ["thread/unarchive", { threadId: "t1" }, {}],
     ["thread/resume", switchedParams(before, model, provider),
       { ...before, model, modelProvider: provider, ...after }],
   ];
@@ -177,6 +179,7 @@ test("prepare omits sandbox on switch resume so persisted extras are not rebuilt
 for (const [name, before, input, model, provider] of [
   ["GPT to Grok", snapshot(), message(), GROK, PROVIDER],
   ["Grok to GPT", snapshot({ model: GROK, modelProvider: PROVIDER }), message({ model: GPT }), GPT, "openai"],
+  ["o3 leaves Grok for OpenAI", snapshot({ model: GROK, modelProvider: PROVIDER }), message({ model: "o3" }), "o3", "openai"],
   ["collaboration model takes precedence", snapshot(), message({ model: GPT, collaborationMode: { mode: "default", settings: { model: GROK } } }), GROK, PROVIDER],
   ["omitted turn model uses live UI selection", snapshot({ model: GROK }), { id: 9, method: "turn/start", params: { threadId: "t1" } }, GROK, PROVIDER],
   ["null reasoning effort is omitted", snapshot({ reasoningEffort: null }), message(), GROK, PROVIDER],

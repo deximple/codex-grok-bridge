@@ -26,14 +26,18 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
 
-      - name: Syntax-check entry points
+      - name: Syntax-check scripts
+        shell: bash
         run: |
-          node --check scripts/codex-grok.mjs
-          node --check scripts/codex-wrapper.mjs
-          node --check scripts/launch-desktop.mjs
+          for file in scripts/*.mjs; do
+            node --check "$file"
+          done
 
-      - name: Install (zero-dep, verifies manifest)
-        run: npm install --no-audit --no-fund
+      - name: Install from the lockfile
+        run: npm ci
+
+      - name: Dependency audit
+        run: npm audit --audit-level=moderate
 
       - name: Regression tests
         run: npm test

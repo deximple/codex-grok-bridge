@@ -31,27 +31,27 @@ export function changelogSection(text, version) {
 export function planPublish({ version, headSha, npmPublished, releaseExists, tagSha, tokenPresent }) {
   if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`Refusing to publish ${version}`);
   if (npmPublished && releaseExists) return { ok: true, actions: [] };
-  if (!releaseExists && tagSha && tagSha !== headSha) {
+  if (tagSha && tagSha !== headSha) {
     return {
       ok: false,
       actions: [],
-      error: `Refusing to move existing tag v${version} (${tagSha}) onto ${headSha}.`,
+      error: releaseExists
+        ? `Refusing to publish ${version} from ${headSha}; tag v${version} points at ${tagSha}.`
+        : `Refusing to move existing tag v${version} (${tagSha}) onto ${headSha}.`,
+    };
+  }
+  if (!npmPublished && !tokenPresent) {
+    return {
+      ok: false,
+      actions: [],
+      error: "NPM_TOKEN secret is not set. npm publish was not run.",
     };
   }
   const actions = [];
+  if (!npmPublished) actions.push("npm");
   if (!releaseExists) {
     if (!tagSha) actions.push("tag");
     actions.push("release");
-  }
-  if (!npmPublished) {
-    if (!tokenPresent) {
-      return {
-        ok: false,
-        actions,
-        error: "NPM_TOKEN secret is not set. npm publish was not run.",
-      };
-    }
-    actions.push("npm");
   }
   return { ok: true, actions };
 }
@@ -77,7 +77,7 @@ function releaseExists(tag) {
     return true;
   } catch (error) {
     const stderr = error.stderr?.toString?.() ?? "";
-    if (/not found/i.test(stderr) || error.status === 1) return false;
+    if (/not found/i.test(stderr)) return false;
     throw error;
   }
 }
@@ -93,6 +93,12 @@ function tagSha(tag) {
 
 function perform(plan, { version, notes }) {
   const tag = `v${version}`;
+  if (plan.actions.includes("npm") || plan.actions.includes("tag")) {
+    run("npm", ["test"], { stdio: "inherit" });
+  }
+  if (plan.actions.includes("npm")) {
+    run("npm", ["publish", "--access", "public"], { stdio: "inherit" });
+  }
   if (plan.actions.includes("tag")) {
     run("git", ["tag", tag, "HEAD"], { stdio: "inherit" });
     run("git", ["push", "origin", `refs/tags/${tag}`], { stdio: "inherit" });
@@ -111,9 +117,6 @@ function perform(plan, { version, notes }) {
       "--notes-file", notesPath,
       "--verify-tag",
     ], { stdio: "inherit" });
-  }
-  if (plan.actions.includes("npm")) {
-    run("npm", ["publish", "--access", "public"], { stdio: "inherit" });
   }
 }
 
@@ -138,18 +141,16 @@ function main() {
     actions: plan.actions,
     npmToken: tokenPresent ? "present" : "missing",
   }));
-  if (plan.actions.length === 0 && plan.ok) {
-    console.log(`v${version} is already an npm release and a GitHub Release.`);
-    return;
-  }
-  const notes = changelogSection(readFileSync(path.join(root, "CHANGELOG.md"), "utf8"), version);
-  if (plan.actions.includes("tag") || plan.actions.includes("release") || plan.actions.includes("npm")) {
-    perform(plan, { version, notes });
-  }
   if (!plan.ok) {
     console.error(plan.error);
     process.exit(1);
   }
+  if (plan.actions.length === 0) {
+    console.log(`v${version} is already an npm release and a GitHub Release.`);
+    return;
+  }
+  const notes = changelogSection(readFileSync(path.join(root, "CHANGELOG.md"), "utf8"), version);
+  perform(plan, { version, notes });
 }
 
 const invoked = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);

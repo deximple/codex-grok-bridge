@@ -38,7 +38,7 @@ test("a release on the current commit is created without a new tag", () => {
     releaseExists: false,
     tagSha: head,
     tokenPresent: true,
-  }).actions, ["release", "npm"]);
+  }).actions, ["npm", "release"]);
 });
 
 test("an existing tag on another commit is not moved", () => {
@@ -55,7 +55,7 @@ test("an existing tag on another commit is not moved", () => {
   assert.match(plan.error, /Refusing to move existing tag v1\.8\.1/);
 });
 
-test("a missing npm token still plans the GitHub Release and then fails npm", () => {
+test("a missing npm token does not tag or create a GitHub Release", () => {
   const plan = planPublish({
     version: "1.8.2",
     headSha: head,
@@ -65,8 +65,22 @@ test("a missing npm token still plans the GitHub Release and then fails npm", ()
     tokenPresent: false,
   });
   assert.equal(plan.ok, false);
-  assert.deepEqual(plan.actions, ["tag", "release"]);
+  assert.deepEqual(plan.actions, []);
   assert.match(plan.error, /NPM_TOKEN secret is not set/);
+});
+
+test("a release that exists on another commit is not republished from HEAD", () => {
+  const plan = planPublish({
+    version: "1.8.2",
+    headSha: head,
+    npmPublished: false,
+    releaseExists: true,
+    tagSha: other,
+    tokenPresent: true,
+  });
+  assert.equal(plan.ok, false);
+  assert.deepEqual(plan.actions, []);
+  assert.match(plan.error, /points at/);
 });
 
 test("release notes are only the changelog section for that version", () => {

@@ -87,8 +87,14 @@ test("bytes in an unrecognised format are still saved, just not misnamed", () =>
   assert.equal(saved.extension, "bin");
   assert.ok(readFileSync(saved.file).equals(odd));
 
-  const webp = Buffer.concat([Buffer.from("RIFF", "ascii"), Buffer.alloc(64)]);
-  assert.equal(saveGeneratedImage(item(webp), { dir, now: 3 }).extension, "webp");
+  const riff = Buffer.concat([Buffer.from("RIFF", "ascii"), Buffer.alloc(4), Buffer.from("WAVE", "ascii")]);
+  assert.equal(saveGeneratedImage(item(riff), { dir, now: 3 }).extension, "bin");
+  const webp = Buffer.concat([
+    Buffer.from("RIFF", "ascii"),
+    Buffer.alloc(4),
+    Buffer.from("WEBP", "ascii"),
+  ]);
+  assert.equal(saveGeneratedImage(item(webp), { dir, now: 4 }).extension, "webp");
 });
 
 test("a format that cannot be transparent is reported as opaque", () => {
