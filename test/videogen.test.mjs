@@ -334,6 +334,102 @@ test("a 202 and a completed poll become a tool result containing the URL", async
   assertNoBearer(text);
 });
 
+test("an ordinary tool call is executed by Codex before the video follow-up", async () => {
+  const bodies = [];
+  let rounds = 0;
+  const thread = "thread-video-handoff";
+  const server = createBridgeServer({
+    token: "bridge",
+    grokSession: { token: TOKEN, userId: null },
+    videoPause: async () => {
+      throw new Error("poll slept");
+    },
+    proxyFetch: async (_url, init) => {
+      rounds += 1;
+      bodies.push(JSON.parse(init.body));
+      if (rounds === 1) {
+        return sse([
+          `event: response.output_item.done\ndata: ${JSON.stringify({
+            type: "response.output_item.done",
+            item: {
+              type: "function_call",
+              name: "shell",
+              call_id: "call_shell",
+              arguments: JSON.stringify({ cmd: "ls" }),
+            },
+          })}\n\n`,
+          `event: response.output_item.done\ndata: ${JSON.stringify({
+            type: "response.output_item.done",
+            item: {
+              type: "function_call",
+              name: GROK_VIDEO_TOOL_NAME,
+              call_id: "call_video",
+              arguments: JSON.stringify({ prompt: "a red cube spinning" }),
+            },
+          })}\n\n`,
+          `event: response.completed\ndata: ${JSON.stringify({
+            type: "response.completed",
+            response: { id: "resp_mixed" },
+          })}\n\n`,
+        ]);
+      }
+      return replyStream("The clip is ready.");
+    },
+    videoFetch: async () => new Response(`unauthorized ${TOKEN}`, { status: 401 }),
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const port = server.address().port;
+    const first = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+      method: "POST",
+      headers: { authorization: "Bearer bridge", "thread-id": thread },
+      body: JSON.stringify({
+        model: "grok-4.7",
+        input: [{ role: "user", content: "animate a red cube" }],
+      }),
+    });
+    const firstText = await first.text();
+    assert.equal(first.status, 200);
+    assert.equal(rounds, 1);
+    assert.match(firstText, /call_shell/);
+    assert.doesNotMatch(firstText, /grok_bridge_generate_video/);
+    assertNoBearer(firstText);
+    const second = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+      method: "POST",
+      headers: { authorization: "Bearer bridge", "thread-id": thread },
+      body: JSON.stringify({
+        model: "grok-4.7",
+        input: [
+          { role: "user", content: "animate a red cube" },
+          { type: "function_call", name: "shell", call_id: "call_shell", arguments: "{\"cmd\":\"ls\"}" },
+          { type: "function_call_output", name: "shell", call_id: "call_shell", output: "a.mp4" },
+        ],
+      }),
+    });
+    const secondText = await second.text();
+    assert.equal(second.status, 200);
+    assert.equal(rounds, 2);
+    assert.match(secondText, /The clip is ready/);
+    const followUp = bodies[1];
+    const outputs = new Set(
+      followUp.input.filter((item) => item.type === "function_call_output").map((item) => item.call_id),
+    );
+    for (const call of followUp.input.filter((item) => item.type === "function_call")) {
+      assert.equal(outputs.has(call.call_id), true, call.call_id);
+    }
+    const videoOutput = followUp.input.find(
+      (item) => item.type === "function_call_output" && item.call_id === "call_video",
+    );
+    assert.match(videoOutput.output, /Video generation failed \(401\)/);
+    assertNoBearer(videoOutput.output);
+    assertNoBearer(JSON.stringify(followUp));
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("a 401 from the videos API is a tool error and the turn continues", async () => {
   let followUp;
   let rounds = 0;

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.8.6 — 2026-11-10
+
+- Two app-server wrappers that share `CODEX_HOME` keep a live owner on the provider baseline. Startup recovery and exit restore no longer treat another running wrapper's marker as a crash, so the configured provider returns to its original value only after the last wrapper exits.
+- A video response that also contains an ordinary Codex tool call is handed to Codex first. The video result is sent upstream only after that tool's output arrives, instead of being submitted beside an unanswered function call.
+
 ## 1.8.5 — 2026-11-10
 
 - Codex CLI 0.166 and newer reject a turn when the thread's provider differs from the app-server's configured provider. The desktop wrapper sets `model_provider` for that process, updates the saved thread provider, and archives then unarchives the loaded thread so Codex reloads it, before `thread/resume`. A new Grok turn and an openai ↔ `grok_build_cli` switch both pass `verify-app-server`. The previous `model_provider` value is restored when the wrapper exits.
