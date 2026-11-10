@@ -215,7 +215,7 @@ test("new Codex notes say verify passed and historical notes stay put", () => {
   });
   assert.match(notes.changelog, /verify-app-server passed/);
   assert.match(notes.readmeKo, /verify-app-server를 통과했습니다/);
-  const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
+  const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8").replaceAll("\r\n", "\n");
   assert.match(changelog, /## 1\.8\.2 — 2026-10-06\n\n- Tracked Codex CLI is 0\.160\.1.*No protocol change/);
   assert.match(changelog, /## 1\.8\.1 — 2026-10-03\n\n- Grok reasoning ciphertext is removed/);
 });
