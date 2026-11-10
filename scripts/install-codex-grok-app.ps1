@@ -15,15 +15,20 @@ if ($App -match "(?i)WindowsApps") {
 
 if (-not $Force) {
   $hit = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -and $_.CommandLine -like "*--user-data-dir=$UserData*" }
+    Where-Object { $_.CommandLine -and $_.CommandLine.Contains("--user-data-dir=$UserData") }
   if ($hit) {
     Write-Error "Codex Grok is running. Close its window first, or pass -Force."
   }
 }
 
 New-Item -ItemType Directory -Force -Path (Join-Path $App "scripts"), (Join-Path $App "src") | Out-Null
-Copy-Item (Join-Path $Root "scripts\*.mjs") (Join-Path $App "scripts") -Force
+foreach ($name in @("codex-grok.mjs", "codex-wrapper.mjs", "launch-desktop.mjs")) {
+  Copy-Item (Join-Path $Root "scripts\$name") (Join-Path $App "scripts") -Force
+}
 Copy-Item (Join-Path $Root "src\*.mjs") (Join-Path $App "src") -Force
+Get-ChildItem (Join-Path $App "scripts\*.mjs") -ErrorAction SilentlyContinue | Where-Object {
+  $_.Name -notin @("codex-grok.mjs", "codex-wrapper.mjs", "launch-desktop.mjs")
+} | Remove-Item -Force
 
 function Resolve-NodeExe {
   $cmd = Get-Command node -ErrorAction SilentlyContinue
@@ -73,7 +78,7 @@ if (-not $npm -or -not (Test-Path -LiteralPath $npm)) {
     "werift": "0.24.4"
   }
 }
-"@ | Set-Content -Path (Join-Path $App "package.json") -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $App "package.json") -Encoding utf8
 Push-Location $App
 try {
   & $npm install --omit=dev --no-fund --no-audit
@@ -83,11 +88,13 @@ try {
 }
 
 $Launcher = Join-Path $App "codex-grok-desktop.cmd"
-@"
+$utf8 = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText($Launcher, @"
 @echo off
+chcp 65001 >nul
 set ROOT=%~dp0
 "$Node" "%ROOT%scripts\launch-desktop.mjs" %*
-"@ | Set-Content -Path $Launcher -Encoding ASCII
+"@, $utf8)
 
 $StartDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
 New-Item -ItemType Directory -Force -Path $StartDir | Out-Null
@@ -108,7 +115,8 @@ function Write-StorePointer([string]$Name, [string[]]$Filters) {
       if (-not $hit) { $hit = $hits | Select-Object -First 1 }
       if (-not $hit) { continue }
       New-Item -ItemType Directory -Force -Path $pointerDir | Out-Null
-      Set-Content -Path (Join-Path $pointerDir $Name) -Value $hit.FullName -Encoding ASCII
+      $utf8 = New-Object System.Text.UTF8Encoding $false
+      [System.IO.File]::WriteAllText((Join-Path $pointerDir $Name), $hit.FullName, $utf8)
       Write-Output "store pointer $Name=$($hit.FullName)"
       return
     }

@@ -43,7 +43,7 @@ The bridge does **not** execute Grok-native tools. It translates Codex tools int
 function calling, streams the upstream Responses events, and rewrites names back
 so Codex still recognizes them.
 
-Eighteen files under `src/`. Zero runtime dependencies. Node.js ≥ 22.
+Twenty-two files under `src/`. Runtime dependencies are `opusscript` and `werift` for local voice. Node.js ≥ 22.
 
 This is not a second-opinion review product and not a Grok-native search
 product. The picker shows `grok-4.7` (Grok 4.7 / xAI) and keeps `grok-4.6`.
@@ -54,6 +54,17 @@ the bridge runs. See Release history.
 ## Release history
 
 What each recent version added. Older cuts are in `CHANGELOG.md`.
+
+### 1.8.5 — 2026-11-10
+
+- Codex CLI 0.166 and newer reject a turn when the thread's provider differs from the app-server's configured provider. The desktop wrapper sets `model_provider` for that process, updates the saved thread provider, and archives then unarchives the loaded thread so Codex reloads it, before `thread/resume`. A new Grok turn and an openai ↔ `grok_build_cli` switch both pass `verify-app-server`. The previous `model_provider` value is restored when the wrapper exits.
+- Tracked Codex CLI is 0.167.0 (https://github.com/openai/codex/releases/tag/rust-v0.167.0). verify-app-server passed.
+- Tracked Grok CLI is 1.0.77 (https://x.ai/build/changelog). No bridge change.
+- A voice sideband frame of 64 KiB or more uses the WebSocket 64-bit length. The DNS cache key includes `options.all`. A stalled upstream socket is destroyed after 120s with `ETIMEDOUT`.
+- One MCP tool with a cyclic or external `$ref` no longer fails the whole turn. `o3`, `o4-mini`, and `codex-*` switch back to OpenAI from a Grok thread. Video follow-ups keep sibling tool calls, hide `grok_bridge_generate_video` after the step limit, add usage across steps, and time out each videos HTTP call.
+- HTTP 401/403, 400/422, and 429/5xx are `auth`, `payload`, and `upstream_status`. Proxy errors redact the login token. A rollout line with `model: gpt-*` and no provider leaves Grok. Migration does not follow a symlink and uses a per-call temp file.
+- Resume strips stored Grok ciphertext. That rewrite shipped in 1.8.2 and was missing from the notes.
+- The Windows installer writes UTF-8 paths. The macOS launcher keeps the user `PATH` and quotes the node path. `npm run verify:app-server` is included in the published package.
 
 ### 1.8.4 — 2026-10-25
 
@@ -125,7 +136,7 @@ The `.command` launcher resolves paths from its own location, so moving the
 folder does not require edits. Set `NODE=/path/to/node` if `node` is not on
 `PATH`.
 
-Verified against: Codex 0.153.4 / app 26.901.51231, Grok CLI 1.0.25, Node 22.23.0.
+Verified against: Codex CLI 0.167.0, Grok CLI 1.0.77, Node 22.
 An app update that changes `CODEX_CLI_PATH` or the app-server protocol needs
 re-verification.
 
@@ -147,7 +158,7 @@ starts, and tears the provider down with that process.
 ```sh
 git clone https://github.com/deximple/codex-grok-bridge.git
 cd codex-grok-bridge
-npm test                        # 191 tests, no network, no inference
+npm test                        # 315 tests, no network, no inference
 node scripts/codex-grok.mjs
 ```
 
@@ -236,11 +247,11 @@ appended, not substituted for the history.
 
 Measured, not guessed:
 
-- Mixed catalog of the six GPT models plus `grok-4.6`, with Grok provider
-  routing, on a real app-server.
+- Mixed catalog of the GPT models plus `grok-4.7` and `grok-4.6`, with Grok
+  provider routing, on a real app-server.
 - Live Grok CLI → Codex `exec_command` → result → Grok final reply
   (`BRIDGE_TOOL_OK`).
-- A separate Codex window showing `Grok 4.6 / xAI Extra High`.
+- A separate Codex window showing `Grok 4.7 / xAI`. `grok-4.6` stays on the list.
 - cli-chat-proxy accepted a 339-function-tool request. The public API’s 200-tool
   cap does not apply on this login path.
 
@@ -255,6 +266,9 @@ When image generation is on, an `Images:` line is appended as well: pictures on
 this transport use Grok’s `image_generation` tool already on the request; do
 not read Codex’s `imagegen` skill and do not send the picture to OpenAI.
 `GROK_BRIDGE_IMAGE_GEN=off` drops both the tool and that line.
+`POST /v1/images/generations` and `POST /v1/images/edits` are proxied to
+Imagine with the same grok login. When video generation is on, a `Videos:`
+line is appended too. `GROK_BRIDGE_VIDEO_GEN=off` drops that tool and that line.
 
 ### Reasoning
 
@@ -266,7 +280,7 @@ multi-call turn can continue its own reasoning. The upstream has been observed
 to accept this shape. The same pass keeps only the fields Grok’s Responses
 input accepts on each item and content part — `status`, unknown Codex keys,
 and every `internal_*` field are dropped so a new client field cannot 422 the
-upstream. The same ciphertext is removed from the stream back to Codex, so a later switch to an OpenAI model does not try to decrypt a Grok reasoning blob. A thread that already stored those items still has them.
+upstream. The same ciphertext is removed from the stream back to Codex, so a later switch to an OpenAI model does not try to decrypt a Grok reasoning blob. Resume and fork also strip that ciphertext from a stored Grok rollout. An OpenAI-only rollout stays byte-identical.
 
 ### Concurrency
 
@@ -385,8 +399,8 @@ Completed turns are logged too: an empty log on failure means the bridge was
 never called.
 
 `turn_failed.kind` is one of: `aborted`, `auth`, `dns`, `connect`,
-`upstream_timeout`, `upstream_closed`, `upstream_protocol`, `payload`,
-`internal`. Codex UI shows the same class as `bridge_<kind>`.
+`upstream_timeout`, `upstream_closed`, `upstream_status`, `upstream_protocol`,
+`payload`, `internal`. Codex UI shows the same class as `bridge_<kind>`.
 
 Start here when something breaks. Do not open `~/.grok/auth.json` or
 `~/.codex/auth.json` to “check” the bridge.
@@ -396,17 +410,22 @@ Start here when something breaks. Do not open `~/.grok/auth.json` or
 | Variable | Effect |
 |---|---|
 | `GROK_BRIDGE_IMAGE_GEN=off` | Do not declare Grok `image_generation`; do not append the `Images:` line |
+| `GROK_BRIDGE_VIDEO_GEN=off` | Do not declare `grok_bridge_generate_video`; do not append the `Videos:` line |
 | `GROK_BRIDGE_TRANSPORT=fetch` | Use Node `fetch` instead of `node:http(s)` |
 | `GROK_BRIDGE_INFERENCE=cli` | Fall back to the CLI envelope path |
 | `GROK_BRIDGE_DIAGNOSTICS=off` | Do not write the JSONL log |
 | `GROK_BRIDGE_MODELS` | Extra `grok-*` catalog ids (comma or space) beyond `grok-4.7` and `grok-4.6` |
 | `NODE` | Absolute `node` binary for the `.command` launcher / desktop scripts |
+| `CODEX_BINARY` | Codex CLI binary. Overrides the bundled path |
+| `CODEX_DESKTOP_APP` | Desktop app to launch. Overrides Codex.app / ChatGPT |
+| `GROK_BINARY` | `grok` binary. Overrides `~/.grok/bin/grok` |
+| `CODEX_GROK_PLATFORM` | `darwin`, `linux`, or `win32` for install and launch scripts |
 | `CODEX_GROK_APP` | Alternate app path for the desktop installer (macOS: `/Applications/Codex Grok.app`; Linux: `~/.local/share/codex-grok-bridge/app`; Windows: `%LOCALAPPDATA%\codex-grok-bridge\app`) |
 
 ## Verify
 
 ```sh
-npm test                    # 191 tests, no remote inference
+npm test                    # 315 tests, no remote inference
 npm run test:coverage       # 80% line / branch / function gate
 npm run verify:app-server   # real app-server routing; also runs against an installed bundle
 npm audit --omit=dev
@@ -488,7 +507,7 @@ Grok 4.7을 Codex 모델 목록에 넣고, Codex의 `/v1/responses`를
 calling으로 옮기고, 상류 Responses 스트림을 전달한 뒤, Codex가 알아보는
 이름으로 되돌립니다.
 
-`src/` 아래 파일 18개. 런타임 의존성 없음. Node.js 22 이상. 1.5.0부터 npm
+`src/` 아래 파일 22개. 로컬 음성용 런타임 의존성은 `opusscript`와 `werift`입니다. Node.js 22 이상. 1.5.0부터 npm
 `"os"`는 `darwin` / `linux` / `win32`입니다.
 
 코드 리뷰 전용 제품이 아니고 Grok 네이티브 검색 제품도 아닙니다. 피커에는
@@ -500,6 +519,17 @@ Codex `web_search`는 브리지가 실행하는 함수가 아니라 xAI 서버 �
 ## 릴리스 기록
 
 최근 버전이 더한 것입니다. 그 이전은 `CHANGELOG.md`에 있습니다.
+
+### 1.8.5 — 2026-11-10
+
+- Codex CLI 0.166부터는 스레드 제공자와 앱 서버에 설정된 제공자가 다르면 턴을 거절합니다. 데스크톱 래퍼가 그 프로세스의 `model_provider`를 맞추고, 저장된 스레드 제공자를 갱신한 뒤, 메모리에 있는 스레드를 archive/unarchive해서 Codex가 다시 읽게 합니다. `thread/resume` 전에 합니다. 새 Grok 턴과 openai ↔ `grok_build_cli` 전환이 `verify-app-server`를 통과합니다. 래퍼가 끝나면 이전 `model_provider` 값으로 되돌립니다.
+- 추적하는 Codex CLI는 0.167.0입니다 (https://github.com/openai/codex/releases/tag/rust-v0.167.0). verify-app-server를 통과했습니다.
+- 추적하는 Grok CLI는 1.0.77입니다 (https://x.ai/build/changelog). 브리지 변경은 없습니다.
+- 64 KiB 이상 음성 사이드밴드 프레임은 WebSocket 64비트 길이를 씁니다. DNS 캐시 키에 `options.all`이 들어갑니다. 멈춘 상류 소켓은 120초 뒤 `ETIMEDOUT`으로 끊습니다.
+- 순환 참조나 외부 `$ref`가 있는 MCP 도구 하나가 턴 전체를 막지 않습니다. `o3`, `o4-mini`, `codex-*`는 Grok 스레드에서 OpenAI로 돌아갑니다. 영상 후속 단계는 같이 나온 도구 호출을 유지하고, 단계 한도에 도달하면 `grok_bridge_generate_video`를 숨기며, 사용량을 합치고, 영상 HTTP 호출에 시간 제한을 둡니다.
+- HTTP 401/403, 400/422, 429/5xx는 `auth`, `payload`, `upstream_status`입니다. 프록시 오류는 로그인 토큰을 지웁니다. `model: gpt-*`만 있는 롤아웃 줄은 Grok을 벗어납니다. 마이그레이션은 심볼릭 링크를 따라가지 않고 호출마다 다른 임시 파일을 씁니다.
+- 재개할 때 저장된 Grok 암호문을 지웁니다. 이 동작은 1.8.2에 들어갔고 기록에 없었습니다.
+- Windows 설치기는 경로를 UTF-8로 씁니다. macOS 런처는 사용자 `PATH`를 유지하고 node 경로를 따옴표로 감쌉니다. 배포 패키지에 `npm run verify:app-server`가 들어 있습니다.
 
 ### 1.8.4 — 2026-10-25
 
@@ -570,7 +600,7 @@ Codex `web_search`는 브리지가 실행하는 함수가 아니라 xAI 서버 �
 `.command` 런처는 자기 위치를 기준으로 경로를 잡으므로 폴더를 옮겨도 수정할
 필요가 없습니다. `PATH`에 `node`가 없으면 `NODE=/path/to/node`로 지정합니다.
 
-검증 버전: Codex 0.153.4 / 앱 26.901.51231, Grok CLI 1.0.25, Node 22.23.0.
+검증 버전: Codex CLI 0.167.0, Grok CLI 1.0.77, Node 22.
 앱 업데이트가 `CODEX_CLI_PATH`나 app-server 프로토콜을 바꾸면 재검증이
 필요합니다.
 
@@ -592,7 +622,7 @@ codex-grok exec --skip-git-repo-check --sandbox workspace-write '작업 내용'
 ```sh
 git clone https://github.com/deximple/codex-grok-bridge.git
 cd codex-grok-bridge
-npm test                        # 191건, 네트워크·추론 없음
+npm test                        # 315건, 네트워크·추론 없음
 node scripts/codex-grok.mjs
 ```
 
@@ -675,7 +705,7 @@ Responses 경로가 이상하면 `GROK_BRIDGE_INFERENCE=cli`로 이전 CLI 봉�
 
 추측이 아니라 실측입니다.
 
-- 실제 app-server에서 GPT 6개 모델과 `grok-4.6`의 혼합 목록, Grok 제공자 라우팅.
+- 실제 app-server에서 GPT 모델과 `grok-4.7`, `grok-4.6`의 혼합 목록, Grok 제공자 라우팅.
 - 실제 Grok CLI → Codex `exec_command` → 결과 → Grok 최종 응답
   (`BRIDGE_TOOL_OK`).
 - 별도 Codex 창에 `Grok 4.6 / xAI Extra High` 표시.
@@ -692,7 +722,9 @@ Codex는 provider·model을 프롬프트에 넣지 않습니다. 브리지는 `i
 이미지 생성이 켜져 있으면 `Images:` 줄도 붙습니다. 이 전송의 그림은 요청에 이미
 있는 Grok `image_generation` 도구로 만들고, Codex `imagegen` 스킬을 읽거나
 OpenAI로 보내지 말라는 뜻입니다. `GROK_BRIDGE_IMAGE_GEN=off`면 도구와 그 줄이
-같이 빠집니다.
+같이 빠집니다. `POST /v1/images/generations`와 `POST /v1/images/edits`는 같은
+grok 로그인으로 Imagine에 넘깁니다. 영상 생성이 켜져 있으면 `Videos:` 줄도
+붙습니다. `GROK_BRIDGE_VIDEO_GEN=off`면 그 도구와 그 줄이 빠집니다.
 
 ### reasoning
 
@@ -702,7 +734,7 @@ Codex `reasoning` 항목의 평문 요약은 상류로 전달합니다. 요약�
 턴에서 모델이 자기 추론을 이어받게 하기 위한 것이며, 상류가 이 형태를 수락하는
 것을 확인했습니다. 같은 과정에서 아이템과 content part는 Grok Responses가
 받는 필드만 남깁니다. `status`, 알 수 없는 Codex 키, `internal_*` 필드는
-버려서 새 클라이언트 필드가 상류 422를 내지 않게 합니다. 응답으로 돌아가는 암호문도 빼서, 나중에 OpenAI 모델로 바꿔도 Grok 추론 blob을 복호화하려 하지 않습니다. 이미 저장된 스레드는 그 항목이 남아 있습니다.
+버려서 새 클라이언트 필드가 상류 422를 내지 않게 합니다. 응답으로 돌아가는 암호문도 빼서, 나중에 OpenAI 모델로 바꿔도 Grok 추론 blob을 복호화하려 하지 않습니다. 재개와 fork도 저장된 Grok 롤아웃의 암호문을 지웁니다. OpenAI만 있는 롤아웃은 바이트 그대로입니다.
 
 ### 동시성
 
@@ -815,8 +847,8 @@ URL과 저장한 파일 경로를 함께 넣습니다. 다운로드가 실패하
 것입니다.
 
 `turn_failed.kind`는 다음 중 하나입니다 — `aborted`, `auth`, `dns`, `connect`,
-`upstream_timeout`, `upstream_closed`, `upstream_protocol`, `payload`,
-`internal`. Codex UI에는 같은 분류가 `bridge_<kind>`로 보입니다.
+`upstream_timeout`, `upstream_closed`, `upstream_status`, `upstream_protocol`,
+`payload`, `internal`. Codex UI에는 같은 분류가 `bridge_<kind>`로 보입니다.
 
 문제가 있으면 여기부터 봅니다. 브리지를 “확인”하려고 `~/.grok/auth.json`이나
 `~/.codex/auth.json`을 열지 마세요.
@@ -826,17 +858,22 @@ URL과 저장한 파일 경로를 함께 넣습니다. 다운로드가 실패하
 | 변수 | 효과 |
 |---|---|
 | `GROK_BRIDGE_IMAGE_GEN=off` | Grok `image_generation`을 선언하지 않고 `Images:` 줄도 붙이지 않음 |
+| `GROK_BRIDGE_VIDEO_GEN=off` | `grok_bridge_generate_video`를 선언하지 않고 `Videos:` 줄도 붙이지 않음 |
 | `GROK_BRIDGE_TRANSPORT=fetch` | `node:http(s)` 대신 Node `fetch` |
 | `GROK_BRIDGE_INFERENCE=cli` | CLI 봉투 경로로 폴백 |
 | `GROK_BRIDGE_DIAGNOSTICS=off` | JSONL 로그를 쓰지 않음 |
 | `GROK_BRIDGE_MODELS` | `grok-4.7`과 `grok-4.6` 외에 카탈로그에 더할 `grok-*` id (쉼표/공백) |
 | `NODE` | `.command` / 데스크톱 스크립트가 쓸 `node` 절대 경로 |
+| `CODEX_BINARY` | Codex CLI 바이너리. 번들 경로보다 우선 |
+| `CODEX_DESKTOP_APP` | 실행할 데스크톱 앱. Codex.app / ChatGPT보다 우선 |
+| `GROK_BINARY` | `grok` 바이너리. `~/.grok/bin/grok`보다 우선 |
+| `CODEX_GROK_PLATFORM` | 설치·실행 스크립트용 `darwin`, `linux`, `win32` |
 | `CODEX_GROK_APP` | 데스크톱 설치기가 쓸 앱 경로 (macOS: `/Applications/Codex Grok.app`; Linux: `~/.local/share/codex-grok-bridge/app`; Windows: `%LOCALAPPDATA%\codex-grok-bridge\app`) |
 
 ## 검증
 
 ```sh
-npm test                    # 191건, 외부 추론 없음
+npm test                    # 315건, 외부 추론 없음
 npm run test:coverage       # line/branch/function 80% 게이트
 npm run verify:app-server   # 실제 app-server 라우팅. 설치된 앱 번들에서도 실행
 npm audit --omit=dev

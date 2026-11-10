@@ -65,6 +65,7 @@ export function chooseLatest({ releases, npmLatest, npmRelease }) {
   const github = selectLatestStable(releases);
   const tagged = isStableSemver(npmLatest) ? stableReleaseFrom(npmRelease) : null;
   const npm = tagged && tagged.version === npmLatest ? tagged : null;
+  if (github && npm && compareSemver(github.version, npm.version) > 0) return npm;
   if (github && npm) return compareSemver(github.version, npm.version) >= 0 ? github : npm;
   return github ?? npm ?? null;
 }
@@ -120,8 +121,8 @@ export function releaseNotes({ version, date, codexVersion, releaseUrl, grokVers
   const english = [];
   const korean = [];
   if (codexVersion) {
-    english.push(`- Tracked Codex CLI is ${codexVersion} (${releaseUrl}). No protocol change.`);
-    korean.push(`- 추적하는 Codex CLI는 ${codexVersion}입니다 (${releaseUrl}). 프로토콜 변경은 없습니다.`);
+    english.push(`- Tracked Codex CLI is ${codexVersion} (${releaseUrl}). verify-app-server passed.`);
+    korean.push(`- 추적하는 Codex CLI는 ${codexVersion}입니다 (${releaseUrl}). verify-app-server를 통과했습니다.`);
   }
   if (grokVersion) {
     english.push(`- Tracked Grok CLI is ${grokVersion} (${grokReleaseUrl}). No bridge change.`);
@@ -257,17 +258,37 @@ function githubHeaders(token) {
   return headers;
 }
 
-async function getJson(fetchImpl, url, headers) {
-  const response = await fetchImpl(url, { headers });
-  if (!response.ok) {
-    const error = new Error(`${response.status} for ${url}`);
-    error.status = response.status;
-    throw error;
+const RETRY_STATUSES = new Set([502, 503, 504]);
+
+function retryableStatus(error) {
+  return (
+    RETRY_STATUSES.has(error?.status) ||
+    /terminated|timeout|ECONNRESET|ETIMEDOUT|fetch failed/i.test(String(error?.message ?? ""))
+  );
+}
+
+async function getJson(fetchImpl, url, headers, attempts = 3) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetchImpl(url, { headers });
+      if (!response.ok) {
+        const error = new Error(`${response.status} for ${url}`);
+        error.status = response.status;
+        throw error;
+      }
+      return await response.json();
+    } catch (error) {
+      lastError = error;
+      if (!retryableStatus(error) || attempt === attempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 200 * 2 ** (attempt - 1)));
+    }
   }
-  return response.json();
+  throw lastError;
 }
 
 export async function loadLatest({ fetchImpl = globalThis.fetch, token = "" } = {}) {
+  const headers = githubHeaders(token);
   const tags = await getJson(
     fetchImpl,
     `https://registry.npmjs.org/-/package/${NPM_PACKAGE}/dist-tags`,
@@ -275,17 +296,27 @@ export async function loadLatest({ fetchImpl = globalThis.fetch, token = "" } = 
   );
   const npmLatest = typeof tags.latest === "string" ? tags.latest : "";
   const pages = [];
-  for (let page = 1; page <= 3; page += 1) {
+  try {
+    const latestRelease = await getJson(
+      fetchImpl,
+      `https://api.github.com/repos/${CODEX_REPO}/releases/latest`,
+      headers,
+    );
+    if (latestRelease) pages.push(latestRelease);
+  } catch (error) {
+    if (error.status !== 404 && !retryableStatus(error)) {
+      // The short page below is the fallback for a gateway timeout on /latest.
+    }
+  }
+  try {
     const releases = await getJson(
       fetchImpl,
-      `https://api.github.com/repos/${CODEX_REPO}/releases?per_page=100&page=${page}`,
-      githubHeaders(token),
+      `https://api.github.com/repos/${CODEX_REPO}/releases?per_page=20&page=1`,
+      headers,
     );
-    if (!Array.isArray(releases) || releases.length === 0) break;
-    pages.push(...releases);
-    const best = selectLatestStable(pages);
-    if (best && isStableSemver(npmLatest) && compareSemver(best.version, npmLatest) >= 0) break;
-    if (releases.length < 100) break;
+    if (Array.isArray(releases)) pages.push(...releases);
+  } catch (error) {
+    if (pages.length === 0) throw error;
   }
   let npmRelease = null;
   if (isStableSemver(npmLatest)) {
@@ -348,6 +379,7 @@ async function main() {
   const grokPinPath = argValue(args, "--grok-pin") || DEFAULT_GROK_PIN;
   const notesOut = argValue(args, "--notes-out");
   const write = args.includes("--write-if-newer");
+  const protocolVerified = args.includes("--protocol-verified");
   const pin = readPin(pinPath);
   const grokPin = readPin(grokPinPath);
   const { npmLatest, latest } = await loadLatest({
@@ -371,6 +403,11 @@ async function main() {
     codexLatest: latest.version,
     grokLatest: grokLatest.version,
   });
+  if (plan.codex.update && write && !protocolVerified) {
+    throw new Error(
+      "Refusing to record a Codex CLI pin without --protocol-verified. Run scripts/verify-app-server.mjs against that CLI first.",
+    );
+  }
   if (plan.update && write) {
     const bumped = applyTrackBump({
       packageJson: readFileSync(packagePath, "utf8"),
@@ -408,6 +445,8 @@ async function main() {
     title,
   }));
   setOutput("update", String(plan.update));
+  setOutput("codex_update", String(plan.codex.update));
+  setOutput("grok_update", String(plan.grok.update));
   setOutput("tracked", pin.version);
   setOutput("latest", latest.version);
   setOutput("release_url", latest.releaseUrl);

@@ -10,8 +10,6 @@ import path from "node:path";
 import test from "node:test";
 
 import { createBridgeServer } from "../src/bridge.mjs";
-import OpusScript from "opusscript";
-import { MediaStreamTrack, RTCPeerConnection, RTCRtpCodecParameters, useOPUS } from "werift";
 import { DEFAULT_REALTIME_API_BASE, forwardRealtime } from "../src/realtime.mjs";
 import {
   appendFromRtp,
@@ -41,6 +39,24 @@ import {
   instructionsFromCallBody,
   offerFromCallBody,
 } from "../src/voice.mjs";
+
+let OpusScript;
+let MediaStreamTrack;
+let RTCPeerConnection;
+let RTCRtpCodecParameters;
+let useOPUS;
+let voiceReady = false;
+try {
+  OpusScript = (await import("opusscript")).default;
+  ({ MediaStreamTrack, RTCPeerConnection, RTCRtpCodecParameters, useOPUS } = await import("werift"));
+  voiceReady = Boolean(OpusScript && MediaStreamTrack);
+} catch (error) {
+  if (error?.code !== "ERR_MODULE_NOT_FOUND") throw error;
+}
+function voiceTest(name, options, fn) {
+  if (!voiceReady) return test(name, { skip: "opusscript and werift are not installed" }, () => {});
+  return fn === undefined ? test(name, options) : test(name, options, fn);
+}
 
 const BRIDGE = "bridge-token";
 const GROK = "grok-login-token";
@@ -101,7 +117,7 @@ function postRaw(port, requestPath, body, headers = {}) {
   });
 }
 
-test("realtime calls and live forward raw SDP bytes to xAI", async () => {
+voiceTest("realtime calls and live forward raw SDP bytes to xAI", async () => {
   const calls = [];
   const fetchImpl = async (url, init) => {
     calls.push({ url, init });
@@ -142,7 +158,7 @@ test("realtime calls and live forward raw SDP bytes to xAI", async () => {
   }
 });
 
-test("a non-2xx upstream body is returned unchanged", async () => {
+voiceTest("a non-2xx upstream body is returned unchanged", async () => {
   const upstreamBody = Buffer.from('{"error":"nope","sdp":"v=synthesized"}\n', "utf8");
   await withServer(
     {
@@ -184,7 +200,7 @@ test("a non-2xx upstream body is returned unchanged", async () => {
   );
 });
 
-test("missing login is a local 401 and a transport error is not an SDP answer", async () => {
+voiceTest("missing login is a local 401 and a transport error is not an SDP answer", async () => {
   const home = await mkdtemp(path.join(tmpdir(), "codex-grok-realtime-"));
   let fetches = 0;
   await withServer(
@@ -224,7 +240,7 @@ test("missing login is a local 401 and a transport error is not an SDP answer", 
   assert.equal(fetches, 1);
 });
 
-test("realtime routes keep the bridge token gate", async () => {
+voiceTest("realtime routes keep the bridge token gate", async () => {
   let fetches = 0;
   await withServer(
     {
@@ -258,7 +274,7 @@ test("realtime routes keep the bridge token gate", async () => {
   assert.equal(fetches, 0);
 });
 
-test("forwardRealtime uses the default base and an injected fetch", async () => {
+voiceTest("forwardRealtime uses the default base and an injected fetch", async () => {
   const seen = await forwardRealtime({
     path: "/realtime/calls",
     search: "?a=b",
@@ -373,7 +389,7 @@ function rawUpgrade(port, requestPath, headers = {}, waitForTrail = requestPath.
   });
 }
 
-test("a rejected xAI offer is answered by werift and bridged to the voice socket", async () => {
+voiceTest("a rejected xAI offer is answered by werift and bridged to the voice socket", async () => {
   const pcmu = new RTCRtpCodecParameters({
     mimeType: "audio/PCMU",
     clockRate: 8000,
@@ -444,7 +460,7 @@ test("a rejected xAI offer is answered by werift and bridged to the voice socket
   }
 });
 
-test("a sideband frame bundled with the upgrade reaches xAI", async () => {
+voiceTest("a sideband frame bundled with the upgrade reaches xAI", async () => {
   const pcmu = new RTCRtpCodecParameters({
     mimeType: "audio/PCMU",
     clockRate: 8000,
@@ -520,7 +536,7 @@ test("a sideband frame bundled with the upgrade reaches xAI", async () => {
   }
 });
 
-test("a sideband request waits until the voice socket is open", () => {
+voiceTest("a sideband request waits until the voice socket is open", () => {
   const sent = [];
   const socket = {
     readyState: 0,
@@ -544,7 +560,7 @@ test("a sideband request waits until the voice socket is open", () => {
   }
 });
 
-test("a tool reply waits until playback finishes", async () => {
+voiceTest("a tool reply waits until playback finishes", async () => {
   const sent = [];
   const track = {
     onReceiveRtp: { subscribe() {} },
@@ -588,7 +604,7 @@ test("a tool reply waits until playback finishes", async () => {
   }
 });
 
-test("audio after an interrupted voice reply waits for the next response", () => {
+voiceTest("audio after an interrupted voice reply waits for the next response", () => {
   const track = {
     onReceiveRtp: { subscribe() {} },
     rtp: [],
@@ -617,7 +633,7 @@ test("audio after an interrupted voice reply waits for the next response", () =>
   }
 });
 
-test("user speech stops queued voice playback", async () => {
+voiceTest("user speech stops queued voice playback", async () => {
   const track = {
     onReceiveRtp: { subscribe() {} },
     rtp: [],
@@ -656,7 +672,7 @@ test("user speech stops queued voice playback", async () => {
   }
 });
 
-test("user speech truncates the assistant item to the audio already sent", () => {
+voiceTest("user speech truncates the assistant item to the audio already sent", () => {
   const sent = [];
   const track = {
     onReceiveRtp: { subscribe() {} },
@@ -698,7 +714,7 @@ test("user speech truncates the assistant item to the audio already sent", () =>
   }
 });
 
-test("a later user turn does not truncate a finished voice reply", () => {
+voiceTest("a later user turn does not truncate a finished voice reply", () => {
   const sent = [];
   const track = {
     onReceiveRtp: { subscribe() {} },
@@ -734,7 +750,7 @@ test("a later user turn does not truncate a finished voice reply", () => {
   }
 });
 
-test("a tool reply waits until the user stops speaking", () => {
+voiceTest("a tool reply waits until the user stops speaking", () => {
   const sent = [];
   const socket = {
     readyState: 1,
@@ -762,7 +778,7 @@ test("a tool reply waits until the user stops speaking", () => {
   }
 });
 
-test("a tool reply waits until the voice response is done", () => {
+voiceTest("a tool reply waits until the voice response is done", () => {
   const sent = [];
   const socket = {
     readyState: 1,
@@ -795,7 +811,7 @@ test("a tool reply waits until the voice response is done", () => {
   }
 });
 
-test("microphone audio held for the session ack keeps two seconds", () => {
+voiceTest("microphone audio held for the session ack keeps two seconds", () => {
   const sent = [];
   const bridge = startVoiceBridge({
     track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
@@ -817,7 +833,7 @@ test("microphone audio held for the session ack keeps two seconds", () => {
   }
 });
 
-test("a spoken voice tool reply does not repeat a deferred response.create", () => {
+voiceTest("a spoken voice tool reply does not repeat a deferred response.create", () => {
   const sent = [];
   const socket = {
     readyState: 1,
@@ -855,7 +871,7 @@ test("a spoken voice tool reply does not repeat a deferred response.create", () 
   }
 });
 
-test("a desktop response.cancel stops queued playback", async () => {
+voiceTest("a desktop response.cancel stops queued playback", async () => {
   const sent = [];
   const track = {
     onReceiveRtp: { subscribe() {} },
@@ -906,7 +922,7 @@ test("a desktop response.cancel stops queued playback", async () => {
   }
 });
 
-test("a desktop response.cancel keeps a tool reply held while the user is speaking", () => {
+voiceTest("a desktop response.cancel keeps a tool reply held while the user is speaking", () => {
   const sent = [];
   const bridge = startVoiceBridge({
     track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
@@ -934,7 +950,7 @@ test("a desktop response.cancel keeps a tool reply held while the user is speaki
   }
 });
 
-test("voice audio accepts the documented delta and audio fields", () => {
+voiceTest("voice audio accepts the documented delta and audio fields", () => {
   const pcm = Buffer.alloc(6).toString("base64");
   assert.equal(voiceAudioDelta({ type: "response.output_audio.delta", delta: pcm }), pcm);
   assert.equal(voiceAudioDelta({ type: "response.audio.delta", audio: pcm }), pcm);
@@ -942,7 +958,7 @@ test("voice audio accepts the documented delta and audio fields", () => {
   assert.equal(voiceAudioDelta({ type: "response.done" }), "");
 });
 
-test("voice audio uses append and output_audio.delta", () => {
+voiceTest("voice audio uses append and output_audio.delta", () => {
   const sent = [];
   const track = {
     onReceiveRtp: { subscribe() {} },
@@ -979,7 +995,7 @@ test("voice audio uses append and output_audio.delta", () => {
   assert.equal(sent.at(-1).type, "input_audio_buffer.append");
 });
 
-test("a short voice reply is played when the turn ends", () => {
+voiceTest("a short voice reply is played when the turn ends", () => {
   const track = {
     onReceiveRtp: { subscribe() {} },
     rtp: [],
@@ -1004,7 +1020,7 @@ test("a short voice reply is played when the turn ends", () => {
   assert.equal(track.rtp[1].header.marker, true);
 });
 
-test("a live-sized voice delta is played as opus", async () => {
+voiceTest("a live-sized voice delta is played as opus", async () => {
   const track = {
     onReceiveRtp: { subscribe() {} },
     rtp: [],
@@ -1037,7 +1053,7 @@ test("a live-sized voice delta is played as opus", async () => {
   bridge.close();
 });
 
-test("a later voice turn keeps its own talkspurt marker", async () => {
+voiceTest("a later voice turn keeps its own talkspurt marker", async () => {
   const track = {
     onReceiveRtp: { subscribe() {} },
     rtp: [],
@@ -1073,7 +1089,7 @@ test("a later voice turn keeps its own talkspurt marker", async () => {
   }
 });
 
-test("a rejected spoken voice turn does not hold the next reply", () => {
+voiceTest("a rejected spoken voice turn does not hold the next reply", () => {
   const sent = [];
   const bridge = startVoiceBridge({
     track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
@@ -1113,7 +1129,7 @@ test("a rejected spoken voice turn does not hold the next reply", () => {
   }
 });
 
-test("a second spoken voice tool reply waits for the first turn", () => {
+voiceTest("a second spoken voice tool reply waits for the first turn", () => {
   const sent = [];
   const bridge = startVoiceBridge({
     track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
@@ -1145,7 +1161,7 @@ test("a second spoken voice tool reply waits for the first turn", () => {
   }
 });
 
-test("a streamed codex reply is spoken once", () => {
+voiceTest("a streamed codex reply is spoken once", () => {
   const state = { pendingCalls: new Set(["call-1"]) };
   const frame = (text) => ({
     type: "delegation.context.append",
@@ -1229,13 +1245,13 @@ test("a streamed codex reply is spoken once", () => {
   );
 });
 
-test("a short playout delay does not split the talkspurt", () => {
+voiceTest("a short playout delay does not split the talkspurt", () => {
   assert.equal(playoutGap({ lastSentAt: 1000 }, 1040), 0);
   assert.equal(playoutGap({ lastSentAt: 1000 }, 1070), 0);
   assert.ok(playoutGap({ lastSentAt: 1000 }, 1120) > 0);
 });
 
-test("a silent gap advances the voice playout clock", async () => {
+voiceTest("a silent gap advances the voice playout clock", async () => {
   const track = {
     onReceiveRtp: { subscribe() {} },
     rtp: [],
@@ -1263,7 +1279,7 @@ test("a silent gap advances the voice playout clock", async () => {
   }
 });
 
-test("closing the voice bridge stops playback retries", async () => {
+voiceTest("closing the voice bridge stops playback retries", async () => {
   let writes = 0;
   const track = {
     onReceiveRtp: { subscribe() {} },
@@ -1291,7 +1307,7 @@ test("closing the voice bridge stops playback retries", async () => {
   assert.equal(writes, atClose);
 });
 
-test("a playback frame is retried when the peer is not ready", async () => {
+voiceTest("a playback frame is retried when the peer is not ready", async () => {
   let fail = true;
   const track = {
     onReceiveRtp: { subscribe() {} },
@@ -1327,7 +1343,7 @@ test("a playback frame is retried when the peer is not ready", async () => {
   }
 });
 
-test("a dropped voice socket resumes the same conversation once", () => {
+voiceTest("a dropped voice socket resumes the same conversation once", () => {
   const first = { readyState: 1, sent: [], send(data) { this.sent.push(JSON.parse(String(data))); }, close() {} };
   let second;
   const events = [];
@@ -1357,7 +1373,7 @@ test("a dropped voice socket resumes the same conversation once", () => {
   }
 });
 
-test("a resumed voice socket dials the same conversation", () => {
+voiceTest("a resumed voice socket dials the same conversation", () => {
   const urls = [];
   const Original = globalThis.WebSocket;
   globalThis.WebSocket = class {
@@ -1377,7 +1393,7 @@ test("a resumed voice socket dials the same conversation", () => {
   }
 });
 
-test("a dropped voice socket sends a held tool reply after the new session is ready", () => {
+voiceTest("a dropped voice socket sends a held tool reply after the new session is ready", () => {
   const first = {
     readyState: 1,
     sent: [],
@@ -1421,7 +1437,7 @@ test("a dropped voice socket sends a held tool reply after the new session is re
   }
 });
 
-test("a resumed voice socket drops the previous interrupt", () => {
+voiceTest("a resumed voice socket drops the previous interrupt", () => {
   const first = {
     readyState: 1,
     sent: [],
@@ -1488,7 +1504,7 @@ test("a resumed voice socket drops the previous interrupt", () => {
   }
 });
 
-test("a resumed voice socket sends the new session update first", () => {
+voiceTest("a resumed voice socket sends the new session update first", () => {
   const first = {
     readyState: 0,
     sent: [],
@@ -1525,7 +1541,7 @@ test("a resumed voice socket sends the new session update first", () => {
   }
 });
 
-test("a resumed voice socket drops audio that was still queued", async () => {
+voiceTest("a resumed voice socket drops audio that was still queued", async () => {
   const first = {
     readyState: 1,
     sent: [],
@@ -1594,7 +1610,7 @@ test("a resumed voice socket drops audio that was still queued", async () => {
   }
 });
 
-test("a dropped voice socket tells the desktop", () => {
+voiceTest("a dropped voice socket tells the desktop", () => {
   const seen = [];
   const socket = { readyState: 1, send() {} };
   const state = { closing: false };
@@ -1614,7 +1630,7 @@ test("a dropped voice socket tells the desktop", () => {
   bridge.close();
 });
 
-test("an opus-only offer is answered instead of returned as the xAI rejection", async () => {
+voiceTest("an opus-only offer is answered instead of returned as the xAI rejection", async () => {
   const offerer = new RTCPeerConnection({
     iceServers: [],
     iceUseIpv4: true,
@@ -1648,7 +1664,7 @@ test("an opus-only offer is answered instead of returned as the xAI rejection", 
   }
 });
 
-test("developer voice history stays in the session instructions", () => {
+voiceTest("developer voice history stays in the session instructions", () => {
   const body = [
     "--bound",
     'Content-Disposition: form-data; name="session"',
@@ -1706,7 +1722,7 @@ test("developer voice history stays in the session instructions", () => {
   }
 });
 
-test("a line-feed multipart call body still yields the sdp and the instructions", () => {
+voiceTest("a line-feed multipart call body still yields the sdp and the instructions", () => {
   const boundary = "lf-bound";
   const sdp = "v=0\no=- 1 1 IN IP4 127.0.0.1\n";
   const body = [
@@ -1726,7 +1742,7 @@ test("a line-feed multipart call body still yields the sdp and the instructions"
   assert.equal(instructionsFromCallBody(body, type), "Stay on the repo.");
 });
 
-test("a Codex multipart call body is answered from its sdp part", async () => {
+voiceTest("a Codex multipart call body is answered from its sdp part", async () => {
   const offerer = new RTCPeerConnection({
     iceServers: [],
     iceUseIpv4: true,
@@ -1794,7 +1810,7 @@ test("a Codex multipart call body is answered from its sdp part", async () => {
   }
 });
 
-test("ack filler asks the voice model to speak before the codex tool", () => {
+voiceTest("ack filler asks the voice model to speak before the codex tool", () => {
   const body = [
     "--bound",
     'Content-Disposition: form-data; name="session"',
@@ -1836,7 +1852,7 @@ test("ack filler asks the voice model to speak before the codex tool", () => {
   }
 });
 
-test("a streamed codex reply is sent after the desktop pauses", async () => {
+voiceTest("a streamed codex reply is sent after the desktop pauses", async () => {
   const offerer = new RTCPeerConnection({
     iceServers: [],
     iceUseIpv4: true,
@@ -1899,7 +1915,7 @@ test("a streamed codex reply is sent after the desktop pauses", async () => {
   }
 });
 
-test("a session.close frame hangs up the voice call", async () => {
+voiceTest("a session.close frame hangs up the voice call", async () => {
   const offerer = new RTCPeerConnection({
     iceServers: [],
     iceUseIpv4: true,
@@ -1946,7 +1962,7 @@ test("a session.close frame hangs up the voice call", async () => {
   }
 });
 
-test("closing the v3 sideband hangs up the voice peer", async () => {
+voiceTest("closing the v3 sideband hangs up the voice peer", async () => {
   const offerer = new RTCPeerConnection({
     iceServers: [],
     iceUseIpv4: true,
@@ -1992,7 +2008,7 @@ function maskedClientText(text, opcode = 0x1, fin = true) {
   return Buffer.concat([Buffer.from([(fin ? 0x80 : 0) | opcode, 0x80 | payload.length]), mask, masked]);
 }
 
-test("voice sideband relays control events and answers pings", async () => {
+voiceTest("voice sideband relays control events and answers pings", async () => {
   const offerer = new RTCPeerConnection({
     iceServers: [],
     iceUseIpv4: true,
@@ -2059,7 +2075,7 @@ test("voice sideband relays control events and answers pings", async () => {
   }
 });
 
-test("an offer with a data channel keeps that channel in the answer", async () => {
+voiceTest("an offer with a data channel keeps that channel in the answer", async () => {
   const offerer = new RTCPeerConnection({
     iceServers: [],
     iceUseIpv4: true,
@@ -2100,7 +2116,7 @@ test("an offer with a data channel keeps that channel in the answer", async () =
   }
 });
 
-test("a host-only answer opens the offered event channel", async () => {
+voiceTest("a host-only answer opens the offered event channel", async () => {
   const child = spawn(
     process.execPath,
     [
@@ -2160,7 +2176,7 @@ test("a host-only answer opens the offered event channel", async () => {
   assert.equal(code, 0);
 });
 
-test("a connected offerer microphone reaches xAI", async () => {
+voiceTest("a connected offerer microphone reaches xAI", async () => {
   const child = spawn(
     process.execPath,
     [
@@ -2256,7 +2272,7 @@ test("a connected offerer microphone reaches xAI", async () => {
   assert.equal(code, 0);
 });
 
-test("played voice audio reaches the offering peer", async () => {
+voiceTest("played voice audio reaches the offering peer", async () => {
   const child = spawn(
     process.execPath,
     [
@@ -2350,7 +2366,7 @@ test("played voice audio reaches the offering peer", async () => {
   assert.equal(code, 0);
 });
 
-test("desktop v3 sideband context becomes an xAI voice item", () => {
+voiceTest("desktop v3 sideband context becomes an xAI voice item", () => {
   assert.deepEqual(voiceClientEvents({ type: "response.cancel" }), [{ type: "response.cancel" }]);
   assert.deepEqual(voiceClientEvents({ type: "input_audio.append", audio: "AQID" }), [
     { type: "input_audio_buffer.append", audio: "AQID" },
@@ -2421,7 +2437,7 @@ test("desktop v3 sideband context becomes an xAI voice item", () => {
   assert.equal(state.pendingCalls.has("call-1"), false);
 });
 
-test("split context appends are joined before the tool result is spoken", () => {
+voiceTest("split context appends are joined before the tool result is spoken", () => {
   const frames = [
     {
       type: "delegation.context.append",
@@ -2473,7 +2489,7 @@ test("split context appends are joined before the tool result is spoken", () => 
   assert.equal(split[2].content[0].text, "BBBB");
 });
 
-test("user speech after a finished voice reply does not mute the next audio", () => {
+voiceTest("user speech after a finished voice reply does not mute the next audio", () => {
   const track = {
     onReceiveRtp: { subscribe() {} },
     rtp: [],
@@ -2503,7 +2519,7 @@ test("user speech after a finished voice reply does not mute the next audio", ()
   }
 });
 
-test("user speech after a finished voice caption keeps the next words", () => {
+voiceTest("user speech after a finished voice caption keeps the next words", () => {
   const seen = [];
   const bridge = startVoiceBridge({
     track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
@@ -2526,7 +2542,7 @@ test("user speech after a finished voice caption keeps the next words", () => {
   }
 });
 
-test("an interrupted voice reply keeps only the transcript already sent", () => {
+voiceTest("an interrupted voice reply keeps only the transcript already sent", () => {
   const state = {};
   assert.deepEqual(voiceSidebandEvent({ type: "response.output_audio_transcript.delta", delta: "Hi" }, state), {
     type: "output_transcript.added",
@@ -2545,7 +2561,7 @@ test("an interrupted voice reply keeps only the transcript already sent", () => 
   });
 });
 
-test("a desktop response.cancel stops later voice transcript", () => {
+voiceTest("a desktop response.cancel stops later voice transcript", () => {
   const seen = [];
   const bridge = startVoiceBridge({
     track: { onReceiveRtp: { subscribe() {} }, writeRtp() {} },
@@ -2569,7 +2585,7 @@ test("a desktop response.cancel stops later voice transcript", () => {
   }
 });
 
-test("xAI voice events become the desktop v3 sideband events", () => {
+voiceTest("xAI voice events become the desktop v3 sideband events", () => {
   const state = { inputTranscript: "" };
   assert.deepEqual(voiceSidebandEvent({ type: "response.output_audio_transcript.delta", delta: "Hi" }, state), {
     type: "output_transcript.added",
@@ -2660,7 +2676,7 @@ test("xAI voice events become the desktop v3 sideband events", () => {
   assert.equal(announceSession(fresh, []).length, 0);
 });
 
-test("microphone packets come from the remote track", () => {
+voiceTest("microphone packets come from the remote track", () => {
   const sent = [];
   const remoteHandlers = [];
   const localHandlers = [];
@@ -2701,7 +2717,7 @@ test("microphone packets come from the remote track", () => {
   }
 });
 
-test("an offer registers a remote microphone track", async () => {
+voiceTest("an offer registers a remote microphone track", async () => {
   const offerer = new RTCPeerConnection({
     iceServers: [],
     iceUseIpv4: true,
@@ -2728,7 +2744,7 @@ test("an offer registers a remote microphone track", async () => {
   }
 });
 
-test("opus rtp is appended as pcm and playback is opus", () => {
+voiceTest("opus rtp is appended as pcm and playback is opus", () => {
   const encoder = new OpusScript(48000, 2, OpusScript.Application.AUDIO);
   const encoded = encoder.encode(Buffer.alloc(960 * 4), 960);
   const sent = [];
@@ -2771,7 +2787,7 @@ test("opus rtp is appended as pcm and playback is opus", () => {
   }
 });
 
-test("a locally answered sideband stays on the bridge", async () => {
+voiceTest("a locally answered sideband stays on the bridge", async () => {
   const id = rememberLocalCall("local-sideband-test");
   let dials = 0;
   await withServer(
@@ -2810,7 +2826,7 @@ test("a locally answered sideband stays on the bridge", async () => {
   assert.equal(dials, 0);
 });
 
-test("sideband upgrade is piped to api.x.ai with the grok bearer", async () => {
+voiceTest("sideband upgrade is piped to api.x.ai with the grok bearer", async () => {
   const upstreams = [];
   const reply = Buffer.from(
     "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\nU",
@@ -2845,7 +2861,7 @@ test("sideband upgrade is piped to api.x.ai with the grok bearer", async () => {
   assert.equal(upstreams.length, 1);
 });
 
-test("sideband upgrade does not dial on auth, origin, or other paths", async () => {
+voiceTest("sideband upgrade does not dial on auth, origin, or other paths", async () => {
   let dials = 0;
   const connect = () => {
     dials += 1;
@@ -2884,7 +2900,7 @@ class SilentSocket extends Duplex {
   _read() {}
 }
 
-test("a sideband handshake that never answers closes the client", async () => {
+voiceTest("a sideband handshake that never answers closes the client", async () => {
   let dials = 0;
   await withServer(
     {

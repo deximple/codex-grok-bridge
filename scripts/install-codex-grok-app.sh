@@ -38,6 +38,10 @@ else
   BRIDGE="$APP/Contents/Resources/bridge"
 fi
 
+if command -v python3 >/dev/null 2>&1; then
+  APP="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$APP")"
+fi
+
 FULL=0
 FORCE=0
 for arg in "$@"; do
@@ -49,8 +53,9 @@ for arg in "$@"; do
   esac
 done
 
-case "$APP" in
-  /usr/lib/chatgpt|/usr/lib/chatgpt/*|/usr/bin/chatgpt|/Applications/Codex.app|/Applications/Codex.app/*|*WindowsApps*|*windowsapps*)
+app_key="$(printf '%s' "$APP" | tr '[:upper:]' '[:lower:]')"
+case "$app_key" in
+  /usr/lib/chatgpt|/usr/lib/chatgpt/*|/usr/bin/chatgpt|/usr/share/applications/chatgpt.desktop|/applications/codex.app|/applications/codex.app/*|*windowsapps*)
     echo "refusing to install into the stock ChatGPT/Codex prefix: $APP" >&2
     exit 1
     ;;
@@ -61,36 +66,56 @@ if [ "$PLATFORM" != linux ] && [ "$PLATFORM" != win32 ] && [ ! -d "$APP/Contents
   exit 1
 fi
 
-if [ "$FORCE" -eq 0 ] && [ "$PLATFORM" != win32 ] && pgrep -f -- "--user-data-dir=$USER_DATA" >/dev/null 2>&1; then
+if [ "$FORCE" -eq 0 ] && [ "$PLATFORM" != win32 ] && USER_DATA="$USER_DATA" python3 -c 'import os,sys
+needle = "--user-data-dir=" + os.environ["USER_DATA"]
+lines = os.popen("ps -axo command=").read().splitlines()
+sys.exit(0 if any(needle in line for line in lines) else 1)'; then
   echo "Codex Grok is running. Close its window first, or pass --force to swap" >&2
   echo "the files under it (the running window keeps its loaded code either way)." >&2
   exit 1
 fi
 
 mkdir -p "$BRIDGE/scripts" "$BRIDGE/src"
-cp "$ROOT"/scripts/*.mjs "$BRIDGE/scripts/"
+if [ "$PLATFORM" = linux ] || [ "$PLATFORM" = win32 ]; then
+  chmod 700 "$(dirname "$APP")" 2>/dev/null || true
+fi
+for name in codex-grok.mjs codex-wrapper.mjs launch-desktop.mjs; do
+  cp "$ROOT/scripts/$name" "$BRIDGE/scripts/$name"
+done
 cp "$ROOT"/src/*.mjs "$BRIDGE/src/"
 
-# Prune only files this checkout no longer has. Never remove the directory.
-for dir in scripts src; do
-  for installed in "$BRIDGE/$dir"/*.mjs; do
-    [ -e "$installed" ] || continue
-    if [ ! -e "$ROOT/$dir/$(basename "$installed")" ]; then
+# Runtime scripts only. Maintainer scripts stay in the checkout.
+for installed in "$BRIDGE/scripts"/*.mjs; do
+  [ -e "$installed" ] || continue
+  case "$(basename "$installed")" in
+    codex-grok.mjs|codex-wrapper.mjs|launch-desktop.mjs) ;;
+    *)
       rm -f "$installed"
-      echo "pruned $dir/$(basename "$installed")"
-    fi
-  done
+      echo "pruned scripts/$(basename "$installed")"
+      ;;
+  esac
+done
+for installed in "$BRIDGE/src"/*.mjs; do
+  [ -e "$installed" ] || continue
+  if [ ! -e "$ROOT/src/$(basename "$installed")" ]; then
+    rm -f "$installed"
+    echo "pruned src/$(basename "$installed")"
+  fi
 done
 
 status=0
-for dir in scripts src; do
-  for source in "$ROOT/$dir"/*.mjs; do
-    name="$(basename "$source")"
-    if ! cmp -s "$source" "$BRIDGE/$dir/$name"; then
-      echo "MISMATCH $dir/$name" >&2
-      status=1
-    fi
-  done
+for name in codex-grok.mjs codex-wrapper.mjs launch-desktop.mjs; do
+  if ! cmp -s "$ROOT/scripts/$name" "$BRIDGE/scripts/$name"; then
+    echo "MISMATCH scripts/$name" >&2
+    status=1
+  fi
+done
+for source in "$ROOT"/src/*.mjs; do
+  name="$(basename "$source")"
+  if ! cmp -s "$source" "$BRIDGE/src/$name"; then
+    echo "MISMATCH src/$name" >&2
+    status=1
+  fi
 done
 [ "$status" -eq 0 ] || { echo "bundle did not match the checkout" >&2; exit 1; }
 
@@ -187,7 +212,8 @@ elif [ "$FULL" -eq 1 ]; then
   LAUNCH="$BRIDGE/scripts/launch-desktop.mjs"
   TMP="$(mktemp -d)"
   trap 'rm -rf "$TMP"' EXIT
-  osacompile -o "$TMP/tmp.app" -e "do shell script \"$NODE \\\"$LAUNCH\\\"\""
+  sq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+  osacompile -o "$TMP/tmp.app" -e "do shell script \"$(sq "$NODE") $(sq "$LAUNCH")\""
   cp "$TMP/tmp.app/Contents/MacOS/applet" "$APP/Contents/MacOS/applet"
   cp "$TMP/tmp.app/Contents/Resources/Scripts/main.scpt" "$APP/Contents/Resources/Scripts/main.scpt"
   chmod +x "$APP/Contents/MacOS/applet"

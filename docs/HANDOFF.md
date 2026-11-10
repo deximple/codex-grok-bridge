@@ -7,12 +7,12 @@
 
 ## 1. 이게 뭔가
 
-Codex를 하네스로 두고 **Grok(`grok-*`, 기본 4.6)만 추론에 쓰는** 로컬 브리지.
+Codex를 하네스로 두고 **Grok(`grok-*`, 기본 4.7, `grok-4.6` 유지)만 추론에 쓰는** 로컬 브리지.
 Codex가 도구·권한·히스토리·MCP를 전부 소유하고, 브리지는 `/v1/responses`를 localhost에서 받아
 `cli-chat-proxy.grok.com`으로 옮긴다. 인증은 `grok login` 세션이고 `XAI_API_KEY`는 쓰지 않는다.
 
 ```
-Codex UI/CLI → app-server → scripts/codex-wrapper.mjs (모델 목록에 grok-4.6 주입)
+Codex UI/CLI → app-server → scripts/codex-wrapper.mjs (모델 목록에 grok-4.7과 grok-4.6 주입)
              → localhost /v1/responses (src/bridge.mjs)
              → cli-chat-proxy.grok.com (src/transport.mjs, node:http(s))
              → 도구 호출은 Codex가 실행하고 결과가 다음 요청의 input으로 돌아온다
@@ -22,7 +22,7 @@ Codex UI/CLI → app-server → scripts/codex-wrapper.mjs (모델 목록에 grok
 
 ```
 저장소 src/ = /Applications/Codex Grok.app/…/bridge/src/     (해시 일치)
-게이트        160/160, 97.30 lines / 87.70 branches / 90.57 functions
+게이트        315/315, 93.97 lines / 84.52 branches / 92.03 functions
 ```
 
 | 모듈 | 역할 |
@@ -79,8 +79,8 @@ kind=upstream_closed  signature=Error[ECONNRESET]  detail="aborted"
 
 **브리지는 이걸 재시도할 수 없다** — Codex가 이미 응답 일부를 받았으므로 재전송하면 중복된다.
 **Codex는 할 수 있다** — 대화를 소유하므로 같은 요청을 다시 보내면 된다. 그런데 provider 설정이
-`stream_max_retries: 0`이라 모든 리셋이 죽은 턴이 되고 있었다. 지금은 `2`다.
-(`request_max_retries`도 2. 브리지 자체 재시도는 첫 이벤트 이전만 담당하므로 서로 겹치지 않는다.)
+`stream_max_retries`와 `request_max_retries`는 `0`이다. Codex가 버퍼된 시도를 다시 보내지 않는다.
+브리지는 `PROXY_ATTEMPTS = 3`으로, Codex에 바이트를 보내기 전에만 다시 시도한다.
 
 ### 4.2 프롬프트에 provider·model이 없다
 
@@ -141,7 +141,7 @@ Codex는 400초 침묵도 견디므로 대기가 429보다 항상 낫다. **이 
 ## 5. 검증
 
 ```sh
-npm test                                   # 160건, 외부 추론 없음
+npm test                                   # 315건, 외부 추론 없음
 npm run test:coverage                      # 80% 게이트
 npm run verify:app-server                  # 실제 app-server 라우팅. 설치 번들에서도 실행됨
 node scripts/codex-grok.mjs exec --skip-git-repo-check "Reply with exactly PONG." </dev/null
@@ -163,7 +163,7 @@ node scripts/codex-grok.mjs exec --skip-git-repo-check "Reply with exactly PONG.
 
 | 항목 | 다음 행동 | 비용 |
 |---|---|---|
-| 상류 중간 리셋 재발 여부 | `stream_max_retries: 2` 적용 후에도 `turn_failed`가 남는지 로그로 확인 | 무료 |
+| 상류 중간 리셋 재발 여부 | `request_max_retries`와 `stream_max_retries`는 0이다. 재시도는 브리지가 Codex에 바이트를 보내기 전에만 한다 | 무료 |
 | ~~`apply_patch` 왕복~~ | **해당 없음.** Codex는 이 프로바이더에 `apply_patch`를 주지 않는다 — read-only/workspace-write/danger-full-access 세 샌드박스 모두에서 확인(258–268개 도구 중 없음). 파일 변경은 `exec_command`로만 한다 | — |
 | MCP 네임스페이스 왕복 | 실제 MCP 도구 1건 왕복 | 중간 |
 | `context_window` 258,400 출처 | 카탈로그 값을 131072로 낮추고 `token_count.model_context_window`가 따라 변하는지 관찰. 안 변하면 Codex 내부값 | 라이브 1콜 |

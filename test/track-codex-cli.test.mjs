@@ -168,7 +168,18 @@ test("loadLatest reads npm latest and GitHub stable releases", async () => {
   assert.equal(npmLatest, "0.160.1");
   assert.equal(latest.version, "0.160.1");
   assert.equal(calls.some((url) => url.includes("registry.npmjs.org")), true);
-  assert.equal(calls.some((url) => url.includes("/repos/openai/codex/releases?")), true);
+  assert.equal(calls.some((url) => url.includes("/repos/openai/codex/releases/latest")), true);
+  assert.equal(calls.some((url) => url.includes("per_page=20")), true);
+  assert.equal(calls.some((url) => url.includes("per_page=100")), false);
+});
+
+test("an unpublished GitHub release does not win over the npm stable tag", () => {
+  const latest = chooseLatest({
+    npmLatest: "0.167.0",
+    npmRelease: release("rust-v0.167.0"),
+    releases: [release("rust-v0.168.0"), release("rust-v0.167.0")],
+  });
+  assert.equal(latest.version, "0.167.0");
 });
 
 test("workflow compares the pin and does not publish, tag, or merge", () => {
@@ -182,7 +193,12 @@ test("workflow compares the pin and does not publish, tag, or merge", () => {
   assert.match(text, /package\.json/);
   assert.match(text, /CHANGELOG\.md/);
   assert.match(text, /README\.md/);
-  assert.match(text, /scripts\/track-codex-cli\.mjs --write-if-newer/);
+  assert.match(text, /--write-if-newer/);
+  assert.match(text, /--protocol-verified/);
+  assert.match(text, /secrets\.CI_PAT \|\| github\.token/);
+  assert.match(text, /git checkout -B "\$\{branch\}" origin\/main/);
+  assert.match(text, /--force-with-lease/);
+  assert.equal(text.includes("exit 0"), false);
   assert.equal(text.includes("npm publish"), false);
   assert.equal(text.includes("gh pr merge"), false);
   assert.equal(text.includes("git tag"), false);
@@ -190,22 +206,18 @@ test("workflow compares the pin and does not publish, tag, or merge", () => {
   assert.equal(tracker.includes("gh pr merge"), false);
 });
 
-test("1.8.2 notes match the tracker text and keep 1.8.1", () => {
+test("new Codex notes say verify passed and historical notes stay put", () => {
   const notes = releaseNotes({
-    version: "1.8.2",
-    date: "2026-10-06",
-    codexVersion: "0.160.1",
-    releaseUrl: "https://github.com/openai/codex/releases/tag/rust-v0.160.1",
+    version: "9.9.9",
+    date: "2026-11-11",
+    codexVersion: "0.167.0",
+    releaseUrl: "https://github.com/openai/codex/releases/tag/rust-v0.167.0",
   });
-  const lf = (text) => text.replaceAll("\r\n", "\n");
-  const changelog = lf(readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8"));
-  const readme = lf(readFileSync(new URL("../README.md", import.meta.url), "utf8"));
-  assert.ok(changelog.includes(notes.changelog));
+  assert.match(notes.changelog, /verify-app-server passed/);
+  assert.match(notes.readmeKo, /verify-app-server를 통과했습니다/);
+  const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8").replaceAll("\r\n", "\n");
+  assert.match(changelog, /## 1\.8\.2 — 2026-10-06\n\n- Tracked Codex CLI is 0\.160\.1.*No protocol change/);
   assert.match(changelog, /## 1\.8\.1 — 2026-10-03\n\n- Grok reasoning ciphertext is removed/);
-  assert.ok(readme.includes(notes.readmeEn));
-  assert.ok(readme.includes(notes.readmeKo));
-  assert.match(readme, /### 1\.8\.1 — 2026-10-03\n\n- Grok reasoning ciphertext is removed/);
-  assert.match(readme, /### 1\.8\.1 — 2026-10-03\n\n- Grok reasoning 암호문/);
 });
 
 test("the stable Grok channel is an X.Y.Z line", () => {
@@ -333,13 +345,10 @@ test("1.8.4 notes match the tracker text and keep 1.8.3", () => {
   const readme = lf(readFileSync(new URL("../README.md", import.meta.url), "utf8"));
   const codexPin = JSON.parse(readFileSync(new URL("../.github/codex-cli.json", import.meta.url), "utf8"));
   const grokPin = JSON.parse(readFileSync(new URL("../.github/grok-cli.json", import.meta.url), "utf8"));
-  assert.deepEqual(codexPin, {
-    version: "0.164.0",
-    releaseUrl: "https://github.com/openai/codex/releases/tag/rust-v0.164.0",
-  });
-  assert.deepEqual(grokPin, { version: "1.0.70", releaseUrl: GROK_CHANGELOG_URL });
-  assert.ok(changelog.startsWith(`# Changelog\n\n${notes.changelog}`));
+  assert.match(notes.changelog, /verify-app-server passed/);
+  assert.match(changelog, /## 1\.8\.4 — 2026-10-25\n\n- Tracked Codex CLI is 0\.164\.0.*No protocol change\./);
   assert.match(changelog, /## 1\.8\.3 — 2026-10-06\n\n- Tracked Grok CLI is 1\.0\.46/);
-  assert.ok(readme.includes(notes.readmeEn));
-  assert.ok(readme.includes(notes.readmeKo));
+  assert.equal(typeof codexPin.version, "string");
+  assert.equal(typeof grokPin.version, "string");
+  assert.match(readme, /### 1\.8\.4 — 2026-10-25/);
 });

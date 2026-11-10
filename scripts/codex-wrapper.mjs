@@ -6,6 +6,7 @@ import { startRuntime } from "../src/runtime.mjs";
 import { Router } from "../src/router.mjs";
 import { resolveCodexBinary } from "../src/paths.mjs";
 import { codexHomeFromEnv, migrateResumePath, migrateSessionRollouts } from "../src/rollout.mjs";
+import { captureProviderBaseline, restoreProviderBaseline } from "../src/provider-align.mjs";
 
 const binary = resolveCodexBinary();
 const args = process.argv.slice(2);
@@ -16,10 +17,16 @@ function spawnResolved(file, fileArgs, options) {
 }
 if (!args.includes("app-server")) {
   const child = spawnResolved(binary, args, { stdio: "inherit" });
+  child.on("error", () => {
+    process.stderr.write("Could not start bundled Codex\n");
+    process.exit(1);
+  });
   child.on("exit", (code) => process.exit(code ?? 1));
 } else {
   const runtime = await startRuntime();
-  const router = new Router(runtime.catalogPath);
+  const codexHome = codexHomeFromEnv();
+  captureProviderBaseline(codexHome);
+  const router = new Router(runtime.catalogPath, { codexHome });
   await migrateSessionRollouts(codexHomeFromEnv());
   const child = spawnResolved(binary, [...args, ...runtime.args], {
     stdio: ["pipe", "pipe", "inherit"],
@@ -106,6 +113,7 @@ if (!args.includes("app-server")) {
   );
   child.on("close", async (code) => {
     input.close();
+    restoreProviderBaseline(codexHome);
     await runtime.close();
     process.exit(code ?? 1);
   });

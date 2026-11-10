@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -10,10 +10,29 @@ import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import { resolveCodexBinary } from "../src/paths.mjs";
 
+async function readRolloutTree(dir) {
+  const chunks = [];
+  async function walk(current) {
+    let entries;
+    try {
+      entries = await readdir(current, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) await walk(full);
+      else if (entry.name.endsWith(".jsonl")) chunks.push(await readFile(full, "utf8"));
+    }
+  }
+  await walk(dir);
+  return chunks.join("\n");
+}
+
 const bundledCodex = resolveCodexBinary();
 if (!existsSync(bundledCodex)) {
   console.error(`verify:app-server skipped: bundled Codex CLI not found at ${bundledCodex}`);
-  console.error("Need /Applications/Codex.app (macOS) or /usr/lib/chatgpt/resources/codex (Linux).");
+  console.error("Set CODEX_BINARY, or install Codex (macOS /Applications/Codex.app, Linux /usr/lib/chatgpt/resources/codex, Windows store pointer).");
   process.exit(2);
 }
 
@@ -89,7 +108,9 @@ try {
     assert.deepEqual(resumed.sandbox, original.sandbox);
     transitions.push({ model: resumed.model, provider: resumed.modelProvider });
   }
-  assert.ok((await readFile(rollout, "utf8")).startsWith(fixture));
+  const savedRollout = await readRolloutTree(home);
+  assert.match(savedRollout, /Keep this verification history/);
+  assert.match(savedRollout, /History fixture; no inference was executed/);
   console.log(JSON.stringify({
     models: models.data.map((m) => m.id),
     transitions,

@@ -3,6 +3,12 @@ import { spawn } from "node:child_process";
 import { startRuntime } from "../src/runtime.mjs";
 import { resolveCodexBinary } from "../src/paths.mjs";
 import { DEFAULT_GROK_MODEL } from "../src/models.mjs";
+
+function spawnResolved(file, fileArgs, options) {
+  if (file.endsWith(".mjs"))
+    return spawn(process.execPath, [file, ...fileArgs], options);
+  return spawn(file, fileArgs, options);
+}
 const runtime = await startRuntime();
 const userArgs = process.argv.slice(2);
 const overrides = [
@@ -18,7 +24,7 @@ const args =
   userArgs[0] === "exec"
     ? [userArgs[0], ...overrides, ...userArgs.slice(1)]
     : [...overrides, ...userArgs];
-const child = spawn(resolveCodexBinary(), args, {
+const child = spawnResolved(resolveCodexBinary(), args, {
   stdio: "inherit",
   env: { ...process.env, CODEX_GROK_BRIDGE_TOKEN: runtime.token },
 });

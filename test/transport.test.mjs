@@ -7,8 +7,10 @@ import {
   cachedLookup,
   clearDnsCache,
   destroyAgents,
+  expireDnsCache,
   proxyAgent,
   requestStream,
+  setLookupForTests,
 } from "../src/transport.mjs";
 
 async function withServer(handler, run) {
@@ -115,23 +117,62 @@ test("cachedLookup resolves once and then answers from cache", async () => {
   assert.equal(first.family, 4);
 });
 
-test("cachedLookup serves a stale address rather than failing a live turn", async () => {
+test("cachedLookup serves a stale address rather than failing a live turn", () => {
   clearDnsCache();
-  const ask = (hostname) =>
-    new Promise((resolve, reject) =>
-      cachedLookup(hostname, {}, (error, address) =>
-        error ? reject(error) : resolve(address),
-      ),
-    );
-  const warm = await ask("localhost");
-  // Expire the entry so the next call re-resolves; the name still resolves, so
-  // this asserts the happy path stays correct after expiry.
-  await new Promise((resolve) => setTimeout(resolve, 5));
-  assert.equal(await ask("localhost"), warm);
+  const failed = new Set();
+  setLookupForTests((hostname, options, callback) => {
+    if (options.all) {
+      callback(null, [{ address: "203.0.113.9", family: 4 }]);
+      return;
+    }
+    if (failed.has(hostname)) {
+      callback(Object.assign(new Error("resolver down"), { code: "EAI_AGAIN" }));
+      return;
+    }
+    callback(null, hostname === "stale.example" ? "203.0.113.5" : "203.0.113.8", 4);
+  });
+  try {
+    let stale;
+    cachedLookup("stale.example", {}, () => {
+      expireDnsCache();
+      failed.add("stale.example");
+      cachedLookup("stale.example", {}, (error, address) => {
+        assert.equal(error, null);
+        stale = address;
+      });
+    });
+    assert.equal(stale, "203.0.113.5");
+    let one;
+    let all;
+    cachedLookup("split.example", {}, (error, address) => {
+      assert.equal(error, null);
+      one = address;
+    });
+    cachedLookup("split.example", { all: true }, (error, address) => {
+      assert.equal(error, null);
+      all = address;
+    });
+    assert.equal(one, "203.0.113.8");
+    assert.deepEqual(all, [{ address: "203.0.113.9", family: 4 }]);
+  } finally {
+    setLookupForTests(null);
+    clearDnsCache();
+  }
+});
 
-  await assert.rejects(
-    () => ask("no-such-host.invalid"),
-    (error) => typeof error.code === "string",
-    "an uncached name that cannot resolve must still report the error",
-  );
+test("requestStream destroys a stalled upstream socket", async () => {
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200);
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    await assert.rejects(
+      requestStream(`http://127.0.0.1:${server.address().port}/`, { timeout: 50 }),
+      (error) => error.code === "ETIMEDOUT",
+    );
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
 });

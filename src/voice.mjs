@@ -260,6 +260,10 @@ export function rememberLocalCall(id = randomUUID()) {
   return id;
 }
 
+export function forgetLocalCall(id) {
+  localCalls.delete(id);
+}
+
 function callIdIn(url) {
   const text = String(url ?? "");
   for (const id of localCalls) {
@@ -276,7 +280,14 @@ export function encodeServerFrame(opcode, payload) {
   const data = Buffer.isBuffer(payload) ? payload : Buffer.from(String(payload));
   let header;
   if (data.length < 126) header = Buffer.from([0x80 | opcode, data.length]);
-  else header = Buffer.from([0x80 | opcode, 126, data.length >> 8, data.length & 0xff]);
+  else if (data.length < 65536)
+    header = Buffer.from([0x80 | opcode, 126, data.length >> 8, data.length & 0xff]);
+  else {
+    header = Buffer.alloc(10);
+    header[0] = 0x80 | opcode;
+    header[1] = 127;
+    header.writeBigUInt64BE(BigInt(data.length), 2);
+  }
   return Buffer.concat([header, data]);
 }
 
@@ -1269,7 +1280,10 @@ export async function answerVoiceCall({
     if (speechTimer) clearTimeout(speechTimer);
     voiceState.closing = true;
     active.delete(session);
-    if (session.id) sessionsById.delete(session.id);
+    if (session.id) {
+      sessionsById.delete(session.id);
+      forgetLocalCall(session.id);
+    }
     try {
       bridge?.close();
       socket?.close();

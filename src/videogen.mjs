@@ -3,6 +3,17 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+function stripCiphertext(value) {
+  if (!value || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    for (const item of value) stripCiphertext(item);
+    return;
+  }
+  delete value.encrypted_content;
+  delete value.encrypted_function_args;
+  for (const child of Object.values(value)) stripCiphertext(child);
+}
+
 // cli-chat-proxy has no Responses `video_generation` tool. grok-build generates
 // video by calling the videos API itself when the model invokes a function
 // (`image_to_video` / `reference_to_video`): POST {xai_api_base}/videos/generations,
@@ -24,6 +35,21 @@ const VIDEO_MODEL = "grok-imagine-video-1.5";
 const POLL_LIMIT = 60;
 const MAX_VIDEO_BYTES = 80 * 1024 * 1024;
 const MAX_VIDEO_REDIRECTS = 3;
+const VIDEO_REQUEST_TIMEOUT_MS = 300_000;
+const USAGE_KEYS = [
+  "input_tokens",
+  "output_tokens",
+  "total_tokens",
+  "cached_prompt_tokens",
+  "cache_read_input_tokens",
+];
+
+function combineSignal(signal, ms = VIDEO_REQUEST_TIMEOUT_MS) {
+  const timeout = AbortSignal.timeout(ms);
+  if (!signal) return timeout;
+  if (typeof AbortSignal.any === "function") return AbortSignal.any([signal, timeout]);
+  return signal;
+}
 
 export const GROK_VIDEO_TOOL = Object.freeze({
   type: "function",
@@ -124,7 +150,11 @@ function videoPayload(args) {
 }
 
 async function videoHttp(fetchImpl, url, init) {
-  const response = await fetchImpl(url, { ...init, redirect: "manual" });
+  const response = await fetchImpl(url, {
+    ...init,
+    redirect: "manual",
+    signal: combineSignal(init.signal),
+  });
   const text = await response.text().catch(() => "");
   if (response.status >= 300 && response.status < 400) {
     const error = new Error("Video generation failed (redirect).");
@@ -229,7 +259,7 @@ async function downloadGeneratedVideo(url, options, redirects = 0) {
     response = await fetchImpl(url, {
       method: "GET",
       redirect: "manual",
-      signal: options.signal,
+      signal: combineSignal(options.signal),
     });
   } catch {
     return null;
@@ -309,6 +339,151 @@ export async function videoToolOutput(call, options) {
       return "Video generation finished, but moderation withheld the URL.";
     return "Video generation failed.";
   }
+}
+
+function doneItems(parts) {
+  const items = [];
+  for (const part of parts ?? []) {
+    for (const line of String(part).split("\n")) {
+      if (!line.startsWith("data:")) continue;
+      const payload = line.slice(5).trim();
+      if (!payload || payload === "[DONE]") continue;
+      let value;
+      try {
+        value = JSON.parse(payload);
+      } catch {
+        continue;
+      }
+      if (value?.type === "response.output_item.done" && value.item) items.push(value.item);
+    }
+  }
+  return items;
+}
+
+export function retainedInputItems(parts) {
+  const items = [];
+  for (const item of doneItems(parts)) {
+    if (item?.type === "function_call" && item.name === GROK_VIDEO_TOOL_NAME) continue;
+    if (item?.type === "function_call") {
+      items.push({
+        type: "function_call",
+        name: item.name,
+        call_id: item.call_id,
+        arguments:
+          typeof item.arguments === "string"
+            ? item.arguments
+            : JSON.stringify(item.arguments ?? {}),
+      });
+      continue;
+    }
+    if (item?.type === "reasoning" || item?.type === "message") {
+      const copy = structuredClone(item);
+      stripCiphertext(copy);
+      items.push(copy);
+    }
+  }
+  return items;
+}
+
+export function stripVideoToolEvents(parts) {
+  const kept = [];
+  for (const part of parts ?? []) {
+    const lines = [];
+    let droppedData = false;
+    for (const line of String(part).split("\n")) {
+      if (!line.startsWith("data:")) {
+        lines.push(line);
+        continue;
+      }
+      const payload = line.slice(5).trim();
+      if (!payload || payload === "[DONE]") {
+        lines.push(line);
+        continue;
+      }
+      let value;
+      try {
+        value = JSON.parse(payload);
+      } catch {
+        lines.push(line);
+        continue;
+      }
+      const item = value?.item;
+      if (item?.type === "function_call" && item.name === GROK_VIDEO_TOOL_NAME) {
+        droppedData = true;
+        continue;
+      }
+      if (Array.isArray(value?.response?.output)) {
+        value.response.output = value.response.output.filter(
+          (entry) => !(entry?.type === "function_call" && entry?.name === GROK_VIDEO_TOOL_NAME),
+        );
+        lines.push(`data: ${JSON.stringify(value)}`);
+        continue;
+      }
+      lines.push(line);
+    }
+    if (droppedData && !lines.some((line) => line.startsWith("data:"))) continue;
+    const text = lines.join("\n");
+    if (text.trim()) kept.push(text);
+  }
+  return kept;
+}
+
+export function usageFromParts(parts) {
+  let found = null;
+  for (const part of parts ?? []) {
+    for (const line of String(part).split("\n")) {
+      if (!line.startsWith("data:")) continue;
+      const payload = line.slice(5).trim();
+      if (!payload || payload === "[DONE]") continue;
+      try {
+        const value = JSON.parse(payload);
+        if (
+          (value?.type === "response.completed" || value?.type === "response.incomplete") &&
+          value.response?.usage
+        )
+          found = value.response.usage;
+      } catch {
+        // Ignore non-JSON data lines.
+      }
+    }
+  }
+  return found;
+}
+
+export function addUsage(total, usage) {
+  const next = { ...(total ?? {}) };
+  if (!usage) return next;
+  for (const key of USAGE_KEYS) {
+    if (typeof usage[key] === "number") next[key] = (next[key] ?? 0) + usage[key];
+  }
+  return next;
+}
+
+export function stampUsage(parts, usage) {
+  if (!usage || Object.keys(usage).length === 0) return parts;
+  return (parts ?? []).map((part) =>
+    String(part)
+      .split("\n")
+      .map((line) => {
+        if (!line.startsWith("data:")) return line;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === "[DONE]") return line;
+        try {
+          const value = JSON.parse(payload);
+          if (
+            value?.response &&
+            (value.type === "response.completed" || value.type === "response.incomplete")
+          ) {
+            value.response.usage = { ...(value.response.usage ?? {}), ...usage };
+            return `data: ${JSON.stringify(value)}`;
+          }
+        } catch {
+          // Keep a non-JSON data line unchanged.
+        }
+        return line;
+      })
+      .join("\n"),
+  );
 }
 
 export function videoCallsFromParts(parts) {

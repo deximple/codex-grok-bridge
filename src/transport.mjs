@@ -18,9 +18,34 @@ export const MAX_SOCKETS = 4;
 export const SOCKET_TIMEOUT_MS = 120_000;
 
 const dnsCache = new Map();
+let lookupImpl = dns.lookup;
 
 export function clearDnsCache() {
   dnsCache.clear();
+}
+
+export function expireDnsCache() {
+  for (const entry of dnsCache.values()) entry.expiresAt = 0;
+}
+
+// Tests replace dns.lookup so a cached name can fail on the next query.
+export function setLookupForTests(fn) {
+  lookupImpl = fn ?? dns.lookup;
+}
+
+function lookupKey(hostname, settings) {
+  return [
+    hostname,
+    settings.family ?? 0,
+    settings.all ? 1 : 0,
+    settings.hints ?? 0,
+    settings.verbatim ? 1 : 0,
+  ].join(":");
+}
+
+function answerLookup(resolve, settings, address, family) {
+  if (settings.all) resolve(null, address);
+  else resolve(null, address, family);
 }
 
 /**
@@ -31,20 +56,20 @@ export function clearDnsCache() {
 export function cachedLookup(hostname, options, callback) {
   const resolve = typeof options === "function" ? options : callback;
   const settings = typeof options === "function" ? {} : (options ?? {});
-  const key = `${hostname}:${settings.family ?? 0}`;
+  const key = lookupKey(hostname, settings);
   const cached = dnsCache.get(key);
   if (cached && cached.expiresAt > Date.now()) {
-    process.nextTick(() => resolve(null, cached.address, cached.family));
+    process.nextTick(() => answerLookup(resolve, settings, cached.address, cached.family));
     return;
   }
-  dns.lookup(hostname, settings, (error, address, family) => {
+  lookupImpl(hostname, settings, (error, address, family) => {
     if (!error) {
       dnsCache.set(key, { address, family, expiresAt: Date.now() + DNS_TTL_MS });
-      resolve(null, address, family);
+      answerLookup(resolve, settings, address, family);
       return;
     }
     if (cached) {
-      resolve(null, cached.address, cached.family);
+      answerLookup(resolve, settings, cached.address, cached.family);
       return;
     }
     resolve(error);
@@ -102,6 +127,13 @@ export function requestStream(url, init = {}) {
         );
       },
     );
+    const timeoutMs = init.timeout ?? SOCKET_TIMEOUT_MS;
+    const timedOut = () =>
+      request.destroy(
+        Object.assign(new Error("Upstream socket timed out"), { code: "ETIMEDOUT" }),
+      );
+    request.setTimeout(timeoutMs, timedOut);
+    request.once("timeout", timedOut);
     request.once("error", reject);
     if (init.body === undefined || init.body === null) request.end();
     else request.end(init.body);

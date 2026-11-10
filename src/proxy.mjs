@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { resolveGrokBinary } from "./paths.mjs";
 import { createSseRewriter } from "./tools.mjs";
 import { requestStream } from "./transport.mjs";
+import { redact } from "./diagnostics.mjs";
 import { BRIDGE_ERROR, classifyBridgeError } from "./errors.mjs";
 
 export const DEFAULT_PROXY_BASE = "https://cli-chat-proxy.grok.com/v1";
@@ -32,10 +33,10 @@ export function detectGrokClientVersion(home = homedir()) {
   return cachedClientVersion;
 }
 
-function redactedError(status, text) {
-  const trimmed = String(text || "")
-    .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
-    .slice(0, 200);
+function redactedError(status, text, token) {
+  let trimmed = String(text || "");
+  if (token) trimmed = trimmed.split(token).join("[redacted]");
+  trimmed = redact(trimmed).slice(0, 200);
   if (status === 401 || status === 403)
     return "Grok login expired. Run grok login.";
   return `Grok Responses proxy failed (${status})${trimmed ? `: ${trimmed}` : ""}`;
@@ -73,7 +74,9 @@ export async function openProxyStream(options) {
   });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    throw new Error(redactedError(response.status, text));
+    const error = new Error(redactedError(response.status, text, options.token));
+    error.status = response.status;
+    throw error;
   }
   if (!response.body) throw new Error("Grok Responses proxy returned no body");
   return response;
@@ -129,6 +132,40 @@ const TERMINAL_EVENTS = new Set([
   "response.failed",
 ]);
 
+export const MAX_SSE_BYTES = 40 * 1024 * 1024;
+
+function sseTooLarge() {
+  return Object.assign(new Error("Grok response exceeded the bridge buffer"), {
+    code: "ERR_UPSTREAM_TOO_LARGE",
+  });
+}
+
+function noteSseBytes(total, extra) {
+  const next = total + extra;
+  if (next > MAX_SSE_BYTES) throw sseTooLarge();
+  return next;
+}
+
+export function isFailedSseBlock(part) {
+  for (const line of String(part).split("\n")) {
+    if (line.startsWith("event:") && line.slice(6).trim() === "response.failed")
+      return true;
+    if (!line.startsWith("data:")) continue;
+    const payload = line.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+    try {
+      if (JSON.parse(payload)?.type === "response.failed") return true;
+    } catch {
+      // A non-JSON data line is not a failure event.
+    }
+  }
+  return false;
+}
+
+function noteUpstreamFailure(usageBox, part) {
+  if (usageBox && isFailedSseBlock(part)) usageBox.upstreamFailed = true;
+}
+
 export function isTerminalSseBlock(part) {
   for (const line of part.split("\n")) {
     if (line.startsWith("event:") && TERMINAL_EVENTS.has(line.slice(6).trim()))
@@ -182,10 +219,18 @@ export async function openProxyStreamWithRetry(options, attempts = PROXY_ATTEMPT
   throw lastError;
 }
 
-function completeBlocks(buffer) {
-  const parts = buffer.split("\n\n");
-  const rest = parts.pop() ?? "";
-  return { parts: parts.filter((part) => part.trim()), rest };
+export function completeBlocks(buffer) {
+  const parts = [];
+  let rest = String(buffer ?? "");
+  const boundary = /\r?\n\r?\n/;
+  while (rest.length) {
+    const match = boundary.exec(rest);
+    if (!match) break;
+    const part = rest.slice(0, match.index).replaceAll("\r\n", "\n").replaceAll("\r", "\n");
+    rest = rest.slice(match.index + match[0].length);
+    if (part.trim()) parts.push(part);
+  }
+  return { parts, rest };
 }
 
 // Read the upstream body to memory. Write to Codex only after a terminal
@@ -194,6 +239,7 @@ export async function pipeProxySse(stream, output, map, usageBox, onClientByte) 
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let bufferedBytes = 0;
   const rewrite = createSseRewriter(map);
   const pending = [];
   let clientBytes = 0;
@@ -205,6 +251,7 @@ export async function pipeProxySse(stream, output, map, usageBox, onClientByte) 
       const rewritten = rewrite(part);
       if (rewritten === null) continue;
       const block = `${rewritten}\n\n`;
+      noteUpstreamFailure(usageBox, rewritten);
       if (output.destroyed || output.writableEnded) throw clientClosed();
       // Count the byte as soon as the client stream accepts it. A later drain
       // error must not look like "Codex saw nothing" and resubmit the prompt.
@@ -238,6 +285,7 @@ export async function pipeProxySse(stream, output, map, usageBox, onClientByte) 
       if (output.destroyed || output.writableEnded) throw clientClosed();
       const { done, value } = await reader.read();
       if (done) break;
+      bufferedBytes = noteSseBytes(bufferedBytes, value?.byteLength ?? value?.length ?? 0);
       buffer += decoder.decode(value, { stream: true });
       const split = completeBlocks(buffer);
       buffer = split.rest;
@@ -301,6 +349,7 @@ export async function readUntilTerminal(stream, output) {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let bufferedBytes = 0;
   const collected = [];
   let released = false;
   const finish = async (error) => {
@@ -313,6 +362,7 @@ export async function readUntilTerminal(stream, output) {
       if (output?.destroyed || output?.writableEnded) throw clientClosed();
       const { done, value } = await reader.read();
       if (done) break;
+      bufferedBytes = noteSseBytes(bufferedBytes, value?.byteLength ?? value?.length ?? 0);
       buffer += decoder.decode(value, { stream: true });
       const split = completeBlocks(buffer);
       buffer = split.rest;
@@ -356,6 +406,7 @@ export async function emitProxySse(parts, output, map, usageBox, onClientByte) {
       const rewritten = rewrite(part);
       if (rewritten === null) continue;
       const block = `${rewritten}\n\n`;
+      noteUpstreamFailure(usageBox, rewritten);
       if (output.destroyed || output.writableEnded) throw clientClosed();
       const accepted = output.write(block);
       clientBytes += Buffer.byteLength(block);

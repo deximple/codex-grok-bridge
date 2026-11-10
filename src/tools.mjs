@@ -197,12 +197,11 @@ function readPointer(root, tokens) {
 
 function inlineLocalSchemaRefs(schema) {
   function resolve(ref, trail) {
+    if (typeof ref !== "string" || trail.includes(ref)) return {};
     const tokens = definitionPointer(ref);
-    if (!tokens || trail.includes(ref))
-      throw new Error(`Unresolvable schema $ref: ${ref}`);
+    if (!tokens) return {};
     const target = readPointer(schema, tokens);
-    if (target === undefined)
-      throw new Error(`Unresolvable schema $ref: ${ref}`);
+    if (target === undefined) return {};
     return walk(structuredClone(target), trail.concat(ref));
   }
 
@@ -210,8 +209,6 @@ function inlineLocalSchemaRefs(schema) {
     if (Array.isArray(node)) return node.map((item) => walk(item, trail));
     if (!plainObject(node)) return node;
     if (Object.prototype.hasOwnProperty.call(node, "$ref")) {
-      if (typeof node.$ref !== "string")
-        throw new Error("Unresolvable schema $ref");
       const resolved = resolve(node.$ref, trail);
       const rest = {};
       for (const [key, value] of Object.entries(node)) {
@@ -241,6 +238,14 @@ function emitsObjectParameters(schema) {
 }
 
 function usableParameters(parameters) {
+  try {
+    return parametersForTool(parameters);
+  } catch {
+    return OBJECT_SCHEMA;
+  }
+}
+
+function parametersForTool(parameters) {
   if (!parameters || typeof parameters !== "object" || Array.isArray(parameters))
     return OBJECT_SCHEMA;
   parameters = inlineLocalSchemaRefs(parameters);
