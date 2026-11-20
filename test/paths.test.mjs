@@ -288,5 +288,16 @@ test("the published package allows npm install on darwin, linux, and win32", () 
     readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"),
   );
   assert.deepEqual(pkg.os, ["darwin", "linux", "win32"]);
-  assert.equal(pkg.version, "1.8.6");
+});
+
+// The weekly tracker bumps package.json, the lockfile, and CHANGELOG together and
+// never edits tests, so check that they agree instead of pinning one version here.
+test("the package version matches the lockfile and the newest changelog section", () => {
+  const read = (file) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
+  const { version } = JSON.parse(read("../package.json"));
+  const lock = JSON.parse(read("../package-lock.json"));
+  assert.match(version, /^\d+\.\d+\.\d+$/);
+  assert.equal(lock.version, version);
+  assert.equal(lock.packages[""].version, version);
+  assert.equal(/^## (\d+\.\d+\.\d+) /m.exec(read("../CHANGELOG.md"))?.[1], version);
 });
