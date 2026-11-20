@@ -21,8 +21,8 @@ Codex UI/CLI → app-server → scripts/codex-wrapper.mjs (모델 목록에 grok
 ## 2. 지금 상태
 
 ```
-저장소 src/ = /Applications/Codex Grok.app/…/bridge/src/     (해시 일치)
-게이트        317/317, 94.23 lines / 84.62 branches / 92.62 functions
+저장소 src/ = /Applications/Codex Grok.app/…/bridge/src/     (해시 일치, 2026-11-21 재동기화 — 4.11)
+게이트        318/318, 94.23 lines / 84.62 branches / 92.62 functions
 ```
 
 | 모듈 | 역할 |
@@ -82,6 +82,10 @@ kind=upstream_closed  signature=Error[ECONNRESET]  detail="aborted"
 `stream_max_retries`와 `request_max_retries`는 `0`이다. Codex가 버퍼된 시도를 다시 보내지 않는다.
 브리지는 `PROXY_ATTEMPTS = 3`으로, Codex에 바이트를 보내기 전에만 다시 시도한다.
 
+2026-11-21 로그 점검: 1.7.1 이후 기록(10/1–10/2)에서 `turn_retried`(`upstream_closed`) 2건은 모두 재시도로 회복했고
+`turn_failed`(`upstream_closed`)는 0건이다. 두 건 다 **15,026 / 15,028 ms**에 끊겼다 — 15초 상수가 없어진 게 아니라
+재시도가 흡수하고 있을 수 있다. 표본은 작다. 로그는 2026-10-02 23:52 UTC 이후 비어 있다(4.11).
+
 ### 4.2 프롬프트에 provider·model이 없다
 
 Codex는 `provider`/`model`을 프롬프트에 넣지 않는다. `session_meta.model_provider`는 **롤아웃 메타데이터**이고,
@@ -138,12 +142,20 @@ Codex는 400초 침묵도 견디므로 대기가 429보다 항상 낫다. **이 
 저장소에 넣을 때는 `docs/experiments/render-transcript.mjs`를 쓴다 — 형태 기반 레닥션 후
 **출력에 자격증명 형태가 남아 있으면 쓰기를 거부**한다.
 
+### 4.11 npm 릴리스는 설치된 데스크톱 번들을 바꾸지 않는다
+
+`Codex Grok.app`은 체크아웃에서 `sh scripts/install-codex-grok-app.sh`를 돌릴 때만 바뀐다.
+2026-11-21에 보니 번들은 10/3 코드(1.8.0 상당)였고, 그 사이 1.8.1–1.8.6은 npm에만 나갔다.
+빠져 있던 것 중 `provider-align.mjs`(1.8.5)는 Codex CLI 0.166+가 Grok 턴을 `ModelProviderMismatch`로 거부하는 것을 피한다.
+`launch.log`에는 10/5–11/8 사이 실행이 다섯 번 있지만 브리지 로그에는 10/2 이후 턴이 없다.
+릴리스 뒤에는 체크아웃을 당기고 설치 스크립트를 돌린다. 설치 스크립트는 `verify-app-server.mjs` 같은 유지보수 스크립트를 번들에서 지운다.
+
 ## 5. 검증
 
 ```sh
-npm test                                   # 317건, 외부 추론 없음
+npm test                                   # 318건, 외부 추론 없음
 npm run test:coverage                      # 80% 게이트
-npm run verify:app-server                  # 실제 app-server 라우팅. 설치 번들에서도 실행됨
+npm run verify:app-server                  # 실제 app-server 라우팅. 체크아웃에서 설치된 Codex.app CLI로 실행(Codex Grok 번들에는 없다)
 node scripts/codex-grok.mjs exec --skip-git-repo-check "Reply with exactly PONG." </dev/null
 ```
 
@@ -163,7 +175,8 @@ node scripts/codex-grok.mjs exec --skip-git-repo-check "Reply with exactly PONG.
 
 | 항목 | 다음 행동 | 비용 |
 |---|---|---|
-| 상류 중간 리셋 재발 여부 | `request_max_retries`와 `stream_max_retries`는 0이다. 재시도는 브리지가 Codex에 바이트를 보내기 전에만 한다 | 무료 |
+| 상류 중간 리셋 재발 여부 | 2026-11-21 점검: 1.7.1 이후 리셋 2건 모두 브리지 재시도로 회복, 실패 0건(4.1). 표본이 작으니 1.8.6+ 번들로 쓴 뒤 `turn_retried`와 `turn_failed`를 다시 센다 | 무료 |
+| 트래커 PR의 CI가 승인 대기로 멈춤 | `CI_PAT` 시크릿이 없어 주간 트래커가 `GITHUB_TOKEN`으로 PR을 연다 → CI가 `action_required`로 멈춘다(#44는 5일 멈춰 0.169.0에서 낡았다). 저장소 소유자가 `CI_PAT`(contents·pull-requests 쓰기)를 넣거나, PR마다 Actions에서 승인한다 | 사용자 결정 |
 | ~~`apply_patch` 왕복~~ | **해당 없음.** Codex는 이 프로바이더에 `apply_patch`를 주지 않는다 — read-only/workspace-write/danger-full-access 세 샌드박스 모두에서 확인(258–268개 도구 중 없음). 파일 변경은 `exec_command`로만 한다 | — |
 | MCP 네임스페이스 왕복 | 실제 MCP 도구 1건 왕복 | 중간 |
 | `context_window` 258,400 출처 | 카탈로그 값을 131072로 낮추고 `token_count.model_context_window`가 따라 변하는지 관찰. 안 변하면 Codex 내부값 | 라이브 1콜 |
