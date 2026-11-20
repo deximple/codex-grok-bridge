@@ -22,7 +22,7 @@ Codex UI/CLI → app-server → scripts/codex-wrapper.mjs (모델 목록에 grok
 
 ```
 저장소 src/ = /Applications/Codex Grok.app/…/bridge/src/     (해시 일치, 2026-11-21 재동기화 — 4.11)
-게이트        318/318, 94.23 lines / 84.62 branches / 92.62 functions
+게이트        319/319, 94.23 lines / 84.62 branches / 92.62 functions
 ```
 
 | 모듈 | 역할 |
@@ -153,7 +153,7 @@ Codex는 400초 침묵도 견디므로 대기가 429보다 항상 낫다. **이 
 ## 5. 검증
 
 ```sh
-npm test                                   # 318건, 외부 추론 없음
+npm test                                   # 319건, 외부 추론 없음
 npm run test:coverage                      # 80% 게이트
 npm run verify:app-server                  # 실제 app-server 라우팅. 체크아웃에서 설치된 Codex.app CLI로 실행(Codex Grok 번들에는 없다)
 node scripts/codex-grok.mjs exec --skip-git-repo-check "Reply with exactly PONG." </dev/null
@@ -176,12 +176,12 @@ node scripts/codex-grok.mjs exec --skip-git-repo-check "Reply with exactly PONG.
 | 항목 | 다음 행동 | 비용 |
 |---|---|---|
 | 상류 중간 리셋 재발 여부 | 2026-11-21 점검: 1.7.1 이후 리셋 2건 모두 브리지 재시도로 회복, 실패 0건(4.1). 표본이 작으니 1.8.6+ 번들로 쓴 뒤 `turn_retried`와 `turn_failed`를 다시 센다 | 무료 |
-| 트래커 PR의 CI가 승인 대기로 멈춤 | `CI_PAT` 시크릿이 없어 주간 트래커가 `GITHUB_TOKEN`으로 PR을 연다 → CI가 `action_required`로 멈춘다(#44는 5일 멈춰 0.169.0에서 낡았다). 저장소 소유자가 `CI_PAT`(contents·pull-requests 쓰기)를 넣거나, PR마다 Actions에서 승인한다 | 사용자 결정 |
+| ~~트래커 PR의 CI가 승인 대기로 멈춤~~ | **해결(1.8.8).** `GITHUB_TOKEN`으로 연 PR의 `pull_request` CI는 승인 대기(`action_required`)로 남는다(#44는 그래서 5일 멈춰 0.169.0에서 낡았다). 트래커가 PR을 연 뒤 `gh workflow run ci.yml --ref <branch>`로 CI를 직접 돌린다(`actions: write`). `workflow_dispatch`는 `GITHUB_TOKEN`으로도 실행되고 결과가 같은 커밋에 붙는다 | — |
 | ~~`apply_patch` 왕복~~ | **해당 없음.** Codex는 이 프로바이더에 `apply_patch`를 주지 않는다 — read-only/workspace-write/danger-full-access 세 샌드박스 모두에서 확인(258–268개 도구 중 없음). 파일 변경은 `exec_command`로만 한다 | — |
-| MCP 네임스페이스 왕복 | 실제 MCP 도구 1건 왕복 | 중간 |
-| `context_window` 258,400 출처 | 카탈로그 값을 131072로 낮추고 `token_count.model_context_window`가 따라 변하는지 관찰. 안 변하면 Codex 내부값 | 라이브 1콜 |
-| 프리픽스 156k 축소 | 전용 `CODEX_HOME`으로 world_state(119,669자)를 슬림화. 재로그인 비용이 있어 사용자 결정 사항 | — |
-| `~/.grok/auth.json` JWT 노출 | 2026-09-08 23:13 턴이 롤아웃에 기록했다. **토큰 회전(`grok login`)이 실질적 대응** | — |
+| ~~MCP 네임스페이스 왕복~~ | **확인(2026-11-21).** 격리 `CODEX_HOME`(MCP 서버 하나, 스킬·메모리 없음)에서 Grok 4.7이 `get_nonce`를 1번 부르고, Codex가 실행해 돌려준 nonce를 그대로 답했다. `codex exec`와 데스크톱 app-server 경로 둘 다, 각 약 4초·입력 약 23k 토큰 | — |
+| ~~`context_window` 258,400 출처~~ | **확인(2026-11-21).** Codex는 카탈로그 `context_window`의 95%를 쓴다 — 131,072로 바꾸자 두 경로 모두 `model_context_window` 124,518. 258,400(=272,000×0.95)은 9월 Codex 0.153.4가 카탈로그 값을 쓰지 않을 때의 기본값이다. 지금 기본 500,000은 475,000이 된다. Grok 4.7의 실제 한도는 `grok models`에 나오지 않는다 | — |
+| ~~프리픽스 156k 축소~~ | **재측정(2026-11-21), 하지 않음.** `world_state` 블록은 Codex에서 사라졌다. 지난주 새 데스크톱 세션 21개 중 가장 작은 첫 요청이 50,100 토큰이고, 큰 몫은 사용자 AGENTS.md(약 85.6k자)·스킬 목록(22–40k자)·메모리(9–16k자)다. 전용 `CODEX_HOME`은 이것들을 Grok에서 빼는 일이라(격리 기준선 약 11.4k 토큰) 재로그인과 기록 분리를 감수할 이유가 약하다 | — |
+| ~~`~/.grok/auth.json` JWT 노출~~ | **정리(2026-11-21).** 공개 저장소 전체 이력, Codex 세션·보관 세션·내부 DB, 브리지 데이터 어디에도 x.ai 토큰 사본이 없다(저장소의 JWT 모양 문자열은 `test/diagnostics.test.mjs`의 가짜 하나). `~/.grok/auth.json`은 2026-11-21에 다시 쓰였다. 같은 시기 Codex 로그인 토큰 원문이 Codex 대화 기록 DB에 남아 있지만 access/id는 9/17 만료, refresh는 일회용이고 그 뒤 갱신됐다 | — |
 | ~~필드 화이트리스트~~ | **적용.** 아이템·content part는 Grok Responses가 받는 필드만 남긴다. `internal_*` 접두사도 전부 제거 | — |
 
 ## 8. 롤백

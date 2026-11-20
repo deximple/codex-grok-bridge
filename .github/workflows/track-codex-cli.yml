@@ -10,6 +10,8 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # Start CI on the tracker branch with workflow_dispatch.
+  actions: write
 
 concurrency:
   group: track-codex-cli
@@ -105,3 +107,8 @@ jobs:
           else
             gh pr create --base main --head "${branch}" --title "${TITLE}" --body-file /tmp/cli-pr-body.md
           fi
+
+          # GitHub holds the pull_request CI run of a PR opened with GITHUB_TOKEN for
+          # approval. A workflow_dispatch run is allowed and its checks land on the
+          # same commit, so start CI on the branch here.
+          gh workflow run ci.yml --ref "${branch}"
