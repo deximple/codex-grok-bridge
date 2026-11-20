@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.8.7 — 2026-11-20
+
+- Tracked Codex CLI is 0.171.0 (https://github.com/openai/codex/releases/tag/rust-v0.171.0). verify-app-server passed.
+- Tracked Grok CLI is 1.0.92 (https://x.ai/build/changelog). No bridge change.
+
 ## 1.8.6 — 2026-11-10
 
 - Two app-server wrappers that share `CODEX_HOME` keep a live owner on the provider baseline. Startup recovery and exit restore no longer treat another running wrapper's marker as a crash, so the configured provider returns to its original value only after the last wrapper exits.

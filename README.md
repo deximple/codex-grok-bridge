@@ -55,6 +55,11 @@ the bridge runs. See Release history.
 
 What each recent version added. Older cuts are in `CHANGELOG.md`.
 
+### 1.8.7 — 2026-11-20
+
+- Tracked Codex CLI is 0.171.0 (https://github.com/openai/codex/releases/tag/rust-v0.171.0). verify-app-server passed.
+- Tracked Grok CLI is 1.0.92 (https://x.ai/build/changelog). No bridge change.
+
 ### 1.8.6 — 2026-11-10
 
 - Two app-server wrappers that share `CODEX_HOME` keep a live owner on the provider baseline. Startup recovery and exit restore no longer treat another running wrapper's marker as a crash, so the configured provider returns to its original value only after the last wrapper exits.
@@ -141,7 +146,7 @@ The `.command` launcher resolves paths from its own location, so moving the
 folder does not require edits. Set `NODE=/path/to/node` if `node` is not on
 `PATH`.
 
-Verified against: Codex CLI 0.167.0, Grok CLI 1.0.77, Node 22.
+Verified against: Codex CLI 0.171.0 and Node 22. Tracked Grok CLI: 1.0.92.
 An app update that changes `CODEX_CLI_PATH` or the app-server protocol needs
 re-verification.
 
@@ -163,7 +168,7 @@ starts, and tears the provider down with that process.
 ```sh
 git clone https://github.com/deximple/codex-grok-bridge.git
 cd codex-grok-bridge
-npm test                        # 317 tests, no network, no inference
+npm test                        # 318 tests, no network, no inference
 node scripts/codex-grok.mjs
 ```
 
@@ -430,7 +435,7 @@ Start here when something breaks. Do not open `~/.grok/auth.json` or
 ## Verify
 
 ```sh
-npm test                    # 317 tests, no remote inference
+npm test                    # 318 tests, no remote inference
 npm run test:coverage       # 80% line / branch / function gate
 npm run verify:app-server   # real app-server routing; also runs against an installed bundle
 npm audit --omit=dev
@@ -525,6 +530,11 @@ Codex `web_search`는 브리지가 실행하는 함수가 아니라 xAI 서버 �
 
 최근 버전이 더한 것입니다. 그 이전은 `CHANGELOG.md`에 있습니다.
 
+### 1.8.7 — 2026-11-20
+
+- 추적하는 Codex CLI는 0.171.0입니다 (https://github.com/openai/codex/releases/tag/rust-v0.171.0). verify-app-server를 통과했습니다.
+- 추적하는 Grok CLI는 1.0.92입니다 (https://x.ai/build/changelog). 브리지 변경은 없습니다.
+
 ### 1.8.6 — 2026-11-10
 
 - `CODEX_HOME`을 같이 쓰는 앱 서버 래퍼 둘은 제공자 기준값에 살아있는 소유자를 남깁니다. 시작 복구와 종료 복원은 다른 래퍼가 쓰는 마커를 비정상 종료로 보지 않으므로, 설정된 제공자는 마지막 래퍼가 끝난 뒤에만 원래 값으로 돌아갑니다.
@@ -610,7 +620,7 @@ Codex `web_search`는 브리지가 실행하는 함수가 아니라 xAI 서버 �
 `.command` 런처는 자기 위치를 기준으로 경로를 잡으므로 폴더를 옮겨도 수정할
 필요가 없습니다. `PATH`에 `node`가 없으면 `NODE=/path/to/node`로 지정합니다.
 
-검증 버전: Codex CLI 0.167.0, Grok CLI 1.0.77, Node 22.
+검증 버전: Codex CLI 0.171.0, Node 22. 추적 중인 Grok CLI: 1.0.92.
 앱 업데이트가 `CODEX_CLI_PATH`나 app-server 프로토콜을 바꾸면 재검증이
 필요합니다.
 
@@ -632,7 +642,7 @@ codex-grok exec --skip-git-repo-check --sandbox workspace-write '작업 내용'
 ```sh
 git clone https://github.com/deximple/codex-grok-bridge.git
 cd codex-grok-bridge
-npm test                        # 317건, 네트워크·추론 없음
+npm test                        # 318건, 네트워크·추론 없음
 node scripts/codex-grok.mjs
 ```
 
@@ -883,7 +893,7 @@ URL과 저장한 파일 경로를 함께 넣습니다. 다운로드가 실패하
 ## 검증
 
 ```sh
-npm test                    # 317건, 외부 추론 없음
+npm test                    # 318건, 외부 추론 없음
 npm run test:coverage       # line/branch/function 80% 게이트
 npm run verify:app-server   # 실제 app-server 라우팅. 설치된 앱 번들에서도 실행
 npm audit --omit=dev
