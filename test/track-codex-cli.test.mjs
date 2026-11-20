@@ -206,6 +206,18 @@ test("workflow compares the pin and does not publish, tag, or merge", () => {
   assert.equal(tracker.includes("gh pr merge"), false);
 });
 
+test("the tracker starts CI on its branch so a bot pull request does not wait for approval", () => {
+  const read = (file) => readFileSync(new URL(`../.github/workflows/${file}`, import.meta.url), "utf8");
+  const tracker = read("track-codex-cli.yml");
+  assert.match(read("ci.yml"), /^\s*workflow_dispatch:\s*$/m);
+  assert.match(tracker, /^\s*actions: write\s*$/m);
+  const pushed = tracker.indexOf('git push --force-with-lease origin "${branch}"');
+  const dispatched = tracker.indexOf('gh workflow run ci.yml --ref "${branch}"');
+  assert.ok(pushed > 0 && dispatched > pushed);
+  // A CI run on the tracker branch must not publish: Publish only follows CI on main.
+  assert.match(read("publish.yml"), /workflows: \["CI"\]\n\s+types: \[completed\]\n\s+branches: \[main\]/);
+});
+
 test("new Codex notes say verify passed and historical notes stay put", () => {
   const notes = releaseNotes({
     version: "9.9.9",
