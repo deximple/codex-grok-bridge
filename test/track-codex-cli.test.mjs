@@ -215,7 +215,8 @@ test("the tracker starts CI on its branch so a bot pull request does not wait fo
   const dispatched = tracker.indexOf('gh workflow run ci.yml --ref "${branch}"');
   assert.ok(pushed > 0 && dispatched > pushed);
   // A CI run on the tracker branch must not publish: Publish only follows CI on main.
-  assert.match(read("publish.yml"), /workflows: \["CI"\]\n\s+types: \[completed\]\n\s+branches: \[main\]/);
+  // \s+ rather than \n: a Windows checkout has CRLF line endings.
+  assert.match(read("publish.yml"), /workflows: \["CI"\]\s+types: \[completed\]\s+branches: \[main\]/);
 });
 
 test("new Codex notes say verify passed and historical notes stay put", () => {
