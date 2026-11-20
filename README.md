@@ -1,5 +1,7 @@
 # codex-grok-bridge
 
+> **1.8.8 is the last update before Grok 4.8 is released.**
+
 The Codex weekly limit is spent. Grok is still there.
 The harness stays. Only the model changes.
 
@@ -54,6 +56,12 @@ the bridge runs. See Release history.
 ## Release history
 
 What each recent version added. Older cuts are in `CHANGELOG.md`.
+
+### 1.8.8 — 2026-11-20
+
+- Last update before Grok 4.8 is released.
+- The weekly CLI tracker starts CI on its own branch with `workflow_dispatch`. A pull request it opens with `GITHUB_TOKEN` no longer waits for CI approval.
+- Checked live with Grok 4.7 on Codex CLI 0.171.0-alpha.13, through `codex exec` and through the desktop app-server path. An MCP tool call goes from Grok to Codex and its result comes back. Codex reads `context_window` from the bridge catalog at 95% (131,072 became 124,518 in the check), so the default 500,000 is 475,000.
 
 ### 1.8.7 — 2026-11-20
 
@@ -168,7 +176,7 @@ starts, and tears the provider down with that process.
 ```sh
 git clone https://github.com/deximple/codex-grok-bridge.git
 cd codex-grok-bridge
-npm test                        # 318 tests, no network, no inference
+npm test                        # 319 tests, no network, no inference
 node scripts/codex-grok.mjs
 ```
 
@@ -435,7 +443,7 @@ Start here when something breaks. Do not open `~/.grok/auth.json` or
 ## Verify
 
 ```sh
-npm test                    # 318 tests, no remote inference
+npm test                    # 319 tests, no remote inference
 npm run test:coverage       # 80% line / branch / function gate
 npm run verify:app-server   # real app-server routing; also runs against an installed bundle
 npm audit --omit=dev
@@ -493,6 +501,8 @@ responses. Codex’s and Grok’s own retention policies still apply.
 
 # 한국어
 
+> **1.8.8은 Grok 4.8 출시 전 마지막 업데이트입니다.**
+
 Codex 위클리는 끝났고, Grok은 남아 있다.
 하네스는 그대로 두고, 머리만 바꾼다.
 
@@ -529,6 +539,12 @@ Codex `web_search`는 브리지가 실행하는 함수가 아니라 xAI 서버 �
 ## 릴리스 기록
 
 최근 버전이 더한 것입니다. 그 이전은 `CHANGELOG.md`에 있습니다.
+
+### 1.8.8 — 2026-11-20
+
+- Grok 4.8 출시 전 마지막 업데이트입니다.
+- 주간 CLI 트래커가 자기 브랜치에서 `workflow_dispatch`로 CI를 직접 실행합니다. `GITHUB_TOKEN`으로 연 PR이 CI 승인을 기다리며 멈추지 않습니다.
+- Codex CLI 0.171.0-alpha.13에서 Grok 4.7로 `codex exec`와 데스크톱 app-server 경로를 라이브로 확인했습니다. MCP 도구 호출이 Grok에서 Codex로 가고 결과가 돌아옵니다. Codex는 브리지 카탈로그의 `context_window`를 95%로 읽습니다(확인에서 131,072가 124,518이 됨). 기본값 500,000은 475,000이 됩니다.
 
 ### 1.8.7 — 2026-11-20
 
@@ -642,7 +658,7 @@ codex-grok exec --skip-git-repo-check --sandbox workspace-write '작업 내용'
 ```sh
 git clone https://github.com/deximple/codex-grok-bridge.git
 cd codex-grok-bridge
-npm test                        # 318건, 네트워크·추론 없음
+npm test                        # 319건, 네트워크·추론 없음
 node scripts/codex-grok.mjs
 ```
 
@@ -893,7 +909,7 @@ URL과 저장한 파일 경로를 함께 넣습니다. 다운로드가 실패하
 ## 검증
 
 ```sh
-npm test                    # 318건, 외부 추론 없음
+npm test                    # 319건, 외부 추론 없음
 npm run test:coverage       # line/branch/function 80% 게이트
 npm run verify:app-server   # 실제 app-server 라우팅. 설치된 앱 번들에서도 실행
 npm audit --omit=dev

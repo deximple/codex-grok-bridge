@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.8 — 2026-11-20
+
+- Last update before Grok 4.8 is released.
+- The weekly CLI tracker starts CI on its own branch with `workflow_dispatch`. A pull request it opens with `GITHUB_TOKEN` no longer waits for CI approval.
+- Checked live with Grok 4.7 on Codex CLI 0.171.0-alpha.13, through `codex exec` and through the desktop app-server path. An MCP tool call goes from Grok to Codex and its result comes back. Codex reads `context_window` from the bridge catalog at 95% (131,072 became 124,518 in the check), so the default 500,000 is 475,000.
+
 ## 1.8.7 — 2026-11-20
 
 - Tracked Codex CLI is 0.171.0 (https://github.com/openai/codex/releases/tag/rust-v0.171.0). verify-app-server passed.
