@@ -57,6 +57,10 @@ the bridge runs. See Release history.
 
 What each recent version added. Older cuts are in `CHANGELOG.md`.
 
+### 1.8.9 — 2026-11-24
+
+- Tracked Codex CLI is 0.172.0 (https://github.com/openai/codex/releases/tag/rust-v0.172.0). verify-app-server passed.
+
 ### 1.8.8 — 2026-11-20
 
 - Last update before Grok 4.8 is released.
@@ -539,6 +543,10 @@ Codex `web_search`는 브리지가 실행하는 함수가 아니라 xAI 서버 �
 ## 릴리스 기록
 
 최근 버전이 더한 것입니다. 그 이전은 `CHANGELOG.md`에 있습니다.
+
+### 1.8.9 — 2026-11-24
+
+- 추적하는 Codex CLI는 0.172.0입니다 (https://github.com/openai/codex/releases/tag/rust-v0.172.0). verify-app-server를 통과했습니다.
 
 ### 1.8.8 — 2026-11-20
 
