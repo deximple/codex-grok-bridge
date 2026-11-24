@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.8.9 — 2026-11-24
+
+- Tracked Codex CLI is 0.172.0 (https://github.com/openai/codex/releases/tag/rust-v0.172.0). verify-app-server passed.
+
 ## 1.8.8 — 2026-11-20
 
 - Last update before Grok 4.8 is released.
